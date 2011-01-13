@@ -1,0 +1,4 @@
+etc
+etc/init.d
+etc/ha.d/resource.d
+etc/udev/rules.d

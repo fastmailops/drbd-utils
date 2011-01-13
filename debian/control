@@ -1,0 +1,28 @@
+Source: drbd8
+Section: admin
+Priority: extra
+Maintainer: Debian DRBD Maintainers <debian-ha-maintainers@lists.alioth.debian.org>
+Uploaders: Norbert Tretkowski <norbert@tretkowski.de>, Martin Loschwitz <madkiss@debian.org>, Philipp Hug <debian@hug.cx>
+Build-Depends: debhelper (>= 5), debconf-utils, bison, flex, dpatch, bzip2, dpatch
+Standards-Version: 3.9.1
+Homepage: http://www.drbd.org/
+Vcs-Browser: http://svn.debian.org/wsvn/debian-ha/drbd8/
+Vcs-Svn: svn://svn.debian.org/svn/debian-ha/drbd8/
+
+Package: drbd8-utils
+Architecture: any
+Section: admin
+Depends: debconf | debconf-2.0, ${shlibs:Depends}
+Conflicts: drbd-utils
+Provides: drbd-utils
+Replaces: drbd-utils, drbd
+Suggests: heartbeat
+Description: RAID 1 over tcp/ip for Linux utilities
+ Drbd is a block device which is designed to build high availability
+ clusters by providing a virtual shared device which keeps disks in
+ nodes synchronised using TCP/IP. This simulates RAID 1 but avoiding
+ the use of uncommon hardware (shared SCSI buses or Fibre Channel).
+ It is currently limited to fail-over HA clusters.
+ .
+ This package contains the programs that will control the drbd kernel
+ module provided in the Linux kernel.
