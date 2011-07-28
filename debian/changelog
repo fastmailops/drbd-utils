@@ -1,3 +1,11 @@
+drbd8 (2:8.3.10-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #635329)
+  * Moved to git.debian.org for package maintenance.
+  * Removed dpatch
+
+ -- Philipp Hug <debian@hug.cx>  Thu, 28 Jul 2011 16:42:04 +0200
+
 drbd8 (2:8.3.9-1) unstable; urgency=low
 
   * New upstream release.

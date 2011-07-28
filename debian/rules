@@ -9,7 +9,7 @@
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
-include /usr/share/dpatch/dpatch.make
+#include /usr/share/dpatch/dpatch.make
 
 # This has to be exported to make some magic below work.
 export DH_OPTIONS
@@ -73,19 +73,19 @@ binary-modules: prep-deb-files
 	dh_builddeb --destdir=$(DEB_DESTDIR)
 
 #Architecture
-configure: patch
+configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-utils --with-udev --with-xen --with-pacemaker --with-rgmanager --with-bashcompletion
 
 build: configure build-arch
 
 
 build-arch: build-arch-stamp
-build-arch-stamp: patch
+build-arch-stamp:
 	dh_testdir
 	make
 	touch build-arch-stamp
 
-clean: unpatch
+clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-arch-stamp #CONFIGURE-STAMP#
@@ -147,4 +147,4 @@ binary-arch: build-arch install-arch
 	$(MAKE) -f debian/rules DH_OPTIONS=-a binary-common
 
 binary: binary-arch
-.PHONY: build clean binary-arch binary install install-arch unpatch
+.PHONY: build clean binary-arch binary install install-arch
