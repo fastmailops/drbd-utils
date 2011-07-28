@@ -136,6 +136,7 @@ struct d_resource
   struct d_option* startup_options;
   struct d_option* handlers;
   struct d_option* proxy_options;
+  struct d_option* proxy_plugins;
   struct d_resource* next;
   struct d_name *become_primary_on;
   char *config_file; /* The config file this resource is define in.*/
@@ -202,6 +203,12 @@ extern void set_me_in_resource(struct d_resource* res, int match_on_proxy);
 extern void set_peer_in_resource(struct d_resource* res, int peer_required);
 extern void set_on_hosts_in_res(struct d_resource *res);
 extern void set_disk_in_res(struct d_resource *res);
+extern char *proxy_connection_name(struct d_resource *res);
+int parse_proxy_settings(struct d_resource *res, int check_proxy_token);
+/* conn_name is optional and mostly for compatibility with dcmd */
+int do_proxy_conn_up(struct d_resource *res, const char *conn_name);
+int do_proxy_conn_down(struct d_resource *res, const char *conn_name);
+int do_proxy_conn_plugins(struct d_resource *res, const char *conn_name);
 
 extern char *config_file;
 extern char *config_save;
@@ -216,6 +223,7 @@ extern int no_tty;
 extern int dry_run;
 extern int verbose;
 extern char* drbdsetup;
+extern char* drbd_proxy_ctl;
 extern char ss_buffer[1024];
 extern struct utsname nodeinfo;
 
@@ -241,7 +249,7 @@ extern int soi;
 */
 
 #define ssprintf(ptr,...) \
-  ptr=strcpy(alloca(snprintf(ss_buffer,1024,##__VA_ARGS__)+1),ss_buffer)
+  ptr=strcpy(alloca(snprintf(ss_buffer,sizeof(ss_buffer),##__VA_ARGS__)+1),ss_buffer)
 
 /* CAUTION: arguments may not have side effects! */
 #define for_each_resource(res,tmp,config) \
@@ -261,3 +269,8 @@ extern int soi;
   };					      \
   _l;					      \
 })
+
+
+#define PARSER_CHECK_PROXY_KEYWORD (1)
+#define PARSER_STOP_IF_INVALID (2)
+

@@ -33,7 +33,7 @@ drbdsetup \- Setup tool for DRBD .\" drbdsetup
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR {\fIdevice\fR} disk {\fIlower_dev\fR} {\fImeta_data_dev\fR} {\fImeta_data_index\fR} [\-d\ {\fIsize\fR}] [\-e\ {\fIerr_handler\fR}] [\-f\ {\fIfencing_policy\fR}] [\-b]
 .HP \w'\fBdrbdsetup\fR\ 'u
-\fBdrbdsetup\fR {\fIdevice\fR} net [\fIaf:\fR] {\fIlocal_addr\fR} [\fI:port\fR] [\fIaf:\fR] {\fIremote_addr\fR} [\fI:port\fR] {\fIprotocol\fR} [\-c\ {\fItime\fR}] [\-i\ {\fItime\fR}] [\-t\ {\fIval\fR}] [\-S\ {\fIsize\fR}] [\-r\ {\fIsize\fR}] [\-k\ {\fIcount\fR}] [\-e\ {\fImax_epoch_size\fR}] [\-b\ {\fImax_buffers\fR}] [\-m] [\-a\ {\fIhash_alg\fR}] [\-x\ {\fIshared_secret\fR}] [\-A\ {\fIasb\-0p\-policy\fR}] [\-B\ {\fIasb\-1p\-policy\fR}] [\-C\ {\fIasb\-2p\-policy\fR}] [\-D] [\-R\ {\fIrole\-resync\-conflict\-policy\fR}] [\-p\ {\fIping_timeout\fR}] [\-u\ {\fIval\fR}] [\-d\ {\fIhash_alg\fR}] [\-o] [\-n]
+\fBdrbdsetup\fR {\fIdevice\fR} net [\fIaf:\fR] {\fIlocal_addr\fR} [\fI:port\fR] [\fIaf:\fR] {\fIremote_addr\fR} [\fI:port\fR] {\fIprotocol\fR} [\-c\ {\fItime\fR}] [\-i\ {\fItime\fR}] [\-t\ {\fIval\fR}] [\-S\ {\fIsize\fR}] [\-r\ {\fIsize\fR}] [\-k\ {\fIcount\fR}] [\-e\ {\fImax_epoch_size\fR}] [\-b\ {\fImax_buffers\fR}] [\-m] [\-a\ {\fIhash_alg\fR}] [\-x\ {\fIshared_secret\fR}] [\-A\ {\fIasb\-0p\-policy\fR}] [\-B\ {\fIasb\-1p\-policy\fR}] [\-C\ {\fIasb\-2p\-policy\fR}] [\-D] [\-R\ {\fIrole\-resync\-conflict\-policy\fR}] [\-p\ {\fIping_timeout\fR}] [\-u\ {\fIval\fR}] [\-d\ {\fIhash_alg\fR}] [\-o] [\-n] [\-g\ {\fIcongestion_policy\fR}] [\-f\ {\fIval\fR}] [\-h\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR {\fIdevice\fR} syncer [\-a\ {\fIdev_minor\fR}] [\-r\ {\fIrate\fR}] [\-e\ {\fIextents\fR}] [\-v\ {\fIverify\-hash\-alg\fR}] [\-c\ {\fIcpu\-mask\fR}] [\-C\ {\fIcsums\-hash\-alg\fR}] [\-R] [\-p\ {\fIplan_time\fR}] [\-s\ {\fIfill_target\fR}] [\-d\ {\fIdelay_target\fR}] [\-m\ {\fImax_rate\fR}] [\-n\ {\fIond\-policy\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
@@ -502,6 +502,29 @@ Use this option to manually recover from a split\-brain situation\&. In case you
 \fB\-n\fR, \fB\-\-dry\-run \fR
 .RS 4
 Causes DRBD to abort the connection process after the resync handshake, i\&.e\&. no resync gets performed\&. You can find out which resync DRBD would perform by looking at the kernel\*(Aqs log file\&.
+.RE
+.PP
+\fB\-g\fR, \fB\-\-on\-congestion \fR\fIcongestion_policy\fR, \fB\-f\fR, \fB\-\-congestion\-fill \fR\fIfill_threshold\fR, \fB\-h\fR, \fB\-\-congestion\-extents \fR\fIactive_extents_threshold\fR
+.RS 4
+By default DRBD blocks when the available TCP send queue becomes full\&. That means it will slow down the application that generates the write requests that cause DRBD to send more data down that TCP connection\&.
+.sp
+When DRBD is deployed with DRBD\-proxy it might be more desirable that DRBD goes into AHEAD/BEHIND mode shortly before the send queue becomes full\&. In AHEAD/BEHIND mode DRBD does no longer replicate data, but still keeps the connection open\&.
+.sp
+The advantage of the AHEAD/BEHIND mode is that the application is not slowed down, even if DRBD\-proxy\*(Aqs buffer is not sufficient to buffer all write requests\&. The downside is that the peer node falls behind, and that a resync will be necessary to bring it back into sync\&. During that resync the peer node will have an inconsistent disk\&.
+.sp
+Available
+\fIcongestion_policy\fRs are
+\fBblock\fR
+and
+\fBpull\-ahead\fR\&. The default is
+\fBblock\fR\&.
+\fIFill_threshold\fR
+might be in the range of 0 to 10GiBytes\&. The default is 0 which disables the check\&.
+\fIActive_extents_threshold\fR
+has the same limits as
+\fBal\-extents\fR\&.
+.sp
+The AHEAD/BEHIND mode and its settings are available since DRBD 8\&.3\&.10\&.
 .RE
 .SS "syncer"
 .\" drbdsetup: syncer

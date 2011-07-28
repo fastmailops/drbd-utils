@@ -37,6 +37,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -45,6 +46,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <time.h>
+#include "linux/drbd_limits.h"
 #include "drbdtool_common.h"
 #include "drbdadm.h"
 
@@ -154,6 +156,7 @@ static int adm_generic_b(struct d_resource *, const char *);
 static int hidden_cmds(struct d_resource *, const char *);
 static int adm_outdate(struct d_resource *, const char *);
 static int adm_chk_resize(struct d_resource *res, const char *cmd);
+static void dump_options(char *name, struct d_option *opts);
 
 static char *get_opt_val(struct d_option *, const char *, char *);
 static void register_config_file(struct d_resource *res, const char *cfname);
@@ -328,6 +331,7 @@ struct adm_cmd cmds[] = {
 
 	{"before-resync-target", adm_khelper, DRBD_acf3_handler},
 	{"after-resync-target", adm_khelper, DRBD_acf3_handler},
+	{"before-resync-source", adm_khelper, DRBD_acf3_handler},
 	{"pri-on-incon-degr", adm_khelper, DRBD_acf3_handler},
 	{"pri-lost-after-sb", adm_khelper, DRBD_acf3_handler},
 	{"fence-peer", adm_khelper, DRBD_acf3_handler},
@@ -606,9 +610,10 @@ static char *esc_xml(char *str)
 	return str;
 }
 
-static void dump_options(char *name, struct d_option *opts)
+static void dump_options2(char *name, struct d_option *opts,
+		void(*within)(void*), void *ctx)
 {
-	if (!opts)
+	if (!opts && !(within && ctx))
 		return;
 
 	printI("%s {\n", name);
@@ -622,8 +627,22 @@ static void dump_options(char *name, struct d_option *opts)
 			printI(BFMT, opts->name);
 		opts = opts->next;
 	}
+	if (within)
+		within(ctx);
 	--indent;
 	printI("}\n");
+}
+
+static void dump_options(char *name, struct d_option *opts)
+{
+	dump_options2(name, opts, NULL, NULL);
+}
+
+void dump_proxy_plugins(void *ctx)
+{
+	struct d_option *opt = ctx;
+
+	dump_options("plugin", opt);
 }
 
 static void dump_global_info()
@@ -659,7 +678,8 @@ static void dump_common_info()
 	dump_options("disk", common->disk_options);
 	dump_options("syncer", common->sync_options);
 	dump_options("startup", common->startup_options);
-	dump_options("proxy", common->proxy_options);
+	dump_options2("proxy", common->proxy_options,
+			dump_proxy_plugins, common->proxy_plugins);
 	dump_options("handlers", common->handlers);
 	--indent;
 	printf("}\n\n");
@@ -729,9 +749,10 @@ static void dump_host_info(struct d_host_info *hi)
 	printI("}\n");
 }
 
-static void dump_options_xml(char *name, struct d_option *opts)
+static void dump_options_xml2(char *name, struct d_option *opts,
+		void(*within)(void*), void *ctx)
 {
-	if (!opts)
+	if (!opts && !(within && ctx))
 		return;
 
 	printI("<section name=\"%s\">\n", name);
@@ -746,8 +767,22 @@ static void dump_options_xml(char *name, struct d_option *opts)
 			printI("<option name=\"%s\"/>\n", opts->name);
 		opts = opts->next;
 	}
+	if (within)
+		within(ctx);
 	--indent;
 	printI("</section>\n");
+}
+
+static void dump_options_xml(char *name, struct d_option *opts)
+{
+	dump_options_xml2(name, opts, NULL, NULL);
+}
+
+void dump_proxy_plugins_xml(void *ctx)
+{
+	struct d_option *opt = ctx;
+
+	dump_options_xml("plugin", opt);
 }
 
 static void dump_global_info_xml()
@@ -784,7 +819,8 @@ static void dump_common_info_xml()
 	dump_options_xml("disk", common->disk_options);
 	dump_options_xml("syncer", common->sync_options);
 	dump_options_xml("startup", common->startup_options);
-	dump_options_xml("proxy", common->proxy_options);
+	dump_options2("proxy", common->proxy_options,
+			dump_proxy_plugins, common->proxy_plugins);
 	dump_options_xml("handlers", common->handlers);
 	--indent;
 	printI("</common>\n");
@@ -875,7 +911,8 @@ static int adm_dump(struct d_resource *res,
 	dump_options("disk", res->disk_options);
 	dump_options("syncer", res->sync_options);
 	dump_options("startup", res->startup_options);
-	dump_options("proxy", res->proxy_options);
+	dump_options2("proxy", res->proxy_options,
+			dump_proxy_plugins, res->proxy_plugins);
 	dump_options("handlers", res->handlers);
 	--indent;
 	printf("}\n\n");
@@ -900,7 +937,8 @@ static int adm_dump_xml(struct d_resource *res,
 	dump_options_xml("disk", res->disk_options);
 	dump_options_xml("syncer", res->sync_options);
 	dump_options_xml("startup", res->startup_options);
-	dump_options_xml("proxy", res->proxy_options);
+	dump_options_xml2("proxy", res->proxy_options,
+			dump_proxy_plugins_xml, res->proxy_plugins);
 	dump_options_xml("handlers", res->handlers);
 	--indent;
 	printI("</resource>\n");
@@ -1059,10 +1097,14 @@ static int sh_mod_parms(struct d_resource *res __attribute((unused)),
 {
 	int mc = global_options.minor_count;
 
-	if (mc == 0)
+	if (mc == 0) {
 		mc = highest_minor + 11;
-	if (mc < 32)
-		mc = 32;
+		if (mc > DRBD_MINOR_COUNT_MAX)
+			mc = DRBD_MINOR_COUNT_MAX;
+
+		if (mc < DRBD_MINOR_COUNT_DEF)
+			mc = DRBD_MINOR_COUNT_DEF;
+	}
 	printf("minor_count=%d\n", mc);
 	return 0;
 }
@@ -1177,6 +1219,9 @@ static void expand_common(void)
 
 		if (!res->become_primary_on)
 			res->become_primary_on = common->become_primary_on;
+
+		if (common->proxy_plugins && !res->proxy_plugins)
+			expand_opts(common->proxy_plugins, &res->proxy_plugins);
 
 	}
 }
@@ -1828,11 +1873,107 @@ void convert_after_option(struct d_resource *res)
 	}
 }
 
-static int do_proxy(struct d_resource *res, int do_up)
+char *proxy_connection_name(struct d_resource *res)
+{
+	static char conn_name[128];
+	int counter;
+
+	counter = snprintf(conn_name, sizeof(conn_name), "%s-%s-%s",
+			 names_to_str_c(res->me->proxy->on_hosts, '_'),
+			 res->name,
+			 names_to_str_c(res->peer->proxy->on_hosts, '_'));
+	if (counter >= sizeof(conn_name)-3) {
+		fprintf(stderr,
+				"The connection name in resource %s got too long.\n",
+				res->name);
+		exit(E_config_invalid);
+	}
+
+	return conn_name;
+}
+
+int do_proxy_conn_up(struct d_resource *res, const char *conn_name)
+{
+	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL };
+	int rv;
+
+	if (!conn_name)
+		conn_name = proxy_connection_name(res);
+
+	ssprintf(argv[2],
+			"add connection %s %s:%s %s:%s %s:%s %s:%s",
+			conn_name,
+			res->me->proxy->inside_addr,
+			res->me->proxy->inside_port,
+			res->peer->proxy->outside_addr,
+			res->peer->proxy->outside_port,
+			res->me->proxy->outside_addr,
+			res->me->proxy->outside_port, res->me->address,
+			res->me->port);
+
+	rv = m_system_ex(argv, SLEEPS_SHORT, res);
+	return rv;
+}
+
+int do_proxy_conn_plugins(struct d_resource *res, const char *conn_name)
 {
 	char *argv[MAX_ARGS];
-	int argc = 0, rv;
+	int argc = 0;
 	struct d_option *opt;
+	int counter;
+
+	if (!conn_name)
+		conn_name = proxy_connection_name(res);
+
+	argc = 0;
+	argv[NA(argc)] = drbd_proxy_ctl;
+	opt = res->proxy_options;
+	while (opt) {
+		argv[NA(argc)] = "-c";
+		ssprintf(argv[NA(argc)], "set %s %s %s",
+			 opt->name, conn_name, opt->value);
+		opt = opt->next;
+	}
+
+	counter = 0;
+	opt = res->proxy_plugins;
+	/* Don't send the "set plugin ... END" line if no plugins are defined 
+	 * - that's incompatible with the drbd proxy version 1. */
+	if (opt) {
+		while (1) {
+			argv[NA(argc)] = "-c";
+			ssprintf(argv[NA(argc)], "set plugin %s %d %s",
+					conn_name, counter, opt ? opt->name : "END");
+			if (!opt) break;
+			opt = opt->next;
+			counter ++;
+		}
+	}
+
+	argv[NA(argc)] = 0;
+	if (argc > 2)
+		return m_system_ex(argv, SLEEPS_SHORT, res);
+
+	return 0;
+}
+
+int do_proxy_conn_down(struct d_resource *res, const char *conn_name)
+{
+	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL};
+	int rv;
+
+	if (!conn_name)
+		conn_name = proxy_connection_name(res);
+	ssprintf(argv[2], "del connection %s", conn_name);
+
+	rv = m_system_ex(argv, SLEEPS_SHORT, res);
+	return rv;
+}
+
+
+static int check_proxy(struct d_resource *res, int do_up)
+{
+	int rv;
 
 	if (!res->me->proxy) {
 		if (all_resources)
@@ -1867,65 +2008,28 @@ static int do_proxy(struct d_resource *res, int do_up)
 		exit(E_config_invalid);
 	}
 
-	argv[NA(argc)] = drbd_proxy_ctl;
-	argv[NA(argc)] = "-c";
+
 	if (do_up) {
-		ssprintf(argv[NA(argc)],
-			 "add connection %s-%s-%s %s:%s %s:%s %s:%s %s:%s",
-			 names_to_str_c(res->me->proxy->on_hosts, '_'),
-			 res->name,
-			 names_to_str_c(res->peer->proxy->on_hosts, '_'),
-			 res->me->proxy->inside_addr,
-			 res->me->proxy->inside_port,
-			 res->peer->proxy->outside_addr,
-			 res->peer->proxy->outside_port,
-			 res->me->proxy->outside_addr,
-			 res->me->proxy->outside_port, res->me->address,
-			 res->me->port);
-	} else {
-		ssprintf(argv[NA(argc)],
-			 "del connection %s-%s-%s",
-			 names_to_str_c(res->me->proxy->on_hosts, '_'),
-			 res->name,
-			 names_to_str_c(res->peer->proxy->on_hosts, '_'));
+		rv = do_proxy_conn_up(res, NULL);
+		if (!rv)
+			rv = do_proxy_conn_plugins(res, NULL);
 	}
-	argv[NA(argc)] = 0;
+	else
+		rv = do_proxy_conn_down(res, NULL);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, res);
-	if (rv != 0)
-		return rv;
-
-	if (!do_up)
-		return rv;
-
-	argc = 0;
-	argv[NA(argc)] = drbd_proxy_ctl;
-	opt = res->proxy_options;
-	while (opt) {
-		argv[NA(argc)] = "-c";
-		ssprintf(argv[NA(argc)], "set %s %s-%s-%s %s",
-			 opt->name, names_to_str_c(res->me->proxy->on_hosts,
-						   '_'), res->name,
-			 names_to_str_c(res->peer->proxy->on_hosts, '_'),
-			 opt->value);
-		opt = opt->next;
-	}
-	argv[NA(argc)] = 0;
-	if (argc > 2)
-		return m_system_ex(argv, SLEEPS_SHORT, res);
 	return rv;
 }
 
 static int adm_proxy_up(struct d_resource *res,
 			const char *unused __attribute((unused)))
 {
-	return do_proxy(res, 1);
+	return check_proxy(res, 1);
 }
 
 static int adm_proxy_down(struct d_resource *res,
 			  const char *unused __attribute((unused)))
 {
-	return do_proxy(res, 0);
+	return check_proxy(res, 0);
 }
 
 int adm_syncer(struct d_resource *res, const char *unused __attribute((unused)))
@@ -2770,7 +2874,6 @@ char *canonify_path(char *path)
 	char *tmp;
 	char *that_wd;
 	char *abs_path;
-	int len;
 
 	if (!path || !path[0]) {
 		fprintf(stderr, "cannot canonify an empty path\n");
@@ -2802,15 +2905,9 @@ char *canonify_path(char *path)
 	}
 
 	if (!strcmp("/", that_wd))
-		len = asprintf(&abs_path, "/%s", last_slash);
+		m_asprintf(&abs_path, "/%s", last_slash);
 	else
-		len = asprintf(&abs_path, "%s/%s", that_wd, last_slash);
-
-	if (len < 0) {
-		fprintf(stderr, "out of memory during asprintf in %s\n",
-			__func__);
-		exit(E_usage);
-	}
+		m_asprintf(&abs_path, "%s/%s", that_wd, last_slash);
 
 	free(that_wd);
 	if (cwd_fd >= 0) {

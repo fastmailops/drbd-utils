@@ -82,14 +82,16 @@ enum drbd_req_event {
 	to_be_submitted,
 
 	/* XXX yes, now I am inconsistent...
-	 * these two are not "events" but "actions"
+	 * these are not "events" but "actions"
 	 * oh, well... */
 	queue_for_net_write,
 	queue_for_net_read,
+	queue_for_send_oos,
 
 	send_canceled,
 	send_failed,
 	handed_over_to_network,
+	oos_handed_to_network,
 	connection_lost_while_pending,
 	read_retry_remote_canceled,
 	recv_acked_by_peer,
@@ -289,7 +291,6 @@ static inline struct drbd_request *drbd_req_new(struct drbd_conf *mdev,
 		req->epoch       = 0;
 		req->sector      = bio_src->bi_sector;
 		req->size        = bio_src->bi_size;
-		req->start_time  = jiffies;
 		INIT_HLIST_NODE(&req->colision);
 		INIT_LIST_HEAD(&req->tl_requests);
 		INIT_LIST_HEAD(&req->w.list);
@@ -339,7 +340,8 @@ static inline int _req_mod(struct drbd_request *req, enum drbd_req_event what)
 }
 
 /* completion of master bio is outside of spinlock.
- * If you need it irqsave, do it your self! */
+ * If you need it irqsave, do it your self!
+ * Which means: don't use from bio endio callback. */
 static inline int req_mod(struct drbd_request *req,
 		enum drbd_req_event what)
 {
@@ -356,4 +358,22 @@ static inline int req_mod(struct drbd_request *req,
 
 	return rv;
 }
+
+static inline bool drbd_should_do_remote(union drbd_state s)
+{
+	return s.pdsk == D_UP_TO_DATE ||
+		(s.pdsk >= D_INCONSISTENT &&
+		 s.conn >= C_WF_BITMAP_T &&
+		 s.conn < C_AHEAD);
+	/* Before proto 96 that was >= CONNECTED instead of >= C_WF_BITMAP_T.
+	   That is equivalent since before 96 IO was frozen in the C_WF_BITMAP*
+	   states. */
+}
+static inline bool drbd_should_send_oos(union drbd_state s)
+{
+	return s.conn == C_AHEAD || s.conn == C_WF_BITMAP_S;
+	/* pdsk = D_INCONSISTENT as a consequence. Protocol 96 check not necessary
+	   since we enter state C_AHEAD only if proto >= 96 */
+}
+
 #endif

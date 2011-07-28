@@ -255,6 +255,12 @@ const char *on_no_data_n[] = {
 	[OND_SUSPEND_IO]	= "suspend-io"
 };
 
+const char *on_congestion_n[] = {
+	[OC_BLOCK]              = "block",
+	[OC_PULL_AHEAD]         = "pull-ahead",
+	[OC_DISCONNECT]         = "disconnect"
+};
+
 struct option wait_cmds_options[] = {
 	{ "wfc-timeout",required_argument, 0, 't' },
 	{ "degr-wfc-timeout",required_argument,0,'d'},
@@ -341,9 +347,15 @@ struct drbd_cmd commands[] = {
 		 { "data-integrity-alg",'d', T_integrity_alg,     ES },
 		 { "no-tcp-cork",'o',   T_no_cork,         EB },
 		 { "dry-run",'n',   T_dry_run,		   EB },
+		 { "on-congestion", 'g', T_on_congestion, EH(on_congestion_n,ON_CONGESTION) },
+		 { "congestion-fill", 'f', T_cong_fill,    EN(CONG_FILL,'s',"byte") },
+		 { "congestion-extents", 'h', T_cong_extents, EN(CONG_EXTENTS,1,NULL) },
 		 CLOSE_OPTIONS }} }, },
 
-	{"disconnect", P_disconnect, F_CONFIG_CMD, {{NULL, NULL}} },
+	{"disconnect", P_disconnect, F_CONFIG_CMD, {{NULL,
+	 (struct drbd_option[]) {
+		 { "force", 'F',	T_force,	EB },
+		CLOSE_OPTIONS }} }, },
 
 	{"resize", P_resize, F_CONFIG_CMD, {{ NULL,
 	 (struct drbd_option[]) {
@@ -441,7 +453,7 @@ static const char *error_messages[] = {
 	"the kernel. (Maybe you need to modprobe it, or modprobe hmac?)",
 	EM(ERR_AUTH_ALG_ND) = "The 'cram-hmac-alg' you specified is not a digest.",
 	EM(ERR_NOMEM) = "kmalloc() failed. Out of memory?",
-	EM(ERR_DISCARD) = "--discard-my-data not allowed when primary.",
+	EM(ERR_DISCARD) = "--discard-my-data not gllowed when primary.",
 	EM(ERR_DISK_CONFIGURED) = "Device is attached to a disk (use detach first)",
 	EM(ERR_NET_CONFIGURED) = "Device has a net-config (use disconnect first)",
 	EM(ERR_MANDATORY_TAG) = "UnknownMandatoryTag",
@@ -475,6 +487,11 @@ static const char *error_messages[] = {
 	EM(ERR_PERM) = "Permission denied. CAP_SYS_ADMIN necessary",
 	EM(ERR_NEED_APV_93) = "Protocol version 93 required to use --assume-clean",
 	EM(ERR_STONITH_AND_PROT_A) = "Fencing policy resource-and-stonith only with prot B or C allowed",
+	EM(ERR_CONG_NOT_PROTO_A) = "on-congestion policy pull-ahead only with prot A allowed",
+	EM(ERR_PIC_AFTER_DEP) = "Sync-pause flag is already cleared.\n"
+	"Note: Resync pause caused by a local sync-after dependency.",
+	EM(ERR_PIC_PEER_DEP) = "Sync-pause flag is already cleared.\n"
+	"Note: Resync pause caused by the peer node.",
 };
 #define MAX_ERROR (sizeof(error_messages)/sizeof(*error_messages))
 const char * error_to_string(int err_no)
@@ -1907,6 +1924,23 @@ static void print_dump_ee(struct drbd_nl_cfg_reply *reply)
 	print_hex_dump(size,data);
 }
 
+/* this is not pretty; but it's api... ;-( */
+const char *pretty_print_return_code(int e)
+{
+	return
+		e == NO_ERROR ? "No error" :
+		e > ERR_CODE_BASE ?
+			error_to_string(e) :
+		e > SS_AFTER_LAST_ERROR && e <= SS_TWO_PRIMARIES ?
+			drbd_set_st_err_str(e) :
+		e == SS_CW_NO_NEED ? "Cluster wide state change: nothing to do" :
+		e == SS_CW_SUCCESS ? "Cluster wide state change successful" :
+		e == SS_NOTHING_TO_DO ? "State change: nothing to do" :
+		e == SS_SUCCESS ? "State change successful" :
+		e == SS_UNKNOWN_ERROR ? "Unspecified error" :
+		"Unknown return code";
+}
+
 static int print_broadcast_events(unsigned int seq, int u __attribute((unused)),
 			   struct drbd_nl_cfg_reply *reply)
 {
@@ -1914,11 +1948,13 @@ static int print_broadcast_events(unsigned int seq, int u __attribute((unused)),
 	char* str;
 	int synced = 0;
 
-	/* Ignore error replies */
-	if (reply->ret_code != NO_ERROR)
-		return 1;
-
 	switch (reply->packet_type) {
+	case 0: /* used to be this way in drbd_nl.c for some responses :-( */
+	case P_return_code_only: /* used by drbd_nl.c for most "empty" responses */
+		printf("%u ZZ %d ret_code: %d %s\n", seq, reply->minor,
+			reply->ret_code,
+			pretty_print_return_code(reply->ret_code));
+		break;
 	case P_get_state:
 		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
 			printf("%u ST %d { cs:%s ro:%s/%s ds:%s/%s %c%c%c%c }\n",
@@ -1954,7 +1990,7 @@ static int print_broadcast_events(unsigned int seq, int u __attribute((unused)),
 		print_dump_ee(reply);
 		break;
 	default:
-		printf("%u ?? %d <other message>\n",seq, reply->minor);
+		printf("%u ?? %d <other message %d>\n",seq, reply->minor, reply->packet_type);
 		break;
 	}
 
@@ -1963,11 +1999,26 @@ static int print_broadcast_events(unsigned int seq, int u __attribute((unused)),
 	return 1;
 }
 
+void print_failure_code(int ret_code)
+{
+	if (ret_code > ERR_CODE_BASE)
+		fprintf(stderr,"%s: Failure: (%d) %s\n",
+			devname, ret_code, error_to_string(ret_code));
+	else
+		fprintf(stderr,"%s: Failure: (ret_code=%d)\n",
+			devname, ret_code);
+}
+
 static int w_connected_state(unsigned int seq __attribute((unused)),
 		      int wait_after_sb,
 		      struct drbd_nl_cfg_reply *reply)
 {
 	union drbd_state state;
+
+	if (reply->ret_code != NO_ERROR) {
+		print_failure_code(reply->ret_code);
+		return 0;
+	}
 
 	if(reply->packet_type == P_get_state) {
 		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
@@ -1984,6 +2035,11 @@ static int w_synced_state(unsigned int seq __attribute((unused)),
 		   struct drbd_nl_cfg_reply *reply)
 {
 	union drbd_state state;
+
+	if (reply->ret_code != NO_ERROR) {
+		print_failure_code(reply->ret_code);
+		return 0;
+	}
 
 	if(reply->packet_type == P_get_state) {
 		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
@@ -2074,11 +2130,6 @@ static int events_cmd(struct drbd_cmd *cm, unsigned minor, int argc ,char **argv
 	sk_nl = open_cn();
 	if(sk_nl < 0) return 20;
 
-	// Find out which timeout value to use.
-	tl->drbd_p_header->packet_type = P_get_timeout_flag;
-	tl->drbd_p_header->drbd_minor = minor;
-	tl->drbd_p_header->flags = 0;
-
 	/* allocate 64k to be on the safe side. */
 #define NL_BUFFER_SIZE (64 << 10)
 	buffer = malloc(NL_BUFFER_SIZE);
@@ -2087,41 +2138,57 @@ static int events_cmd(struct drbd_cmd *cm, unsigned minor, int argc ,char **argv
 		exit(20);
 	}
 
-	call_drbd(sk_nl,tl, buffer, NL_BUFFER_SIZE, NL_TIME);
+	/* drbdsetup events should not ask for timeout "type",
+	 * this is only useful with wait-sync and wait-connected callbacks.
+	 */
+	if (cm->ep.proc_event != print_broadcast_events) {
+		// Find out which timeout value to use.
+		tl->drbd_p_header->packet_type = P_get_timeout_flag;
+		tl->drbd_p_header->drbd_minor = minor;
+		tl->drbd_p_header->flags = 0;
 
-	cn_reply = (struct cn_msg *)NLMSG_DATA(buffer);
-	reply = (struct drbd_nl_cfg_reply *)cn_reply->data;
-	consume_tag_bit(T_use_degraded,reply->tag_list,&rr);
-	if (rr != UT_DEFAULT) {
-		if (0 < wfc_timeout &&
-		      (wfc_timeout < degr_wfc_timeout || degr_wfc_timeout == 0)) {
-			degr_wfc_timeout = wfc_timeout;
-			fprintf(stderr, "degr-wfc-timeout has to be shorter than wfc-timeout\n"
-					"degr-wfc-timeout implicitly set to wfc-timeout (%ds)\n",
-					degr_wfc_timeout);
+		if (0 >= call_drbd(sk_nl,tl, buffer, NL_BUFFER_SIZE, NL_TIME))
+			exit(20);
+
+		cn_reply = (struct cn_msg *)NLMSG_DATA(buffer);
+		reply = (struct drbd_nl_cfg_reply *)cn_reply->data;
+
+		if (reply->ret_code != NO_ERROR)
+			return print_config_error(reply->ret_code);
+
+		consume_tag_bit(T_use_degraded,reply->tag_list,&rr);
+		if (rr != UT_DEFAULT) {
+			if (0 < wfc_timeout &&
+			      (wfc_timeout < degr_wfc_timeout || degr_wfc_timeout == 0)) {
+				degr_wfc_timeout = wfc_timeout;
+				fprintf(stderr, "degr-wfc-timeout has to be shorter than wfc-timeout\n"
+						"degr-wfc-timeout implicitly set to wfc-timeout (%ds)\n",
+						degr_wfc_timeout);
+			}
+
+			if (0 < degr_wfc_timeout &&
+			    (degr_wfc_timeout < outdated_wfc_timeout || outdated_wfc_timeout == 0)) {
+				outdated_wfc_timeout = wfc_timeout;
+				fprintf(stderr, "outdated-wfc-timeout has to be shorter than degr-wfc-timeout\n"
+						"outdated-wfc-timeout implicitly set to degr-wfc-timeout (%ds)\n",
+						degr_wfc_timeout);
+			}
+
 		}
 
-		if (0 < degr_wfc_timeout &&
-		    (degr_wfc_timeout < outdated_wfc_timeout || outdated_wfc_timeout == 0)) {
-			outdated_wfc_timeout = wfc_timeout;
-			fprintf(stderr, "outdated-wfc-timeout has to be shorter than degr-wfc-timeout\n"
-					"outdated-wfc-timeout implicitly set to degr-wfc-timeout (%ds)\n",
-					degr_wfc_timeout);
+		switch (rr) {
+		case UT_DEFAULT:
+			timeout_ms = wfc_timeout;
+			break;
+		case UT_DEGRADED:
+			timeout_ms = degr_wfc_timeout;
+			break;
+		case UT_PEER_OUTDATED:
+			timeout_ms = outdated_wfc_timeout;
+			break;
 		}
-
 	}
 
-	switch (rr) {
-	case UT_DEFAULT:
-		timeout_ms = wfc_timeout;
-		break;
-	case UT_DEGRADED:
-		timeout_ms = degr_wfc_timeout;
-		break;
-	case UT_PEER_OUTDATED:
-		timeout_ms = outdated_wfc_timeout;
-		break;
-	}
 	timeout_ms = timeout_ms * 1000 - 1; /* 0 -> -1 "infinite", 1000 -> 999, nobody cares...  */
 
 	// ask for the current state before waiting for state updates...
@@ -2166,12 +2233,24 @@ static int events_cmd(struct drbd_cmd *cm, unsigned minor, int argc ,char **argv
 		   The second is created by the kernel's broadcast packets. */
 		if (!unfiltered) {
 			if (cn_reply->ack == 0) { // broadcasts
-				if (cn_reply->seq <= b_seq) continue;
+				/* Careful, potential wrap around!
+				 * Will skip a lot of packets if you
+				 * unload/reload the module in between,
+				 * but keep this drbdsetup events running.
+				 * So don't do that.
+				 */
+				if ((int)(cn_reply->seq - b_seq) <= 0)
+					continue;
 				b_seq = cn_reply->seq;
-			} else if (minor == reply->minor && cn_reply->ack == (uint32_t)getpid() + 1) {
+			} else if ((all_devices || minor == reply->minor)
+					&& cn_reply->ack == (uint32_t)getpid() + 1) {
 				// replies to drbdsetup packets and for this device.
-				if (cn_reply->seq <= r_seq) continue;
+				if ((int)(cn_reply->seq - r_seq) <= 0)
+					continue;
 				r_seq = cn_reply->seq;
+			} else {
+				/* or reply to configuration request of other drbdsetup */
+				continue;
 			}
 		}
 

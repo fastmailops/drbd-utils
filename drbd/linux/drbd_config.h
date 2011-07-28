@@ -32,10 +32,10 @@ extern const char *drbd_buildtag(void);
 
 /* End of external module for 2.6.33 stuff */
 
-#define REL_VERSION "8.3.9"
+#define REL_VERSION "8.3.10"
 #define API_VERSION 88
 #define PRO_VERSION_MIN 86
-#define PRO_VERSION_MAX 95
+#define PRO_VERSION_MAX 96
 
 #ifndef __CHECKER__   /* for a sparse run, we need all STATICs */
 #define DBG_ALL_SYMBOLS /* no static functs, improves quality of OOPS traces */
@@ -117,6 +117,26 @@ extern const char *drbd_buildtag(void);
 //#define NEED_BLK_QUEUE_MAX_HW_SECTORS
 //#define NEED_BLK_QUEUE_MAX_SEGMENTS
 
+/* For kernel versions 2.6.31 to 2.6.33 inclusive, even though
+ * blk_queue_max_hw_sectors is present, we actually need to use
+ * blk_queue_max_sectors to set max_hw_sectors. :-(
+ * RHEL6 2.6.32 chose to be different and already has eliminated
+ * blk_queue_max_sectors as upstream 2.6.34 did.
+ * I check it into the git repo as defined,
+ * because if someone does not run our compat adjust magic, it otherwise would
+ * silently compile broken code on affected kernel versions, which is worse
+ * than the compile error it may cause on more recent kernels.
+ */
+#define USE_BLK_QUEUE_MAX_SECTORS_ANYWAYS
+
+/* For kernel versions > 2.6.38, open_bdev_excl has been replaced with
+ * blkdev_get_by_path. See e525fd89 and d4d77629 */
+//#define COMPAT_HAVE_BLKDEV_GET_BY_PATH
+
+/* before open_bdev_exclusive, there was a open_bdev_excl,
+ * see 30c40d2 */
+#define COMPAT_HAVE_OPEN_BDEV_EXCLUSIVE
+
 /* some old kernels do not have atomic_add_unless() */
 //#define NEED_ATOMIC_ADD_UNLESS
 
@@ -125,5 +145,8 @@ extern const char *drbd_buildtag(void);
 
 /* some older kernels do not have schedule_timeout_interruptible() */
 //#define NEED_SCHEDULE_TIMEOUT_INTERR
+
+/* Stone old kernels lack the fmode_t type */
+#define COMPAT_HAVE_FMODE_T
 
 #endif

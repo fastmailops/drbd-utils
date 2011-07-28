@@ -44,11 +44,10 @@ ifneq ($(PATCHLEVEL),)
   endif
 
   CONFIG_BLK_DEV_DRBD := m
-  CONFIG_DRBD_TRACE := $(shell test $${SUBLEVEL} -ge 30 && echo m || echo n)
+  CONFIG_DRBD_TRACE := n
 
-  include $(DRBDSRC)/Makefile-2.6
+  include $(src)/Makefile-2.6
 
-  override EXTRA_CFLAGS += -I$(DRBDSRC)
   # remember KERNELRELEASE for install target
   # .kernelversion can be included in Makefile as well as
   # sourced from shell
@@ -59,7 +58,7 @@ ifneq ($(PATCHLEVEL),)
                   "LOCALVERSION=$(LOCALVERSION)\n"   \
                   "KERNELRELEASE=$(KERNELRELEASE)\n" \
                   "KERNELVERSION=$(KERNELVERSION)"   \
-          > $(DRBDSRC)/.drbd_kernelrelease.new       \
+          > $(src)/.drbd_kernelrelease.new       \
    )
 else
   # called from command line in current directory
@@ -69,7 +68,6 @@ else
   SHELL=/bin/bash
 
   DRBDSRC := $(shell pwd)
-  export DRBDSRC
 
   # to be overridden on command line:
   PREFIX := /
@@ -114,22 +112,25 @@ else
 .PHONY: drbd_buildtag.c
 
   drbd_buildtag.c:
-	@is_tarball=`test -e ../.git/. && echo false || echo true`;\
-	set -e; exec > $@.new;							\
+	@set -e; exec > $@.new;							\
 	echo -e "/* automatically generated. DO NOT EDIT. */";			\
 	echo -e "#include <linux/drbd.h>";					\
 	echo -e "const char *drbd_buildtag(void)\n{";				\
-	if $$is_tarball; then							\
-	  if ! test -e $@ ; then 						\
-	  	echo >&2 "your DRBD source tree is broken. unpack again.";	\
+	if test -e ../.git && GITHEAD=$$(git rev-parse HEAD); then		\
+		GITDIFF=$$(cd .. && git diff --name-only HEAD |			\
+			tr -s '\t\n' '  ' |					\
+			sed -e 's/^/ /;s/ *$$//');				\
+		echo -e "\treturn \"GIT-hash: $$GITHEAD$$GITDIFF\"";		\
+	elif ! test -e $@ ; then						\
+		echo >&2 "$@ not found.";					\
+		test -e ../.git &&						\
+		>&2 printf "%s\n"						\
+			"git did not work, but this looks like a git checkout?"	\
+			"Install git and try again." ||				\
+		echo >&2 "Your DRBD source tree is broken. Unpack again.";	\
 		exit 1;								\
-	  fi;									\
-	  grep return $@ ;							\
 	else									\
-	  GITHEAD=$$(git rev-parse HEAD);					\
-	  GITDIFF=$$(cd .. && git diff --name-only HEAD | tr -s '\t\n' '  ' |	\
-	  	sed -e 's/^/ /;s/ *$$//');					\
-	  echo -e "\treturn \"GIT-hash: $$GITHEAD$$GITDIFF\"";	 		\
+		grep return $@ ;						\
 	fi ;									\
 	echo -e "\t\t\" build by $$USER@$$HOSTNAME, `date "+%F %T"`\";\n}";	\
 	mv --force $@.new $@
@@ -137,7 +138,7 @@ else
   kbuild: drbd_buildtag.c
 	@rm -f .drbd_kernelrelease*
 	-test -f ../scripts/adjust_drbd_config_h.sh && \
-	 KDIR=$(KDIR) O=$(O) $(SHELL) ../scripts/adjust_drbd_config_h.sh
+		KDIR=$(KDIR) O=$(O) $(SHELL) ../scripts/adjust_drbd_config_h.sh
     # previous to 2.6.6 (suse: 2.6.5-dunno), this should be:
 	$(MAKE) -C $(KDIR)  $(if $(O),O=$(O),) SUBDIRS=$(DRBDSRC) $(ARCH_UM) modules
 # $(MAKE) -C $(KDIR) M=$(DRBDSRC) $(ARCH_UM) modules
@@ -187,6 +188,10 @@ else
 	  echo "No $(MODOBJ): nothing to install??"; false ; \
 	fi
 	install -d $(DESTDIR)/lib/modules/$(KERNELRELEASE)/$(MODSUBDIR)
+	now=$$(date +%F_%H%M%S); \
+	for m in $$(find $(DESTDIR)/lib/modules/$(KERNELRELEASE)/ -name $(MODOBJ)) ; do \
+		mv $$m $$m.disabled.$$now ; \
+	done
 	install -m 644 $(MODOBJ) $(DESTDIR)/lib/modules/$(KERNELRELEASE)/$(MODSUBDIR)
     ifeq ($(DESTDIR),/)
       ifeq ($(shell uname -r),$(KERNELRELEASE))

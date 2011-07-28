@@ -51,6 +51,8 @@ enum range_checks
 	R_C_FILL_TARGET,
 	R_C_MAX_RATE,
 	R_C_MIN_RATE,
+	R_CONG_FILL,
+	R_CONG_EXTENTS,
 };
 
 enum yytokentype {
@@ -102,6 +104,7 @@ enum yytokentype {
 	TK_MEMLIMIT,
 	TK_PROXY_OPTION,
 	TK_PROXY_SWITCH,
+	TK_PROXY_DELEGATE,
 	TK_ERR_STRING_TOO_LONG,
 	TK_ERR_DQSTRING_TOO_LONG,
 	TK_ERR_DQSTRING,
@@ -128,8 +131,10 @@ typedef struct YYSTYPE {
 
 extern yystype yylval;
 extern char* yytext;
+extern FILE* yyin;
 
 /* avoid compiler warnings about implicit declaration */
 int yylex(void);
 void my_yypush_buffer_state(FILE *f);
 void yypop_buffer_state (void );
+void yyrestart(FILE *input_file);
