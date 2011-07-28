@@ -9,14 +9,30 @@
 # error "use a 2.6 kernel, please"
 #endif
 
+/* The history of blkdev_issue_flush()
+
+   It had 2 arguments before fbd9b09a177a481eda256447c881f014f29034fe,
+   after it had 4 arguments. (With that commit came BLKDEV_IFL_WAIT)
+
+   It had 4 arguments before dd3932eddf428571762596e17b65f5dc92ca361b,
+   after it got 3 arguments. (With that commit came BLKDEV_DISCARD_SECURE
+   and BLKDEV_IFL_WAIT disappeared again.) */
 #include <linux/blkdev.h>
 #ifndef BLKDEV_IFL_WAIT
-/* see fbd9b09a177a481eda256447c881f014f29034fe */
-#define blkdev_issue_flush(b, gfpf, s, ifl)	blkdev_issue_flush(b, s)
+#ifndef BLKDEV_DISCARD_SECURE
+/* before fbd9b09a177 */
+#define blkdev_issue_flush(b, gfpf, s)	blkdev_issue_flush(b, s)
+#endif
+/* after dd3932eddf4 no define at all */
+#else
+/* between fbd9b09a177 and dd3932eddf4 */
+#define blkdev_issue_flush(b, gfpf, s)	blkdev_issue_flush(b, gfpf, s, BLKDEV_IFL_WAIT)
 #endif
 
+#include <linux/fs.h>
 #include <linux/bio.h>
 #include <linux/slab.h>
+#include <linux/completion.h>
 
 /* for the proc_create wrapper */
 #include <linux/proc_fs.h>
@@ -55,9 +71,16 @@ static inline sector_t bdev_logical_block_size(struct block_device *bdev)
 	return queue_logical_block_size(bdev_get_queue(bdev));
 }
 
-static inline unsigned int queue_max_segment_size(struct request_queue *q)
+static inline unsigned int queue_max_hw_sectors(struct request_queue *q)
 {
-	return q->max_segment_size;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
+	/* before upstream commit ba066f3a0469dfc6d8fbdf70fabfd8c069fbf306,
+	 * there is no max_hw_sectors. Simply use max_sectors here,
+	 * it should be good enough. Affected: sles9. */
+	return q->max_sectors;
+#else
+	return q->max_hw_sectors;
+#endif
 }
 
 static inline unsigned int queue_max_sectors(struct request_queue *q)
@@ -86,6 +109,57 @@ static inline void drbd_set_my_capacity(struct drbd_conf *mdev,
 	set_capacity(mdev->vdisk, size);
 	mdev->this_bdev->bd_inode->i_size = (loff_t)size << 9;
 }
+
+#ifndef COMPAT_HAVE_FMODE_T
+typedef unsigned fmode_t;
+#endif
+
+#ifndef COMPAT_HAVE_BLKDEV_GET_BY_PATH
+/* see kernel 2.6.37,
+ * d4d7762 block: clean up blkdev_get() wrappers and their users
+ * e525fd8 block: make blkdev_get/put() handle exclusive access
+ * and kernel 2.6.28
+ * 30c40d2 [PATCH] propagate mode through open_bdev_excl/close_bdev_excl
+ * Also note that there is no FMODE_EXCL before
+ * 86d434d [PATCH] eliminate use of ->f_flags in block methods
+ */
+#ifndef COMPAT_HAVE_OPEN_BDEV_EXCLUSIVE
+#ifndef FMODE_EXCL
+#define FMODE_EXCL 0
+#endif
+static inline
+struct block_device *open_bdev_exclusive(const char *path, fmode_t mode, void *holder)
+{
+	/* drbd does not open readonly, but try to be correct, anyways */
+	return open_bdev_excl(path, (mode & FMODE_WRITE) ? 0 : MS_RDONLY, holder);
+}
+static inline
+void close_bdev_exclusive(struct block_device *bdev, fmode_t mode)
+{
+	/* mode ignored. */
+	close_bdev_excl(bdev);
+}
+#endif
+static inline struct block_device *blkdev_get_by_path(const char *path,
+		fmode_t mode, void *holder)
+{
+	return open_bdev_exclusive(path, mode, holder);
+}
+
+static inline int drbd_blkdev_put(struct block_device *bdev, fmode_t mode)
+{
+	/* blkdev_put != close_bdev_exclusive, in general, so this is obviously
+	 * not correct, and there should be some if (mode & FMODE_EXCL) ...
+	 * But this is the only way it is used in DRBD,
+	 * and for <= 2.6.27, there is no FMODE_EXCL anyways. */
+	close_bdev_exclusive(bdev, mode);
+
+	/* blkdev_put seems to not have useful return values,
+	 * close_bdev_exclusive is void. */
+	return 0;
+}
+#define blkdev_put(b, m)	drbd_blkdev_put(b, m)
+#endif
 
 #define drbd_bio_uptodate(bio) bio_flagged(bio, BIO_UPTODATE)
 
@@ -196,7 +270,7 @@ static inline void drbd_generic_make_request(struct drbd_conf *mdev,
 		return;
 	}
 
-	if (FAULT_ACTIVE(mdev, fault_type))
+	if (drbd_insert_fault(mdev, fault_type))
 		bio_endio(bio, -EIO);
 	else
 		generic_make_request(bio);
@@ -702,6 +776,14 @@ static inline void blk_queue_max_hw_sectors(struct request_queue *q, unsigned in
 {
 	blk_queue_max_sectors(q, max);
 }
+#elif defined(USE_BLK_QUEUE_MAX_SECTORS_ANYWAYS)
+	/* For kernel versions 2.6.31 to 2.6.33 inclusive, even though
+	 * blk_queue_max_hw_sectors is present, we actually need to use
+	 * blk_queue_max_sectors to set max_hw_sectors. :-(
+	 * RHEL6 2.6.32 chose to be different and already has eliminated
+	 * blk_queue_max_sectors as upstream 2.6.34 did.
+	 */
+#define blk_queue_max_hw_sectors(q, max)	blk_queue_max_sectors(q, max)
 #endif
 
 #ifdef NEED_BLK_QUEUE_MAX_SEGMENTS
@@ -754,40 +836,123 @@ static inline int atomic_add_unless(atomic_t *v, int a, int u)
 
 #ifdef NEED_BOOL_TYPE
 typedef _Bool                   bool;
+enum {
+	false = 0,
+	true = 1
+};
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35)
-#ifdef REQ_HARDBARRIER
-#undef REQ_HARDBARRIER
-#endif
-#define REQ_HARDBARRIER (1UL << BIO_RW_BARRIER)
-#ifdef BIO_RW_SYNC
+/* REQ_* and BIO_RW_* flags have been moved around in the tree,
+ * and have finally been "merged" with
+ * 7b6d91daee5cac6402186ff224c3af39d79f4a0e and
+ * 7cc015811ef8992dfcce314d0ed9642bc18143d1
+ * We communicate between different systems,
+ * so we have to somehow semantically map the bi_rw flags
+ * bi_rw (some kernel version) -> data packet flags -> bi_rw (other kernel version)
+ */
+
+#if defined(BIO_RW_SYNC)
 /* see upstream commits
  * 213d9417fec62ef4c3675621b9364a667954d4dd,
  * 93dbb393503d53cd226e5e1f0088fe8f4dbaa2b8
  * later, the defines even became an enum ;-) */
-#define REQ_SYNC        (1UL << BIO_RW_SYNC)
-#define REQ_UNPLUG      (0)
-#define DP_BCOMP_UNPLUG DP_UNPLUG
-#define REQ_BCOMP_SYNC  REQ_SYNC
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNC)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_SYNC)
+#elif defined(REQ_SYNC)		/* introduced in 2.6.36 */
+#define DRBD_REQ_SYNC		REQ_SYNC
+#define DRBD_REQ_UNPLUG		REQ_UNPLUG
 #else
-#define REQ_SYNC        (1UL << BIO_RW_SYNCIO)
-#define REQ_UNPLUG      (1UL << BIO_RW_UNPLUG)
-#define DP_BCOMP_UNPLUG (0)
-#define REQ_BCOMP_SYNC  (0)
-#endif
+/* cannot test on defined(BIO_RW_SYNCIO), it may be an enum */
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
 #endif
 
-#ifndef REQ_FLUSH
-#define REQ_FLUSH       (0)
+
+#ifdef REQ_FLUSH	/* introduced in 2.6.36, now equivalent to bi_rw */
+#define DRBD_REQ_FLUSH		REQ_FLUSH
+#define DRBD_REQ_FUA		REQ_FUA
+#define DRBD_REQ_DISCARD	REQ_DISCARD
+/* REQ_HARDBARRIER has been around for a long time,
+ * without being directly related to bi_rw.
+ * so the ifdef is only usful inside the ifdef REQ_FLUSH!
+ * commit 7cc0158 (v2.6.36-rc1) made it a bi_rw flag, ...  */
+#ifdef REQ_HARDBARRIER
+#define DRBD_REQ_HARDBARRIER	REQ_HARDBARRIER
+#else
+/* ... but REQ_HARDBARRIER was removed again in 02e031c (v2.6.37-rc4). */
+#define DRBD_REQ_HARDBARRIER	0
+#endif
+#else
+
+#define DRBD_REQ_FLUSH		(1UL << BIO_RW_BARRIER)
+/* REQ_FUA has been around for a longer time,
+ * without a direct equivalent in bi_rw. */
+#define DRBD_REQ_FUA		(1UL << BIO_RW_BARRIER)
+#define DRBD_REQ_HARDBARRIER	(1UL << BIO_RW_BARRIER)
+
+/* we don't support DISCARDS yet, anyways.
+ * cannot test on defined(BIO_RW_DISCARD), it may be an enum */
+#define DRBD_REQ_DISCARD	0
 #endif
 
-#ifndef REQ_FUA
-#define REQ_FUA		(REQ_HARDBARRIER|REQ_UNPLUG)
-#endif
+/* this results in:
+	bi_rw   -> dp_flags
 
-#ifndef REQ_DISCARD
-#define REQ_DISCARD     (0)
+< 2.6.28
+	SYNC	-> SYNC|UNPLUG
+	BARRIER	-> FUA|FLUSH
+	there is no DISCARD
+2.6.28
+	SYNC	-> SYNC|UNPLUG
+	BARRIER	-> FUA|FLUSH
+	DISCARD	-> DISCARD
+2.6.29
+	SYNCIO	-> SYNC
+	UNPLUG	-> UNPLUG
+	BARRIER	-> FUA|FLUSH
+	DISCARD	-> DISCARD
+2.6.36
+	SYNC	-> SYNC
+	UNPLUG	-> UNPLUG
+	FUA	-> FUA
+	FLUSH	-> FLUSH
+	DISCARD	-> DISCARD
+--------------------------------------
+	dp_flags   -> bi_rw
+< 2.6.28
+	SYNC	-> SYNC (and unplug)
+	UNPLUG	-> SYNC (and unplug)
+	FUA	-> BARRIER
+	FLUSH	-> BARRIER
+	there is no DISCARD,
+	it will be silently ignored on the receiving side.
+2.6.28
+	SYNC	-> SYNC (and unplug)
+	UNPLUG	-> SYNC (and unplug)
+	FUA	-> BARRIER
+	FLUSH	-> BARRIER
+	DISCARD -> DISCARD
+	(if that fails, we handle it like any other IO error)
+2.6.29
+	SYNC	-> SYNCIO
+	UNPLUG	-> UNPLUG
+	FUA	-> BARRIER
+	FLUSH	-> BARRIER
+	DISCARD -> DISCARD
+2.6.36
+	SYNC	-> SYNC
+	UNPLUG	-> UNPLUG
+	FUA	-> FUA
+	FLUSH	-> FLUSH
+	DISCARD	-> DISCARD
+
+NOTE: DISCARDs likely need some work still.  We should actually never see
+DISCARD requests, as our queue does not announce QUEUE_FLAG_DISCARD yet.
+*/
+
+#ifndef COMPLETION_INITIALIZER_ONSTACK
+#define COMPLETION_INITIALIZER_ONSTACK(work) \
+	({ init_completion(&work); work; })
 #endif
 
 #ifdef NEED_SCHEDULE_TIMEOUT_INTERR
@@ -813,6 +978,13 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 #define dynamic_dev_dbg(dev, fmt, ...)                               \
         do { if (0) dev_printk(KERN_DEBUG, dev, fmt, ##__VA_ARGS__); } while (0)
 #endif
+#endif
+
+#ifndef min_not_zero
+#define min_not_zero(x, y) ({			\
+	typeof(x) __x = (x);			\
+	typeof(y) __y = (y);			\
+	__x == 0 ? __y : ((__y == 0) ? __x : min(__x, __y)); })
 #endif
 
 #endif

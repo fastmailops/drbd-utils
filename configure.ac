@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.3.9, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.3.10, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -149,6 +149,10 @@ fi
 
 if test -z $XSLTPROC; then
    AC_MSG_WARN([Cannot build man pages without xsltproc. You may safely ignore this warning when building from a tarball.])
+   dnl default to some sane value at least,
+   dnl so the error message about command not found makes sense
+   dnl otherwise you get "--xinclude ... command not found" :-/
+   XSLTPROC=xsltproc
 fi
 
 if test -z $GIT; then
@@ -163,17 +167,6 @@ fi
 
 
 dnl Checks for system services
-
-dnl figure out the kernel versin and kernel headers directory
-if test "$WITH_KM" = "yes"; then
-   AC_CHECK_FILE($KDIR/Makefile,
-		,
-      		AC_MSG_WARN([Unable to find a kernel Makefile in $KDIR. You will have to set KDIR correctly when invoking make.]))
-   KVER='`uname -r`'
-   KDIR="/lib/modules/$KVER/build"
-fi
-AC_SUBST(KVER)
-AC_SUBST(KDIR)
 
 BASH_COMPLETION_SUFFIX=""
 UDEV_RULE_SUFFIX=""
@@ -313,7 +306,7 @@ else
      AC_CONFIG_FILES(drbd.spec)
    fi
    if test "$WITH_KM" = "yes"; then
-     AC_CONFIG_FILES(drbd-km.spec)
+     AC_CONFIG_FILES(drbd-km.spec drbd-kernel.spec)
    fi
 fi
 

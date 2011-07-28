@@ -253,7 +253,10 @@ for a detailed description of this section\*(Aqs parameters\&. Optional paramete
 \fBafter\-sb\-1pri\fR,
 \fBafter\-sb\-2pri\fR,
 \fBdata\-integrity\-alg\fR,
-\fBno\-tcp\-cork\fR
+\fBno\-tcp\-cork\fR,
+\fBon\-congestion\fR,
+\fBcongestion\-fill\fR,
+\fBcongestion\-extents\fR
 .RE
 .PP
 \fBstartup\fR
@@ -832,6 +835,29 @@ See also the notes on data integrity\&.
 DRBD usually uses the TCP socket option TCP_CORK to hint to the network stack when it can expect more data, and when it should flush out what it has in its send queue\&. It turned out that there is at least one network stack that performs worse when one uses this hinting method\&. Therefore we introducted this option, which disables the setting and clearing of the TCP_CORK socket option by DRBD\&.
 .RE
 .PP
+\fBon\-congestion \fR\fB\fIcongestion_policy\fR\fR, \fBcongestion\-fill \fR\fB\fIfill_threshold\fR\fR, \fBcongestion\-extents \fR\fB\fIactive_extents_threshold\fR\fR
+.RS 4
+By default DRBD blocks when the available TCP send queue becomes full\&. That means it will slow down the application that generates the write requests that cause DRBD to send more data down that TCP connection\&.
+.sp
+When DRBD is deployed with DRBD\-proxy it might be more desirable that DRBD goes into AHEAD/BEHIND mode shortly before the send queue becomes full\&. In AHEAD/BEHIND mode DRBD does no longer replicate data, but still keeps the connection open\&.
+.sp
+The advantage of the AHEAD/BEHIND mode is that the application is not slowed down, even if DRBD\-proxy\*(Aqs buffer is not sufficient to buffer all write requests\&. The downside is that the peer node falls behind, and that a resync will be necessary to bring it back into sync\&. During that resync the peer node will have an inconsistent disk\&.
+.sp
+Available
+\fIcongestion_policy\fRs are
+\fBblock\fR
+and
+\fBpull\-ahead\fR\&. The default is
+\fBblock\fR\&.
+\fIFill_threshold\fR
+might be in the range of 0 to 10GiBytes\&. The default is 0 which disables the check\&.
+\fIActive_extents_threshold\fR
+has the same limits as
+\fBal\-extents\fR\&.
+.sp
+The AHEAD/BEHIND mode and its settings are available since DRBD 8\&.3\&.10\&.
+.RE
+.PP
 \fBwfc\-timeout \fR\fB\fItime\fR\fR
 .RS 4
 Wait for connection timeout\&.
@@ -939,7 +965,7 @@ This setting is useful for DRBD setups with low bandwidth links\&. During the re
 will lower the required bandwidth in exchange for CPU cycles\&.
 .RE
 .PP
-\fBc\-plan\-ahead \fR\fB\fIplan_time\fR\fR, \fBc\-fill\-target \fR\fB\fIfill_target\fR\fR, \fBc\-delay\-target \fR\fB\fIdelay_target\fR\fR, \fBc\-max\-rate \fR\fB\fImax_rate\fR\fR, \fBc\-min\-rate \fR\fB\fImin_rate\fR\fR
+\fBc\-plan\-ahead \fR\fB\fIplan_time\fR\fR, \fBc\-fill\-target \fR\fB\fIfill_target\fR\fR, \fBc\-delay\-target \fR\fB\fIdelay_target\fR\fR, \fBc\-max\-rate \fR\fB\fImax_rate\fR\fR
 .RS 4
 The dynamic resync speed controller gets enabled with setting
 \fIplan_time\fR
@@ -961,8 +987,6 @@ is set to 0 the controller will use
 \fIdelay_target\fR\&. 5 times RTT is a reasonable starting value\&.
 \fIMax_rate\fR
 should be set to the bandwidth available between the DRBD\-hosts and the machines hosting DRBD\-proxy, or to the available disk\-bandwidth\&.
-\fIMin_rate\fR
-is the lower bound for the controller\&. If you set it to zero, resync IO requests will always get out of the way of application IO requests\&.
 .sp
 The default value of
 \fIplan_time\fR
@@ -973,10 +997,25 @@ has 0 and sectors as default unit\&.
 has 1 (100ms) and 0\&.1 as default unit\&.
 \fIMax_rate\fR
 has 10240 (100MiB/s) and KiB/s as default unit\&.
-\fIMin_rate\fR
-has 4096 (4MiB/s) and KiB/s as default unit\&.
 .sp
 The dynamic resync speed controller and its settings are available since DRBD 8\&.3\&.9\&.
+.RE
+.PP
+\fBc\-min\-rate \fR\fB\fImin_rate\fR\fR
+.RS 4
+A node that is primary and sync\-source has to schedule application IO requests and resync IO requests\&. The
+\fImin_rate\fR
+tells DRBD use only up to min_rate for resync IO and to dedicate all other available IO bandwidth to application requests\&.
+.sp
+Note: The value 0 has a special meaning\&. It disables the limitation of resync IO completely, which might slow down application IO considerably\&. Set it to a value of 1, if you prefer that resync IO never slows down application IO\&.
+.sp
+Note: Although the name might suggest that it is a lower bound for the dynamic resync speed controller, it is not\&. If the DRBD\-proxy buffer is full, the dynamic resync speed controller is free to lower the resync speed down to 0, completely independent of the
+\fBc\-min\-rate\fR
+setting\&.
+.sp
+
+\fIMin_rate\fR
+has 4096 (4MiB/s) and KiB/s as default unit\&.
 .RE
 .PP
 \fBon\-no\-data\-accessible \fR\fB\fIond\-policy\fR\fR
@@ -1081,9 +1120,13 @@ of the
 \fBnetwork\fR
 section\&.
 .PP
-Both mechanisms might deliver false positives if the user of DRBD modifies the data which gets written to disk while the transfer goes on\&. Currently the swap code and ReiserFS are known to do so\&. In both cases this is not a problem, because when the initiator of the data transfer does this it already knows that that data block will not be part of an on disk data structure\&.
+Both mechanisms might deliver false positives if the user of DRBD modifies the data which gets written to disk while the transfer goes on\&. This may happen for swap, or for certain append while global sync, or truncate/rewrite workloads, and not necessarily poses a problem for the integrity of the data\&. Usually when the initiator of the data transfer does this, it already knows that that data block will not be part of an on disk data structure, or will be resubmitted with correct data soon enough\&.
 .PP
-The most recent (2007) example of systematically corruption was an issue with the TCP offloading engine and the driver of a certain type of GBit NIC\&. The actual corruption happened on the DMA transfer from core memory to the card\&. Since the TCP checksum gets calculated on the card this type of corruption stays undetected as long as you do not use either the online
+The
+\fBdata\-integrity\-alg\fR
+causes the receiving side to log an error about "Digest integrity check FAILED: Ns +x\en", where N is the sector offset, and x is the size of the requst in bytes\&. It will then disconnect, and reconnect, thus causing a quick resync\&. If the sending side at the same time detected a modification, it warns about "Digest mismatch, buffer modified by upper layers during write: Ns +x\en", which shows that this was a false positive\&. The sending side may detect these buffer modifications immediately after the unmodified data has been copied to the tcp buffers, in which case the receiving side won\*(Aqt notice it\&.
+.PP
+The most recent (2007) example of systematic corruption was an issue with the TCP offloading engine and the driver of a certain type of GBit NIC\&. The actual corruption happened on the DMA transfer from core memory to the card\&. Since the TCP checksum gets calculated on the card, this type of corruption stays undetected as long as you do not use either the online
 \fBverify\fR
 or the
 \fBdata\-integrity\-alg\fR\&.

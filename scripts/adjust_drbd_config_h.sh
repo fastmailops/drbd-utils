@@ -173,10 +173,25 @@ if grep_q "^PATCHLEVEL *= *6" $KDIR/Makefile ; then
   else
     need_blk_queue_max_hw_sectors=1
   fi
+  if grep_q "blk_queue_max_sectors" $KDIR/include/linux/blkdev.h ; then
+    use_blk_queue_max_sectors_anyways=1
+  else
+    use_blk_queue_max_sectors_anyways=0
+  fi
   if grep_q "blk_queue_max_segments" $KDIR/include/linux/blkdev.h ; then
     need_blk_queue_max_segments=0
   else
     need_blk_queue_max_segments=1
+  fi
+  if grep_q "blkdev_get_by_path" $KDIR/include/linux/fs.h ; then
+    have_blkdev_get_by_path=1
+  else
+    have_blkdev_get_by_path=0
+  fi
+  if grep_q "open_bdev_exclusive" $KDIR/include/linux/fs.h ; then
+    have_open_bdev_exclusive=1
+  else
+    have_open_bdev_exclusive=0
   fi
   if grep_q "typedef.*bool" $KDIR/include/linux/types.h ; then
     have_bool_type=1
@@ -187,6 +202,11 @@ if grep_q "^PATCHLEVEL *= *6" $KDIR/Makefile ; then
     have_sched_timeout_interr=1
   else
     have_sched_timeout_interr=0
+  fi
+  if grep_q "fmode_t" $KDIR/include/linux/types.h ; then
+    have_fmode_t=1
+  else
+    have_fmode_t=0
   fi
 else
     # not a 2.6. kernel. just leave it alone...
@@ -231,14 +251,22 @@ perl -pe "
   { ( $have_netlink_skb_parms ? '' : '//' ) . \$1}e;
  s{.*(#define NEED_BLK_QUEUE_MAX_HW_SECTORS.*)}
   { ( $need_blk_queue_max_hw_sectors ? '' : '//' ) . \$1}e;
+ s{.*(#define USE_BLK_QUEUE_MAX_SECTORS_ANYWAYS.*)}
+  { ( $use_blk_queue_max_sectors_anyways ? '' : '//' ) . \$1}e;
  s{.*(#define NEED_BLK_QUEUE_MAX_SEGMENTS.*)}
   { ( $need_blk_queue_max_segments ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_BLKDEV_GET_BY_PATH.*)}
+  { ( $have_blkdev_get_by_path ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_OPEN_BDEV_EXCLUSIVE.*)}
+  { ( $have_open_bdev_exclusive ? '' : '//' ) . \$1}e;
  s{.*(#define NEED_ATOMIC_ADD_UNLESS.*)}
   { ( $have_atomic_add_unless ? '//' : '' ) . \$1}e;
  s{.*(#define NEED_BOOL_TYPE.*)}
   { ( $have_bool_type ? '//' : '' ) . \$1}e;
  s{.*(#define NEED_SCHEDULE_TIMEOUT_INTERR.*)}
   { ( $have_sched_timeout_interr ? '//' : '' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_FMODE_T.*)}
+  { ( $have_fmode_t ? '' : '//' ) . \$1}e;
  " \
 	  < ./linux/drbd_config.h \
 	  > ./linux/drbd_config.h.new
