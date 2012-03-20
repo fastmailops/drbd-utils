@@ -27,7 +27,6 @@
 #include <linux/module.h>
 #include <linux/drbd.h>
 #include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include <linux/wait.h>
 #include <linux/mm.h>
 #include <linux/memcontrol.h>
@@ -162,7 +161,7 @@ static void drbd_endio_write_sec_final(struct drbd_epoch_entry *e) __releases(lo
 
 	trace_drbd_ee(mdev, e, "write completed");
 
-	/* No hlist_del_init(&e->colision) here, we did not send the Ack yet,
+	/* No hlist_del_init(&e->collision) here, we did not send the Ack yet,
 	 * neither did we wake possibly waiting conflicting requests.
 	 * done from "drbd_process_done_ee" within the appropriate w.cb
 	 * (e_end_block/e_end_resync_block) or from _drbd_clear_done_ee */
@@ -340,42 +339,48 @@ void drbd_csum_bio(struct drbd_conf *mdev, struct crypto_hash *tfm, struct bio *
 	crypto_hash_final(&desc, digest);
 }
 
-STATIC int w_e_send_csum(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
+/* TODO merge common code with w_e_end_ov_req */
+int w_e_send_csum(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
 	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	int digest_size;
 	void *digest;
-	int ok;
+	int ok = 1;
 
 	D_ASSERT(e->block_id == DRBD_MAGIC + 0xbeef);
 
-	if (unlikely(cancel)) {
+	if (unlikely(cancel))
+		goto out;
+
+	if (likely((e->flags & EE_WAS_ERROR) != 0))
+		goto out;
+
+	digest_size = crypto_hash_digestsize(mdev->csums_tfm);
+	digest = kmalloc(digest_size, GFP_NOIO);
+	if (digest) {
+		sector_t sector = e->sector;
+		unsigned int size = e->size;
+		drbd_csum_ee(mdev, mdev->csums_tfm, e, digest);
+		/* Free e and pages before send.
+		 * In case we block on congestion, we could otherwise run into
+		 * some distributed deadlock, if the other side blocks on
+		 * congestion as well, because our receiver blocks in
+		 * drbd_pp_alloc due to pp_in_use > max_buffers. */
 		drbd_free_ee(mdev, e);
-		return 1;
+		e = NULL;
+		inc_rs_pending(mdev);
+		ok = drbd_send_drequest_csum(mdev, sector, size,
+					     digest, digest_size,
+					     P_CSUM_RS_REQUEST);
+		kfree(digest);
+	} else {
+		dev_err(DEV, "kmalloc() of digest failed.\n");
+		ok = 0;
 	}
 
-	if (likely((e->flags & EE_WAS_ERROR) == 0)) {
-		digest_size = crypto_hash_digestsize(mdev->csums_tfm);
-		digest = kmalloc(digest_size, GFP_NOIO);
-		if (digest) {
-			drbd_csum_ee(mdev, mdev->csums_tfm, e, digest);
-
-			inc_rs_pending(mdev);
-			ok = drbd_send_drequest_csum(mdev,
-						     e->sector,
-						     e->size,
-						     digest,
-						     digest_size,
-						     P_CSUM_RS_REQUEST);
-			kfree(digest);
-		} else {
-			dev_err(DEV, "kmalloc() of digest failed.\n");
-			ok = 0;
-		}
-	} else
-		ok = 1;
-
-	drbd_free_ee(mdev, e);
+out:
+	if (e)
+		drbd_free_ee(mdev, e);
 
 	if (unlikely(!ok))
 		dev_err(DEV, "drbd_send_drequest(..., csum) failed\n");
@@ -575,12 +580,7 @@ STATIC int w_make_resync_request(struct drbd_conf *mdev,
 		return 1;
 	}
 
-	/* starting with drbd 8.3.8, we can handle multi-bio EEs,
-	 * if it should be necessary */
-	max_bio_size =
-		mdev->agreed_pro_version < 94 ? queue_max_hw_sectors(mdev->rq_queue) << 9 :
-		mdev->agreed_pro_version < 95 ?	DRBD_MAX_SIZE_H80_PACKET : DRBD_MAX_BIO_SIZE;
-
+	max_bio_size = queue_max_hw_sectors(mdev->rq_queue) << 9;
 	number = drbd_rs_number_requests(mdev);
 	if (number == 0)
 		goto requeue;
@@ -880,7 +880,7 @@ int drbd_resync_finished(struct drbd_conf *mdev)
 			const int ratio =
 				(t == 0)     ? 0 :
 			(t < 100000) ? ((s*100)/t) : (s/(t/100));
-			dev_info(DEV, "%u %% had equal check sums, eliminated: %luK; "
+			dev_info(DEV, "%u %% had equal checksums, eliminated: %luK; "
 			     "transferred %luK total %luK\n",
 			     ratio,
 			     Bit2KB(mdev->rs_same_csum),
@@ -1118,9 +1118,12 @@ int w_e_end_csum_rs_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 	return ok;
 }
 
+/* TODO merge common code with w_e_send_csum */
 int w_e_end_ov_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
 	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
+	sector_t sector = e->sector;
+	unsigned int size = e->size;
 	int digest_size;
 	void *digest;
 	int ok = 1;
@@ -1128,27 +1131,37 @@ int w_e_end_ov_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 	if (unlikely(cancel))
 		goto out;
 
-	if (unlikely((e->flags & EE_WAS_ERROR) != 0))
-		goto out;
-
 	digest_size = crypto_hash_digestsize(mdev->verify_tfm);
-	/* FIXME if this allocation fails, online verify will not terminate! */
 	digest = kmalloc(digest_size, GFP_NOIO);
-	if (digest) {
-		drbd_csum_ee(mdev, mdev->verify_tfm, e, digest);
-		inc_rs_pending(mdev);
-		ok = drbd_send_drequest_csum(mdev, e->sector, e->size,
-					     digest, digest_size, P_OV_REPLY);
-		if (!ok)
-			dec_rs_pending(mdev);
-		kfree(digest);
+	if (!digest) {
+		ok = 0;	/* terminate the connection in case the allocation failed */
+		goto out;
 	}
 
-out:
+	if (likely(!(e->flags & EE_WAS_ERROR)))
+		drbd_csum_ee(mdev, mdev->verify_tfm, e, digest);
+	else
+		memset(digest, 0, digest_size);
+
+	/* Free e and pages before send.
+	 * In case we block on congestion, we could otherwise run into
+	 * some distributed deadlock, if the other side blocks on
+	 * congestion as well, because our receiver blocks in
+	 * drbd_pp_alloc due to pp_in_use > max_buffers. */
 	drbd_free_ee(mdev, e);
+	e = NULL;
+	inc_rs_pending(mdev);
+	ok = drbd_send_drequest_csum(mdev, sector, size,
+				     digest, digest_size,
+				     P_OV_REPLY);
+	if (!ok)
+		dec_rs_pending(mdev);
+	kfree(digest);
 
+out:
+	if (e)
+		drbd_free_ee(mdev, e);
 	dec_unacked(mdev);
-
 	return ok;
 }
 
@@ -1167,8 +1180,10 @@ int w_e_end_ov_reply(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
 	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	struct digest_info *di;
-	int digest_size;
 	void *digest;
+	sector_t sector = e->sector;
+	unsigned int size = e->size;
+	int digest_size;
 	int ok, eq = 0;
 
 	if (unlikely(cancel)) {
@@ -1196,22 +1211,23 @@ int w_e_end_ov_reply(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 			eq = !memcmp(digest, di->digest, digest_size);
 			kfree(digest);
 		}
-	} else {
-		ok = drbd_send_ack(mdev, P_NEG_RS_DREPLY, e);
-		if (DRBD_ratelimit(5*HZ, 5))
-			dev_err(DEV, "Sending NegDReply. I guess it gets messy.\n");
 	}
 
-	dec_unacked(mdev);
+		/* Free e and pages before send.
+		 * In case we block on congestion, we could otherwise run into
+		 * some distributed deadlock, if the other side blocks on
+		 * congestion as well, because our receiver blocks in
+		 * drbd_pp_alloc due to pp_in_use > max_buffers. */
+	drbd_free_ee(mdev, e);
 	if (!eq)
-		drbd_ov_oos_found(mdev, e->sector, e->size);
+		drbd_ov_oos_found(mdev, sector, size);
 	else
 		ov_oos_print(mdev);
 
-	ok = drbd_send_ack_ex(mdev, P_OV_RESULT, e->sector, e->size,
+	ok = drbd_send_ack_ex(mdev, P_OV_RESULT, sector, size,
 			      eq ? ID_IN_SYNC : ID_OUT_OF_SYNC);
 
-	drbd_free_ee(mdev, e);
+	dec_unacked(mdev);
 
 	--mdev->ov_left;
 

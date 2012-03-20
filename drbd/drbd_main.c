@@ -33,7 +33,6 @@
 #include <asm/types.h>
 #include <net/sock.h>
 #include <linux/ctype.h>
-#include <linux/smp_lock.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/proc_fs.h>
@@ -543,8 +542,16 @@ STATIC enum drbd_state_rv is_valid_state(struct drbd_conf *, union drbd_state);
 STATIC enum drbd_state_rv is_valid_state_transition(struct drbd_conf *,
 						    union drbd_state,
 						    union drbd_state);
+enum sanitize_state_warnings {
+	NO_WARNING,
+	ABORTED_ONLINE_VERIFY,
+	ABORTED_RESYNC,
+	CONNECTION_LOST_NEGOTIATING,
+	IMPLICITLY_UPGRADED_DISK,
+	IMPLICITLY_UPGRADED_PDSK,
+};
 STATIC union drbd_state sanitize_state(struct drbd_conf *mdev, union drbd_state os,
-				       union drbd_state ns, const char **warn_sync_abort);
+				       union drbd_state ns, enum sanitize_state_warnings *warn);
 int drbd_send_state_req(struct drbd_conf *,
 			union drbd_state, union drbd_state);
 
@@ -838,6 +845,9 @@ is_valid_state(struct drbd_conf *mdev, union drbd_state ns)
 		  mdev->agreed_pro_version < 88)
 		rv = SS_NOT_SUPPORTED;
 
+	else if (ns.conn >= C_CONNECTED && ns.pdsk == D_UNKNOWN)
+		rv = SS_CONNECTED_OUTDATES;
+
 	return rv;
 }
 
@@ -893,6 +903,21 @@ is_valid_state_transition(struct drbd_conf *mdev, union drbd_state ns,
 	return rv;
 }
 
+static void print_sanitize_warnings(struct drbd_conf *mdev, enum sanitize_state_warnings warn)
+{
+	static const char *msg_table[] = {
+		[NO_WARNING] = "",
+		[ABORTED_ONLINE_VERIFY] = "Online-verify aborted.",
+		[ABORTED_RESYNC] = "Resync aborted.",
+		[CONNECTION_LOST_NEGOTIATING] = "Connection lost while negotiating, no data!",
+		[IMPLICITLY_UPGRADED_DISK] = "Implicitly upgraded disk",
+		[IMPLICITLY_UPGRADED_PDSK] = "Implicitly upgraded pdsk",
+	};
+
+	if (warn != NO_WARNING)
+		dev_warn(DEV, "%s\n", msg_table[warn]);
+}
+
 /**
  * sanitize_state() - Resolves implicitly necessary additional changes to a state transition
  * @mdev:	DRBD device.
@@ -904,10 +929,13 @@ is_valid_state_transition(struct drbd_conf *mdev, union drbd_state ns,
  * to D_UNKNOWN. This rule and many more along those lines are in this function.
  */
 STATIC union drbd_state sanitize_state(struct drbd_conf *mdev, union drbd_state os,
-				       union drbd_state ns, const char **warn_sync_abort)
+				       union drbd_state ns, enum sanitize_state_warnings *warn)
 {
 	enum drbd_fencing_p fp;
 	enum drbd_disk_state disk_min, disk_max, pdsk_min, pdsk_max;
+
+	if (warn)
+		*warn = NO_WARNING;
 
 	fp = FP_DONT_CARE;
 	if (get_ldev(mdev)) {
@@ -953,10 +981,9 @@ STATIC union drbd_state sanitize_state(struct drbd_conf *mdev, union drbd_state 
 	/* Abort resync if a disk fails/detaches */
 	if (os.conn > C_CONNECTED && ns.conn > C_CONNECTED &&
 	    (ns.disk <= D_FAILED || ns.pdsk <= D_FAILED)) {
-		if (warn_sync_abort)
-			*warn_sync_abort =
-				os.conn == C_VERIFY_S || os.conn == C_VERIFY_T ?
-				"Online-verify" : "Resync";
+		if (warn)
+			*warn =	os.conn == C_VERIFY_S || os.conn == C_VERIFY_T ?
+				ABORTED_ONLINE_VERIFY : ABORTED_RESYNC;
 		ns.conn = C_CONNECTED;
 	}
 
@@ -967,7 +994,8 @@ STATIC union drbd_state sanitize_state(struct drbd_conf *mdev, union drbd_state 
 			ns.disk = mdev->new_state_tmp.disk;
 			ns.pdsk = mdev->new_state_tmp.pdsk;
 		} else {
-			dev_alert(DEV, "Connection lost while negotiating, no data!\n");
+			if (warn)
+				*warn = CONNECTION_LOST_NEGOTIATING;
 			ns.disk = D_DISKLESS;
 			ns.pdsk = D_UNKNOWN;
 		}
@@ -1049,16 +1077,16 @@ STATIC union drbd_state sanitize_state(struct drbd_conf *mdev, union drbd_state 
 		ns.disk = disk_max;
 
 	if (ns.disk < disk_min) {
-		dev_warn(DEV, "Implicitly set disk from %s to %s\n",
-			 drbd_disk_str(ns.disk), drbd_disk_str(disk_min));
+		if (warn)
+			*warn = IMPLICITLY_UPGRADED_DISK;
 		ns.disk = disk_min;
 	}
 	if (ns.pdsk > pdsk_max)
 		ns.pdsk = pdsk_max;
 
 	if (ns.pdsk < pdsk_min) {
-		dev_warn(DEV, "Implicitly set pdsk from %s to %s\n",
-			 drbd_disk_str(ns.pdsk), drbd_disk_str(pdsk_min));
+		if (warn)
+			*warn = IMPLICITLY_UPGRADED_PDSK;
 		ns.pdsk = pdsk_min;
 	}
 
@@ -1138,7 +1166,7 @@ __drbd_set_state(struct drbd_conf *mdev, union drbd_state ns,
 #endif
 	union drbd_state os;
 	enum drbd_state_rv rv = SS_SUCCESS;
-	const char *warn_sync_abort = NULL;
+	enum sanitize_state_warnings ssw;
 	struct after_state_chg_work *ascw;
 
 
@@ -1152,7 +1180,7 @@ __drbd_set_state(struct drbd_conf *mdev, union drbd_state ns,
 	}
 #endif
 
-	ns = sanitize_state(mdev, os, ns, &warn_sync_abort);
+	ns = sanitize_state(mdev, os, ns, &ssw);
 
 #if DRBD_DEBUG_STATE_CHANGES
 	drbd_state_dbg(mdev, ns.seq, ns.func, ns.line, "=>ns", ns);
@@ -1182,8 +1210,7 @@ __drbd_set_state(struct drbd_conf *mdev, union drbd_state ns,
 		return rv;
 	}
 
-	if (warn_sync_abort)
-		dev_warn(DEV, "%s aborted.\n", warn_sync_abort);
+	print_sanitize_warnings(mdev, ssw);
 
 #if DUMP_MD >= 2
 	{
@@ -1651,9 +1678,7 @@ STATIC void after_state_ch(struct drbd_conf *mdev, union drbd_state os,
 				drbd_disk_str(mdev->state.disk));
 
 		if (drbd_send_state(mdev))
-			dev_warn(DEV, "Notified peer that I am detaching my disk\n");
-		else
-			dev_err(DEV, "Sending state for detaching disk failed\n");
+			dev_info(DEV, "Notified peer that I am detaching my disk\n");
 
 		drbd_rs_cancel_all(mdev);
 
@@ -1683,11 +1708,15 @@ STATIC void after_state_ch(struct drbd_conf *mdev, union drbd_state os,
                 atomic_set(&mdev->rs_pending_cnt, 0);
 
 		if (drbd_send_state(mdev))
-			dev_warn(DEV, "Notified peer that I'm now diskless.\n");
+			dev_info(DEV, "Notified peer that I'm now diskless.\n");
 		/* corresponding get_ldev in __drbd_set_state
-		 * this may finaly trigger drbd_ldev_destroy. */
+		 * this may finally trigger drbd_ldev_destroy. */
 		put_ldev(mdev);
 	}
+
+	/* Notify peer that I had a local IO error, and did not detached.. */
+	if (os.disk == D_UP_TO_DATE && ns.disk == D_INCONSISTENT)
+		drbd_send_state(mdev);
 
 	/* Disks got bigger while they were detached */
 	if (ns.disk > D_NEGOTIATING && ns.pdsk > D_NEGOTIATING &&
@@ -2229,7 +2258,7 @@ int drbd_send_sizes(struct drbd_conf *mdev, int trigger_reply, enum dds_flags fl
 {
 	struct p_sizes p;
 	sector_t d_size, u_size;
-	int q_order_type;
+	int q_order_type, max_bio_size;
 	int ok;
 
 	if (get_ldev_if_state(mdev, D_NEGOTIATING)) {
@@ -2237,17 +2266,20 @@ int drbd_send_sizes(struct drbd_conf *mdev, int trigger_reply, enum dds_flags fl
 		d_size = drbd_get_max_capacity(mdev->ldev);
 		u_size = mdev->ldev->dc.disk_size;
 		q_order_type = drbd_queue_order_type(mdev);
+		max_bio_size = queue_max_hw_sectors(mdev->ldev->backing_bdev->bd_disk->queue) << 9;
+		max_bio_size = min_t(int, max_bio_size, DRBD_MAX_BIO_SIZE);
 		put_ldev(mdev);
 	} else {
 		d_size = 0;
 		u_size = 0;
 		q_order_type = QUEUE_ORDERED_NONE;
+		max_bio_size = DRBD_MAX_BIO_SIZE; /* ... multiple BIOs per peer_request */
 	}
 
 	p.d_size = cpu_to_be64(d_size);
 	p.u_size = cpu_to_be64(u_size);
 	p.c_size = cpu_to_be64(trigger_reply ? 0 : drbd_get_capacity(mdev->this_bdev));
-	p.max_bio_size = cpu_to_be32(queue_max_hw_sectors(mdev->rq_queue) << 9);
+	p.max_bio_size = cpu_to_be32(max_bio_size);
 	p.queue_order_type = cpu_to_be16(q_order_type);
 	p.dds_flags = cpu_to_be16(flags);
 
@@ -2894,7 +2926,7 @@ int drbd_send_dblock(struct drbd_conf *mdev, struct drbd_request *req)
 
 		/* double check digest, sometimes buffers have been modified in flight. */
 		if (dgs > 0 && dgs <= 64) {
-			/* 64 byte, 512 bit, is the larges digest size
+			/* 64 byte, 512 bit, is the largest digest size
 			 * currently supported in kernel crypto. */
 			unsigned char digest[64];
 			drbd_csum_bio(mdev, mdev->integrity_w_tfm, req->master_bio, digest);
@@ -3145,6 +3177,7 @@ static int drbd_release(struct inode *inode, struct file *file)
 }
 #endif
 
+#ifdef blk_queue_plugged
 STATIC void drbd_unplug_fn(struct request_queue *q)
 {
 	struct drbd_conf *mdev = q->queuedata;
@@ -3175,6 +3208,7 @@ STATIC void drbd_unplug_fn(struct request_queue *q)
 	if (mdev->state.disk >= D_INCONSISTENT)
 		drbd_kick_lo(mdev);
 }
+#endif
 
 STATIC void drbd_set_defaults(struct drbd_conf *mdev)
 {
@@ -3278,12 +3312,15 @@ void drbd_init_set_defaults(struct drbd_conf *mdev)
 	init_timer(&mdev->resync_timer);
 	init_timer(&mdev->md_sync_timer);
 	init_timer(&mdev->start_resync_timer);
+	init_timer(&mdev->request_timer);
 	mdev->resync_timer.function = resync_timer_fn;
 	mdev->resync_timer.data = (unsigned long) mdev;
 	mdev->md_sync_timer.function = md_sync_timer_fn;
 	mdev->md_sync_timer.data = (unsigned long) mdev;
 	mdev->start_resync_timer.function = start_resync_timer_fn;
 	mdev->start_resync_timer.data = (unsigned long) mdev;
+	mdev->request_timer.function = request_timer_fn;
+	mdev->request_timer.data = (unsigned long) mdev;
 
 	init_waitqueue_head(&mdev->misc_wait);
 	init_waitqueue_head(&mdev->state_wait);
@@ -3299,6 +3336,8 @@ void drbd_init_set_defaults(struct drbd_conf *mdev)
 	mdev->agreed_pro_version = PRO_VERSION_MAX;
 	mdev->write_ordering = WO_bio_barrier;
 	mdev->resync_wenr = LC_FREE;
+	mdev->peer_max_bio_size = DRBD_MAX_BIO_SIZE_SAFE;
+	mdev->local_max_bio_size = DRBD_MAX_BIO_SIZE_SAFE;
 }
 
 void drbd_mdev_cleanup(struct drbd_conf *mdev)
@@ -3533,7 +3572,7 @@ static void drbd_delete_device(unsigned int minor)
 
 	drbd_release_ee_lists(mdev);
 
-	/* should be free'd on disconnect? */
+	/* should be freed on disconnect? */
 	kfree(mdev->ee_hash);
 	/*
 	mdev->ee_hash_s = 0;
@@ -3673,12 +3712,16 @@ struct drbd_conf *drbd_new_device(unsigned int minor)
 	q->backing_dev_info.congested_data = mdev;
 
 	blk_queue_make_request(q, drbd_make_request);
-	blk_queue_max_hw_sectors(q, DRBD_MAX_BIO_SIZE >> 9);
+	/* Setting the max_hw_sectors to an odd value of 8kibyte here
+	   This triggers a max_bio_size message upon first attach or connect */
+	blk_queue_max_hw_sectors(q, DRBD_MAX_BIO_SIZE_SAFE >> 8);
 	blk_queue_bounce_limit(q, BLK_BOUNCE_ANY);
 	blk_queue_merge_bvec(q, drbd_merge_bvec);
 	q->queue_lock = &mdev->req_lock; /* needed since we use */
+#ifdef blk_queue_plugged
 		/* plugging on a queue, that actually has no requests! */
 	q->unplug_fn = drbd_unplug_fn;
+#endif
 
 	mdev->md_io_page = alloc_page(GFP_KERNEL);
 	if (!mdev->md_io_page)
@@ -3888,7 +3931,8 @@ struct meta_data_on_disk {
 	      /* `-- act_log->nr_elements <-- sync_conf.al_extents */
 	u32 bm_offset;         /* offset to the bitmap, from here */
 	u32 bm_bytes_per_bit;  /* BM_BLOCK_SIZE */
-	u32 reserved_u32[4];
+	u32 la_peer_max_bio_size;   /* last peer max_bio_size */
+	u32 reserved_u32[3];
 
 } __packed;
 
@@ -3931,6 +3975,7 @@ void drbd_md_sync(struct drbd_conf *mdev)
 	buffer->device_uuid = cpu_to_be64(mdev->ldev->md.device_uuid);
 
 	buffer->bm_offset = cpu_to_be32(mdev->ldev->md.bm_offset);
+	buffer->la_peer_max_bio_size = cpu_to_be32(mdev->peer_max_bio_size);
 
 	D_ASSERT(drbd_md_ss__(mdev, mdev->ldev) == mdev->ldev->md.md_offset);
 	sector = mdev->ldev->md.md_offset;
@@ -3971,7 +4016,7 @@ int drbd_md_read(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 	buffer = (struct meta_data_on_disk *)page_address(mdev->md_io_page);
 
 	if (!drbd_md_sync_page_io(mdev, bdev, bdev->md.md_offset, READ)) {
-		/* NOTE: cant do normal error processing here as this is
+		/* NOTE: can't do normal error processing here as this is
 		   called BEFORE disk is attached */
 		dev_err(DEV, "Error while reading metadata.\n");
 		rv = ERR_IO_MD_DISK;
@@ -4015,6 +4060,15 @@ int drbd_md_read(struct drbd_conf *mdev, struct drbd_backing_dev *bdev)
 	bdev->md.flags = be32_to_cpu(buffer->flags);
 	mdev->sync_conf.al_extents = be32_to_cpu(buffer->al_nr_extents);
 	bdev->md.device_uuid = be64_to_cpu(buffer->device_uuid);
+
+	spin_lock_irq(&mdev->req_lock);
+	if (mdev->state.conn < C_CONNECTED) {
+		int peer;
+		peer = be32_to_cpu(buffer->la_peer_max_bio_size);
+		peer = max_t(int, peer, DRBD_MAX_BIO_SIZE_SAFE);
+		mdev->peer_max_bio_size = peer;
+	}
+	spin_unlock_irq(&mdev->req_lock);
 
 	if (mdev->sync_conf.al_extents < 7)
 		mdev->sync_conf.al_extents = 127;

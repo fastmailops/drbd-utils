@@ -32,7 +32,7 @@ extern const char *drbd_buildtag(void);
 
 /* End of external module for 2.6.33 stuff */
 
-#define REL_VERSION "8.3.10"
+#define REL_VERSION "8.3.11"
 #define API_VERSION 88
 #define PRO_VERSION_MIN 86
 #define PRO_VERSION_MAX 96
@@ -110,6 +110,9 @@ extern const char *drbd_buildtag(void);
 /* In 2.6.32 we finally fixed connector to pass netlink_skb_parms to the callback
  */
 #define KERNEL_HAS_CN_SKB_PARMS
+/* 2.6.39 converts connector to be syncronous, and removes .eff_cap from the
+ *  * parameters. We then need to test on current_cap() instead. */
+#define HAVE_NL_SKB_EFF_CAP
 
 /* In the 2.6.34 mergewindow blk_queue_max_sectors() got blk_queue_max_hw_sectors() and
    blk_queue_max_(phys|hw)_segments() got blk_queue_max_segments()
@@ -148,5 +151,8 @@ extern const char *drbd_buildtag(void);
 
 /* Stone old kernels lack the fmode_t type */
 #define COMPAT_HAVE_FMODE_T
+
+/* In commit c4945b9e (v2.6.39-rc1), the little-endian bit ops got renamed */
+#define COMPAT_HAVE_FIND_NEXT_ZERO_BIT_LE
 
 #endif

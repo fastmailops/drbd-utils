@@ -197,7 +197,7 @@ static void _about_to_complete_local_write(struct drbd_conf *mdev,
 		 * they must have been failed on the spot */
 #define OVERLAPS overlaps(sector, size, i->sector, i->size)
 		slot = tl_hash_slot(mdev, sector);
-		hlist_for_each_entry(i, n, slot, colision) {
+		hlist_for_each_entry(i, n, slot, collision) {
 			if (OVERLAPS) {
 				dev_alert(DEV, "LOGIC BUG: completed: %p %llus +%u; "
 				      "other: %p %llus +%u\n",
@@ -221,7 +221,7 @@ static void _about_to_complete_local_write(struct drbd_conf *mdev,
 #undef OVERLAPS
 #define OVERLAPS overlaps(sector, size, e->sector, e->size)
 		slot = ee_hash_slot(mdev, req->sector);
-		hlist_for_each_entry(e, n, slot, colision) {
+		hlist_for_each_entry(e, n, slot, collision) {
 			if (OVERLAPS) {
 				wake_up(&mdev->misc_wait);
 				break;
@@ -297,8 +297,8 @@ void _req_may_be_done(struct drbd_request *req, struct bio_and_error *m)
 
 		/* remove the request from the conflict detection
 		 * respective block_id verification hash */
-		if (!hlist_unhashed(&req->colision))
-			hlist_del(&req->colision);
+		if (!hlist_unhashed(&req->collision))
+			hlist_del(&req->collision);
 		else
 			D_ASSERT((s & (RQ_NET_MASK & ~RQ_NET_DONE)) == 0);
 
@@ -366,7 +366,7 @@ STATIC int _req_conflicts(struct drbd_request *req)
 	struct hlist_node *n;
 	struct hlist_head *slot;
 
-	D_ASSERT(hlist_unhashed(&req->colision));
+	D_ASSERT(hlist_unhashed(&req->collision));
 
 	if (!get_net_conf(mdev))
 		return 0;
@@ -378,7 +378,7 @@ STATIC int _req_conflicts(struct drbd_request *req)
 
 #define OVERLAPS overlaps(i->sector, i->size, sector, size)
 	slot = tl_hash_slot(mdev, sector);
-	hlist_for_each_entry(i, n, slot, colision) {
+	hlist_for_each_entry(i, n, slot, collision) {
 		if (OVERLAPS) {
 			dev_alert(DEV, "%s[%u] Concurrent local write detected! "
 			      "[DISCARD L] new: %llus +%u; "
@@ -396,7 +396,7 @@ STATIC int _req_conflicts(struct drbd_request *req)
 #undef OVERLAPS
 #define OVERLAPS overlaps(e->sector, e->size, sector, size)
 		slot = ee_hash_slot(mdev, sector);
-		hlist_for_each_entry(e, n, slot, colision) {
+		hlist_for_each_entry(e, n, slot, collision) {
 			if (OVERLAPS) {
 				dev_alert(DEV, "%s[%u] Concurrent remote write detected!"
 				      " [DISCARD L] new: %llus +%u; "
@@ -530,7 +530,7 @@ int __req_mod(struct drbd_request *req, enum drbd_req_event what,
 
 		/* so we can verify the handle in the answer packet
 		 * corresponding hlist_del is in _req_may_be_done() */
-		hlist_add_head(&req->colision, ar_hash_slot(mdev, req->sector));
+		hlist_add_head(&req->collision, ar_hash_slot(mdev, req->sector));
 
 		set_bit(UNPLUG_REMOTE, &mdev->flags);
 
@@ -546,7 +546,7 @@ int __req_mod(struct drbd_request *req, enum drbd_req_event what,
 		/* assert something? */
 		/* from drbd_make_request_common only */
 
-		hlist_add_head(&req->colision, tl_hash_slot(mdev, req->sector));
+		hlist_add_head(&req->collision, tl_hash_slot(mdev, req->sector));
 		/* corresponding hlist_del is in _req_may_be_done() */
 
 		/* NOTE
@@ -1081,7 +1081,7 @@ fail_conflicting:
 	err = 0;
 
 fail_free_complete:
-	if (rw == WRITE && local)
+	if (req->rq_state & RQ_IN_ACT_LOG)
 		drbd_al_complete_io(mdev, sector);
 fail_and_free_req:
 	if (local) {
@@ -1256,4 +1256,43 @@ int drbd_merge_bvec(struct request_queue *q,
 		put_ldev(mdev);
 	}
 	return limit;
+}
+
+void request_timer_fn(unsigned long data)
+{
+	struct drbd_conf *mdev = (struct drbd_conf *) data;
+	struct drbd_request *req; /* oldest request */
+	struct list_head *le;
+	unsigned long et = 0; /* effective timeout = ko_count * timeout */
+
+	if (get_net_conf(mdev)) {
+		et = mdev->net_conf->timeout*HZ/10 * mdev->net_conf->ko_count;
+		put_net_conf(mdev);
+	}
+	if (!et || mdev->state.conn < C_WF_REPORT_PARAMS)
+		return; /* Recurring timer stopped */
+
+	spin_lock_irq(&mdev->req_lock);
+	le = &mdev->oldest_tle->requests;
+	if (list_empty(le)) {
+		spin_unlock_irq(&mdev->req_lock);
+		mod_timer(&mdev->request_timer, jiffies + et);
+		return;
+	}
+
+	le = le->prev;
+	req = list_entry(le, struct drbd_request, tl_requests);
+	if (time_is_before_eq_jiffies(req->start_time + et)) {
+		if (req->rq_state & RQ_NET_PENDING) {
+			dev_warn(DEV, "Remote failed to finish a request within ko-count * timeout\n");
+			_drbd_set_state(_NS(mdev, conn, C_TIMEOUT), CS_VERBOSE, NULL);
+		} else {
+			dev_warn(DEV, "Local backing block device frozen?\n");
+			mod_timer(&mdev->request_timer, jiffies + et);
+		}
+	} else {
+		mod_timer(&mdev->request_timer, req->start_time + et);
+	}
+
+	spin_unlock_irq(&mdev->req_lock);
 }

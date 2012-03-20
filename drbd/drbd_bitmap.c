@@ -29,6 +29,7 @@
 #include <linux/slab.h>
 #include <linux/dynamic_debug.h>
 #include <asm/kmap_types.h>
+
 #include "drbd_int.h"
 
 /* See the ifdefs and comments inside that header file.
@@ -77,7 +78,7 @@
  *	as we are "attached" to a local disk, which at 32 GiB for 1PiB storage
  *	seems excessive.
  *
- *	We plan to reduce the amount of in-core bitmap pages by pageing them in
+ *	We plan to reduce the amount of in-core bitmap pages by paging them in
  *	and out against their on-disk location as necessary, but need to make
  *	sure we don't cause too much meta data IO, and must not deadlock in
  *	tight memory situations. This needs some more work.
@@ -114,9 +115,6 @@ struct drbd_bitmap {
 	char          *bm_why;
 	struct task_struct *bm_task;
 };
-
-STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
-			       unsigned long e, int val, const enum km_type km);
 
 #define bm_print_lock_info(m) __bm_print_lock_info(m, __func__)
 static void __bm_print_lock_info(struct drbd_conf *mdev, const char *func)
@@ -203,7 +201,7 @@ void drbd_bm_unlock(struct drbd_conf *mdev)
  * we if bits have been cleared since last IO. */
 #define BM_PAGE_LAZY_WRITEOUT	28
 
-/* store_page_idx uses non-atomic assingment. It is only used directly after
+/* store_page_idx uses non-atomic assignment. It is only used directly after
  * allocating the page.  All other bm_set_page_* and bm_clear_page_* need to
  * use atomic bit manipulation, as set_out_of_sync (and therefore bitmap
  * changes) may happen from various contexts, and wait_on_bit/wake_up_bit
@@ -321,7 +319,7 @@ static void bm_unmap(unsigned long *p_addr)
 /* word offset from start of bitmap to word number _in_page_
  * modulo longs per page
 #define MLPP(X) ((X) % (PAGE_SIZE/sizeof(long))
- hm, well, Philipp thinks gcc might not optimze the % into & (... - 1)
+ hm, well, Philipp thinks gcc might not optimize the % into & (... - 1)
  so do it explicitly:
  */
 #define MLPP(X) ((X) & ((PAGE_SIZE/sizeof(long))-1))
@@ -1000,6 +998,9 @@ STATIC void bm_page_io_async(struct bm_aio_ctx *ctx, int page_nr, int rw) __must
 		bio_endio(bio, -EIO);
 	} else {
 		submit_bio(rw, bio);
+		/* this should not count as user activity and cause the
+		 * resync to throttle -- see drbd_rs_should_slow_down(). */
+		atomic_add(len >> 9, &mdev->rs_sect_ev);
 	}
 }
 
@@ -1190,10 +1191,10 @@ static unsigned long __bm_find_next(struct drbd_conf *mdev, unsigned long bm_fo,
 			p_addr = __bm_map_pidx(b, bm_bit_to_page_idx(b, bm_fo), km);
 
 			if (find_zero_bit)
-				i = generic_find_next_zero_le_bit(p_addr,
+				i = find_next_zero_bit_le(p_addr,
 						PAGE_SIZE*8, bm_fo & BITS_PER_PAGE_MASK);
 			else
-				i = generic_find_next_le_bit(p_addr,
+				i = find_next_bit_le(p_addr,
 						PAGE_SIZE*8, bm_fo & BITS_PER_PAGE_MASK);
 
 			__bm_unmap(p_addr, km);
@@ -1264,7 +1265,7 @@ unsigned long _drbd_bm_find_next_zero(struct drbd_conf *mdev, unsigned long bm_f
  * expected to be called for only a few bits (e - s about BITS_PER_LONG).
  * Must hold bitmap lock already. */
 STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
-	unsigned long e, int val, const enum km_type km)
+	unsigned long e, int val)
 {
 	struct drbd_bitmap *b = mdev->bitmap;
 	unsigned long *p_addr = NULL;
@@ -1282,23 +1283,23 @@ STATIC int __bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
 		unsigned int page_nr = bm_bit_to_page_idx(b, bitnr);
 		if (page_nr != last_page_nr) {
 			if (p_addr)
-				__bm_unmap(p_addr, km);
+				__bm_unmap(p_addr, KM_IRQ1);
 			if (c < 0)
 				bm_set_page_lazy_writeout(b->bm_pages[last_page_nr]);
 			else if (c > 0)
 				bm_set_page_need_writeout(b->bm_pages[last_page_nr]);
 			changed_total += c;
 			c = 0;
-			p_addr = __bm_map_pidx(b, page_nr, km);
+			p_addr = __bm_map_pidx(b, page_nr, KM_IRQ1);
 			last_page_nr = page_nr;
 		}
 		if (val)
-			c += (0 == generic___test_and_set_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr));
+			c += (0 == __test_and_set_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr));
 		else
-			c -= (0 != generic___test_and_clear_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr));
+			c -= (0 != __test_and_clear_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr));
 	}
 	if (p_addr)
-		__bm_unmap(p_addr, km);
+		__bm_unmap(p_addr, KM_IRQ1);
 	if (c < 0)
 		bm_set_page_lazy_writeout(b->bm_pages[last_page_nr]);
 	else if (c > 0)
@@ -1326,7 +1327,7 @@ STATIC int bm_change_bits_to(struct drbd_conf *mdev, const unsigned long s,
 	if ((val ? BM_DONT_SET : BM_DONT_CLEAR) & b->bm_flags)
 		bm_print_lock_info(mdev);
 
-	c = __bm_change_bits_to(mdev, s, e, val, KM_IRQ1);
+	c = __bm_change_bits_to(mdev, s, e, val);
 
 	spin_unlock_irqrestore(&b->bm_lock, flags);
 	return c;
@@ -1351,16 +1352,17 @@ static inline void bm_set_full_words_within_one_page(struct drbd_bitmap *b,
 {
 	int i;
 	int bits;
-	unsigned long *paddr = kmap_atomic(b->bm_pages[page_nr], KM_USER0);
+	unsigned long *paddr = kmap_atomic(b->bm_pages[page_nr], KM_IRQ1);
 	for (i = first_word; i < last_word; i++) {
 		bits = hweight_long(paddr[i]);
 		paddr[i] = ~0UL;
 		b->bm_set += BITS_PER_LONG - bits;
 	}
-	kunmap_atomic(paddr, KM_USER0);
+	kunmap_atomic(paddr, KM_IRQ1);
 }
 
-/* Same thing as drbd_bm_set_bits, but without taking the spin_lock_irqsave.
+/* Same thing as drbd_bm_set_bits,
+ * but more efficient for a large bit range.
  * You must first drbd_bm_lock().
  * Can be called to set the whole bitmap in one go.
  * Sets bits from s to e _inclusive_. */
@@ -1374,6 +1376,7 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	 * Do not use memset, because we must account for changes,
 	 * so we need to loop over the words with hweight() anyways.
 	 */
+	struct drbd_bitmap *b = mdev->bitmap;
 	unsigned long sl = ALIGN(s,BITS_PER_LONG);
 	unsigned long el = (e+1) & ~((unsigned long)BITS_PER_LONG-1);
 	int first_page;
@@ -1384,15 +1387,19 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 
 	if (e - s <= 3*BITS_PER_LONG) {
 		/* don't bother; el and sl may even be wrong. */
-		__bm_change_bits_to(mdev, s, e, 1, KM_USER0);
+		spin_lock_irq(&b->bm_lock);
+		__bm_change_bits_to(mdev, s, e, 1);
+		spin_unlock_irq(&b->bm_lock);
 		return;
 	}
 
 	/* difference is large enough that we can trust sl and el */
 
+	spin_lock_irq(&b->bm_lock);
+
 	/* bits filling the current long */
 	if (sl)
-		__bm_change_bits_to(mdev, s, sl-1, 1, KM_USER0);
+		__bm_change_bits_to(mdev, s, sl-1, 1);
 
 	first_page = sl >> (3 + PAGE_SHIFT);
 	last_page = el >> (3 + PAGE_SHIFT);
@@ -1405,8 +1412,10 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	/* first and full pages, unless first page == last page */
 	for (page_nr = first_page; page_nr < last_page; page_nr++) {
 		bm_set_full_words_within_one_page(mdev->bitmap, page_nr, first_word, last_word);
+		spin_unlock_irq(&b->bm_lock);
 		cond_resched();
 		first_word = 0;
+		spin_lock_irq(&b->bm_lock);
 	}
 
 	/* last page (respectively only page, for first page == last page) */
@@ -1419,7 +1428,8 @@ void _drbd_bm_set_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 	 * it would trigger an assert in __bm_change_bits_to()
 	 */
 	if (el <= e)
-		__bm_change_bits_to(mdev, el, e, 1, KM_USER0);
+		__bm_change_bits_to(mdev, el, e, 1);
+	spin_unlock_irq(&b->bm_lock);
 }
 
 /* returns bit state
@@ -1444,7 +1454,7 @@ int drbd_bm_test_bit(struct drbd_conf *mdev, const unsigned long bitnr)
 		bm_print_lock_info(mdev);
 	if (bitnr < b->bm_bits) {
 		p_addr = bm_map_pidx(b, bm_bit_to_page_idx(b, bitnr));
-		i = generic_test_le_bit(bitnr & BITS_PER_PAGE_MASK, p_addr) ? 1 : 0;
+		i = test_bit_le(bitnr & BITS_PER_PAGE_MASK, p_addr) ? 1 : 0;
 		bm_unmap(p_addr);
 	} else if (bitnr == b->bm_bits) {
 		i = -1;
@@ -1488,7 +1498,7 @@ int drbd_bm_count_bits(struct drbd_conf *mdev, const unsigned long s, const unsi
 		ERR_IF (bitnr >= b->bm_bits) {
 			dev_err(DEV, "bitnr=%lu bm_bits=%lu\n", bitnr, b->bm_bits);
 		} else {
-			c += (0 != generic_test_le_bit(bitnr - (page_nr << (PAGE_SHIFT+3)), p_addr));
+			c += (0 != test_bit_le(bitnr - (page_nr << (PAGE_SHIFT+3)), p_addr));
 		}
 	}
 	if (p_addr)

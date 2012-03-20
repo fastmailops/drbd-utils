@@ -98,7 +98,7 @@ static inline void blk_queue_logical_block_size(struct request_queue *q, unsigne
 static inline sector_t drbd_get_capacity(struct block_device *bdev)
 {
 	/* return bdev ? get_capacity(bdev->bd_disk) : 0; */
-	return bdev ? bdev->bd_inode->i_size >> 9 : 0;
+	return bdev ? i_size_read(bdev->bd_inode) >> 9 : 0;
 }
 
 /* sets the number of 512 byte sectors of our virtual device */
@@ -276,6 +276,8 @@ static inline void drbd_generic_make_request(struct drbd_conf *mdev,
 		generic_make_request(bio);
 }
 
+/* see 7eaceac block: remove per-queue plugging */
+#ifdef blk_queue_plugged
 static inline void drbd_plug_device(struct drbd_conf *mdev)
 {
 	struct request_queue *q;
@@ -293,6 +295,11 @@ static inline void drbd_plug_device(struct drbd_conf *mdev)
 	}
 	spin_unlock_irq(q->queue_lock);
 }
+#else
+static inline void drbd_plug_device(struct drbd_conf *mdev)
+{
+}
+#endif
 
 static inline int drbd_backing_bdev_events(struct drbd_conf *mdev)
 {
@@ -851,24 +858,24 @@ enum {
  * bi_rw (some kernel version) -> data packet flags -> bi_rw (other kernel version)
  */
 
-#if defined(BIO_RW_SYNC)
-/* see upstream commits
- * 213d9417fec62ef4c3675621b9364a667954d4dd,
- * 93dbb393503d53cd226e5e1f0088fe8f4dbaa2b8
- * later, the defines even became an enum ;-) */
-#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNC)
-#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_SYNC)
-#elif defined(REQ_SYNC)		/* introduced in 2.6.36 */
-#define DRBD_REQ_SYNC		REQ_SYNC
-#define DRBD_REQ_UNPLUG		REQ_UNPLUG
-#else
-/* cannot test on defined(BIO_RW_SYNCIO), it may be an enum */
+/* RHEL 6.1 backported FLUSH/FUA as BIO_RW_FLUSH/FUA
+ * and at that time also introduced the defines BIO_FLUSH/FUA.
+ * There is also REQ_FLUSH/FUA, but these do NOT share
+ * the same value space as the bio rw flags, yet.
+ */
+#ifdef BIO_FLUSH
+
+#define DRBD_REQ_FLUSH		(1UL << BIO_RW_FLUSH)
+#define DRBD_REQ_FUA		(1UL << BIO_RW_FUA)
+#define DRBD_REQ_HARDBARRIER	(1UL << BIO_RW_BARRIER)
+#define DRBD_REQ_DISCARD	(1UL << BIO_RW_DISCARD)
 #define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
 #define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
-#endif
 
+#elif defined(REQ_FLUSH)	/* introduced in 2.6.36,
+				 * now equivalent to bi_rw */
 
-#ifdef REQ_FLUSH	/* introduced in 2.6.36, now equivalent to bi_rw */
+#define DRBD_REQ_SYNC		REQ_SYNC
 #define DRBD_REQ_FLUSH		REQ_FLUSH
 #define DRBD_REQ_FUA		REQ_FUA
 #define DRBD_REQ_DISCARD	REQ_DISCARD
@@ -882,7 +889,30 @@ enum {
 /* ... but REQ_HARDBARRIER was removed again in 02e031c (v2.6.37-rc4). */
 #define DRBD_REQ_HARDBARRIER	0
 #endif
+
+/* again: testing on this _inside_ the ifdef REQ_FLUSH,
+ * see 721a960 block: kill off REQ_UNPLUG */
+#ifdef REQ_UNPLUG
+#define DRBD_REQ_UNPLUG		REQ_UNPLUG
 #else
+#define DRBD_REQ_UNPLUG		0
+#endif
+
+#else				/* "older", and hopefully not
+				 * "partially backported" kernel */
+
+#if defined(BIO_RW_SYNC)
+/* see upstream commits
+ * 213d9417fec62ef4c3675621b9364a667954d4dd,
+ * 93dbb393503d53cd226e5e1f0088fe8f4dbaa2b8
+ * later, the defines even became an enum ;-) */
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNC)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_SYNC)
+#else
+/* cannot test on defined(BIO_RW_SYNCIO), it may be an enum */
+#define DRBD_REQ_SYNC		(1UL << BIO_RW_SYNCIO)
+#define DRBD_REQ_UNPLUG		(1UL << BIO_RW_UNPLUG)
+#endif
 
 #define DRBD_REQ_FLUSH		(1UL << BIO_RW_BARRIER)
 /* REQ_FUA has been around for a longer time,
@@ -985,6 +1015,31 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 	typeof(x) __x = (x);			\
 	typeof(y) __y = (y);			\
 	__x == 0 ? __y : ((__y == 0) ? __x : min(__x, __y)); })
+#endif
+
+/* Introduced with 2.6.26. See include/linux/jiffies.h */
+#ifndef time_is_before_eq_jiffies
+#define time_is_before_jiffies(a) time_after(jiffies, a)
+#define time_is_after_jiffies(a) time_before(jiffies, a)
+#define time_is_before_eq_jiffies(a) time_after_eq(jiffies, a)
+#define time_is_after_eq_jiffies(a) time_before_eq(jiffies, a)
+#endif
+
+/*
+ * In commit c4945b9e (v2.6.39-rc1), the little-endian bit operations have been
+ * renamed to be less weird.
+ */
+#ifndef COMPAT_HAVE_FIND_NEXT_ZERO_BIT_LE
+#define find_next_zero_bit_le(addr, size, offset) \
+	generic_find_next_zero_le_bit(addr, size, offset)
+#define find_next_bit_le(addr, size, offset) \
+	generic_find_next_le_bit(addr, size, offset)
+#define test_bit_le(nr, addr) \
+	generic_test_le_bit(nr, addr)
+#define __test_and_set_bit_le(nr, addr) \
+	generic___test_and_set_le_bit(nr, addr)
+#define __test_and_clear_bit_le(nr, addr) \
+	generic___test_and_clear_le_bit(nr, addr)
 #endif
 
 #endif

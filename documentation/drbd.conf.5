@@ -312,9 +312,32 @@ In this section you can define handlers (executables) that are started by the DR
 \fBafter\-resync\-target\fR\&.
 .sp
 The interface is done via environment variables:
-.PP .RS 4 \fBDRBD_RESOURCE\fR is the name of the resource \fBDRBD_MINOR\fR is the minor number of the DRBD device, in decimal\&. \fBDRBD_CONF\fR is the path to the primary configuration file; if you split your configuration into multiple files (e\&.g\&. in \fB/etc/drbd\&.conf\&.d/\fR), this will not be helpful\&. \fBDRBD_PEER_AF\fR, \fBDRBD_PEER_ADDRESS\fR, \fBDRBD_PEERS\fR are the address family (e\&.g\&. \fBipv6\fR), the peer\*(Aqs address and hostnames\&. .RE
+.PP
+\fBDRBD_RESOURCE\fR
+.RS 4
+is the name of the resource
+.RE
+.PP
+\fBDRBD_MINOR\fR
+.RS 4
+is the minor number of the DRBD device, in decimal\&.
+.RE
+.PP
+\fBDRBD_CONF\fR
+.RS 4
+is the path to the primary configuration file; if you split your configuration into multiple files (e\&.g\&. in
+\fB/etc/drbd\&.conf\&.d/\fR), this will not be helpful\&.
+.RE
+.PP
+\fBDRBD_PEER_AF\fR, \fBDRBD_PEER_ADDRESS\fR, \fBDRBD_PEERS\fR
+.RS 4
+are the address family (e\&.g\&.
+\fBipv6\fR), the peer\*(Aqs address and hostnames\&.
+.RE
+.sp
+
 \fBDRBD_PEER\fR
-is deprecated\&.
+(note the singular form) is deprecated, and superseeded by DRBD_PEERS\&.
 .sp
 Please note that not all of these might be set for all handlers, and that some values might not be useable for a
 \fBfloating\fR
@@ -470,7 +493,7 @@ may be
 or
 \fBdetach\&.\fR
 .sp
-\fBpass_on\fR: Report the io\-error to the upper layers\&. On Primary report it to the mounted file system\&. On Secondary ignore it\&.
+\fBpass_on\fR: The node downgrades the disk status to inconsistent, marks the erroneous block as inconsistent in the bitmap and retries the IO on the remote node\&.
 .sp
 \fBcall\-local\-io\-error\fR: Call the handler script
 \fBlocal\-io\-error\fR\&.
