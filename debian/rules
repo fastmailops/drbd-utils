@@ -73,7 +73,9 @@ binary-modules: prep-deb-files
 	dh_builddeb --destdir=$(DEB_DESTDIR)
 
 #Architecture
-configure:
+
+configure: configure-stamp
+configure-stamp:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-utils --with-udev --with-xen --with-pacemaker --with-rgmanager --with-bashcompletion
 
 build: configure build-arch
@@ -88,7 +90,7 @@ build-arch-stamp:
 clean:
 	dh_testdir
 	dh_testroot
-	rm -f build-arch-stamp #CONFIGURE-STAMP#
+	rm -f build-arch-stamp configure-stamp
 #	remove these files from upstream tgz
 	rm -f debian/drbd8.*
 	rm -f debian/kernel-patch-wup.kpatches debian/kernel-patch-wup.README.Debian debian/kernel-export-wup.patch
