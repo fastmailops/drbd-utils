@@ -12,7 +12,7 @@ set -e
 if [ -x "/etc/init.d/drbd" ]
 then
     case "$1" in
-	remove|deconfigure)
+	remove|deconfigure|upgrade)
 	    # we don't stop the drbd resources as it's not absolutely needed during
 	    # a utils upgrade and it would mean that unattended upgrades cause
 	    # outages

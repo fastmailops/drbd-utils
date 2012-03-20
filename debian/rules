@@ -91,15 +91,13 @@ clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-arch-stamp configure-stamp
-#	remove these files from upstream tgz
-	rm -f debian/drbd8.*
-	rm -f debian/kernel-patch-wup.kpatches debian/kernel-patch-wup.README.Debian debian/kernel-export-wup.patch
-	-$(MAKE) clean
-	-$(MAKE) -C user clean
-	-$(MAKE) -C scripts clean
-	-$(MAKE) -C benchmark clean
-	-$(MAKE) -C documentation clean
+	# not possible to fix as there's a bug in drbd/Makefile
 	-$(MAKE) -C drbd clean
+	-$(MAKE) clean
+	[ ! -f scripts/Makefile ] || $(MAKE) -C scripts clean
+	[ ! -f benchmark/Makefile ] || $(MAKE) -C benchmark clean
+	[ ! -f documentation/Makefile ] || $(MAKE) -C documentation clean
+	[ ! -f user/Makefile ] || $(MAKE) -C user clean
 	rm -f user/Makefile user/config.h
 	rm -f scripts/Makefile
 	rm -f documentation/Makefile
@@ -118,6 +116,10 @@ install-arch:
 
 	$(MAKE) DESTDIR=$(CURDIR)/debian/drbd8-utils/ install
 	dh_install --source=debian/drbd8-utils --list-missing -s
+
+	# Move udev rule to /lib/udev/rules.d (Fixes lintian warning)
+	mkdir -p $(CURDIR)/debian/drbd8-utils/lib/udev/
+	mv $(CURDIR)/debian/drbd8-utils/etc/udev/rules.d $(CURDIR)/debian/drbd8-utils/lib/udev/
 
 # Must not depend on anything. This is to be called by
 # binary-arch/binary-indep

@@ -1,3 +1,12 @@
+drbd8 (2:8.3.11-3) unstable; urgency=low
+
+  * Install udev rule into /lib/udev/rules.d instead of /etc
+  * Don't invoke make with '-' except for drbd/Makefile
+  * Don't complain in prerm about unknown argument upgrade
+  * Architecture changed to linux-any
+
+ -- Philipp Hug <debian@hug.cx>  Tue, 20 Mar 2012 15:38:37 +0100
+
 drbd8 (2:8.3.11-2) unstable; urgency=low
 
   * Don't create /dev/drbdX in postinst (Closes: #656143)

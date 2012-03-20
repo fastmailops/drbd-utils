@@ -10,7 +10,7 @@ Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd.git
 Vcs-Git: git://git.debian.org/git/debian-ha/drbd/
 
 Package: drbd8-utils
-Architecture: any
+Architecture: linux-any
 Section: admin
 Depends: debconf | debconf-2.0, ${shlibs:Depends}, ${misc:Depends}
 Conflicts: drbd-utils
