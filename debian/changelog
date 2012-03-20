@@ -3,6 +3,8 @@ drbd8 (2:8.3.11-1) unstable; urgency=low
   * New upstream release.
   * Clean some more files
   * Switch to dpkg-source 3.0 (quilt) format
+  * Delete config.log, config.status
+  * Build-Depend on xsltproc (for documentation) and git (for build-tags)
 
  -- Philipp Hug <debian@hug.cx>  Tue, 20 Mar 2012 12:12:57 +0100
 

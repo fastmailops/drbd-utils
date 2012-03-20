@@ -104,6 +104,8 @@ clean:
 	rm -f scripts/Makefile
 	rm -f documentation/Makefile
 	rm -f Makefile
+	rm -f config.log config.status
+
 	dh_clean
 
 install: install-arch
