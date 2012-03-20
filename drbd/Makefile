@@ -36,12 +36,14 @@ DESTDIR ?= /
 # Lets test on PATCHLEVEL, that won't change too soon...
 
 ifneq ($(PATCHLEVEL),)
+ ifneq ($(VERSION),3)
   ifneq ($(VERSION),2)
     $(error "won't compile with this kernel version")
   endif
   ifneq ($(PATCHLEVEL),6)
     $(error "won't compile with this kernel version")
   endif
+ endif
 
   CONFIG_BLK_DEV_DRBD := m
   CONFIG_DRBD_TRACE := n
@@ -180,7 +182,7 @@ else
     # for VERSION, PATCHLEVEL, SUBLEVEL, EXTRAVERSION, KERNELRELEASE
     include .drbd_kernelrelease
     MODOBJ := drbd.ko
-    MODSUBDIR := kernel/drivers/block
+    MODSUBDIR := updates
     LINUX := $(wildcard /lib/modules/$(KERNELRELEASE)/build)
 
     install:
@@ -188,10 +190,6 @@ else
 	  echo "No $(MODOBJ): nothing to install??"; false ; \
 	fi
 	install -d $(DESTDIR)/lib/modules/$(KERNELRELEASE)/$(MODSUBDIR)
-	now=$$(date +%F_%H%M%S); \
-	for m in $$(find $(DESTDIR)/lib/modules/$(KERNELRELEASE)/ -name $(MODOBJ)) ; do \
-		mv $$m $$m.disabled.$$now ; \
-	done
 	install -m 644 $(MODOBJ) $(DESTDIR)/lib/modules/$(KERNELRELEASE)/$(MODSUBDIR)
     ifeq ($(DESTDIR),/)
       ifeq ($(shell uname -r),$(KERNELRELEASE))

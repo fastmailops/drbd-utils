@@ -168,7 +168,7 @@ struct drbd_conf;
  * dev_printk() expects to be presented a struct device *;
  * in older kernels, (<= 2.6.24), there is nothing suitable there.
  * "backport" hack: redefine dev_printk.
- * Trigger is definition of dev_to_disk marcro, introduced with the
+ * Trigger is definition of dev_to_disk macro, introduced with the
  * commit edfaa7c36574f1bf09c65ad602412db9da5f96bf
  *     Driver core: convert block from raw kobjects to core devices
  */
@@ -194,7 +194,7 @@ struct drbd_conf;
 
 
 /* see kernel/printk.c:printk_ratelimit
- * macro, so it is easy do have independend rate limits at different locations
+ * macro, so it is easy do have independent rate limits at different locations
  * "initializer element not constant ..." with kernel 2.4 :(
  * so I initialize toks to something large
  */
@@ -570,11 +570,11 @@ struct p_handshake {
 	u32 protocol_max;
 
 	/* should be more than enough for future enhancements
-	 * for now, feature_flags and the reserverd array shall be zero.
+	 * for now, feature_flags and the reserved array shall be zero.
 	 */
 
 	u32 _pad;
-	u64 reserverd[7];
+	u64 reserved[7];
 } __packed;
 /* 80 bytes, FIXED for the next century */
 
@@ -763,9 +763,9 @@ DCBP_set_pad_bits(struct p_compressed_bm *p, int n)
 }
 
 /* one bitmap packet, including the p_header,
- * should fit within one _architecture independend_ page.
+ * should fit within one _architecture independent_ page.
  * so we need to use the fixed size 4KiB page size
- * most architechtures have used for a long time.
+ * most architectures have used for a long time.
  */
 #define BM_PACKET_PAYLOAD_BYTES (4096 - sizeof(struct p_header80))
 #define BM_PACKET_WORDS (BM_PACKET_PAYLOAD_BYTES/sizeof(long))
@@ -842,7 +842,7 @@ struct drbd_request {
 	 * see drbd_endio_pri(). */
 	struct bio *private_bio;
 
-	struct hlist_node colision;
+	struct hlist_node collision;
 	sector_t sector;
 	unsigned int size;
 	unsigned int epoch; /* barrier_nr */
@@ -918,7 +918,7 @@ struct digest_info {
 
 struct drbd_epoch_entry {
 	struct drbd_work w;
-	struct hlist_node colision;
+	struct hlist_node collision;
 	struct drbd_epoch *epoch; /* for writes */
 	struct drbd_conf *mdev;
 	struct page *pages;
@@ -944,7 +944,7 @@ enum {
 	__EE_MAY_SET_IN_SYNC,
 
 	/* This epoch entry closes an epoch using a barrier.
-	 * On sucessful completion, the epoch is released,
+	 * On successful completion, the epoch is released,
 	 * and the P_BARRIER_ACK send. */
 	__EE_IS_BARRIER,
 
@@ -969,7 +969,7 @@ enum {
 
 /* global flag bits */
 enum {
-	CREATE_BARRIER,		/* next P_DATA is preceeded by a P_BARRIER */
+	CREATE_BARRIER,		/* next P_DATA is preceded by a P_BARRIER */
 	SIGNAL_ASENDER,		/* whether asender wants to be interrupted */
 	SEND_PING,		/* whether asender should send a ping asap */
 
@@ -1002,7 +1002,7 @@ enum {
 				 * if set, also prevents the device from dying */
 	DEVICE_DYING,		/* device became unconfigured,
 				 * but worker thread is still handling the cleanup.
-				 * reconfiguring (nl_disk_conf, nl_net_conf) is dissalowed,
+				 * reconfiguring (nl_disk_conf, nl_net_conf) is disallowed,
 				 * while this is set. */
 	RESIZE_PENDING,		/* Size change detected locally, waiting for the response from
 				 * the peer, if it changed there as well. */
@@ -1159,6 +1159,7 @@ struct drbd_conf {
 	struct timer_list resync_timer;
 	struct timer_list md_sync_timer;
 	struct timer_list start_resync_timer;
+	struct timer_list request_timer;
 #ifdef DRBD_DEBUG_MD_SYNC
 	struct {
 		unsigned int line;
@@ -1182,7 +1183,7 @@ struct drbd_conf {
 	atomic_t ap_bio_cnt;	 /* Requests we need to complete */
 	atomic_t ap_pending_cnt; /* AP data packets on the wire, ack expected */
 	atomic_t rs_pending_cnt; /* RS request/data packets on the wire */
-	atomic_t unacked_cnt;	 /* Need to send replys for */
+	atomic_t unacked_cnt;	 /* Need to send replies for */
 	atomic_t local_cnt;	 /* Waiting for local completion */
 	atomic_t net_cnt;	 /* Users of net_conf */
 	spinlock_t req_lock;
@@ -1250,14 +1251,14 @@ struct drbd_conf {
 	struct list_head done_ee;   /* send ack */
 	struct list_head read_ee;   /* IO in progress (any read) */
 	struct list_head net_ee;    /* zero-copy network send in progress */
-	struct hlist_head *ee_hash; /* is proteced by req_lock! */
+	struct hlist_head *ee_hash; /* is protected by req_lock! */
 	unsigned int ee_hash_s;
 
 	/* this one is protected by ee_lock, single thread */
 	struct drbd_epoch_entry *last_write_w_barrier;
 
 	int next_barrier_nr;
-	struct hlist_head *app_reads_hash; /* is proteced by req_lock */
+	struct hlist_head *app_reads_hash; /* is protected by req_lock */
 	struct list_head resync_reads;
 	atomic_t pp_in_use;		/* allocated from page pool */
 	atomic_t pp_in_use_by_net;	/* sendpage()d, still referenced by tcp */
@@ -1300,8 +1301,10 @@ struct drbd_conf {
 	int c_sync_rate; /* current resync rate after syncer throttle magic */
 	struct fifo_buffer rs_plan_s; /* correction values of resync planer */
 	int rs_in_flight; /* resync sectors in flight (to proxy, in proxy and from proxy) */
-	int rs_planed;    /* resync sectors already planed */
+	int rs_planed;    /* resync sectors already planned */
 	atomic_t ap_in_flight; /* App sectors in flight (waiting for ack) */
+	int peer_max_bio_size;
+	int local_max_bio_size;
 };
 
 static inline struct drbd_conf *minor_to_mdev(unsigned int minor)
@@ -1318,7 +1321,7 @@ static inline unsigned int mdev_to_minor(struct drbd_conf *mdev)
 	return mdev->minor;
 }
 
-/* returns 1 if it was successfull,
+/* returns 1 if it was successful,
  * returns 0 if there was no data socket.
  * so wherever you are going to use the data.socket, e.g. do
  * if (!drbd_get_data_sock(mdev))
@@ -1391,8 +1394,6 @@ extern void drbd_free_resources(struct drbd_conf *mdev);
 extern void tl_release(struct drbd_conf *mdev, unsigned int barrier_nr,
 		       unsigned int set_size);
 extern void tl_clear(struct drbd_conf *mdev);
-enum drbd_req_event;
-extern void tl_restart(struct drbd_conf *mdev, enum drbd_req_event what);
 extern void _tl_add_barrier(struct drbd_conf *, struct drbd_tl_epoch *);
 extern void drbd_free_sock(struct drbd_conf *mdev);
 extern int drbd_send(struct drbd_conf *mdev, struct socket *sock,
@@ -1486,7 +1487,7 @@ extern void drbd_ldev_destroy(struct drbd_conf *mdev);
 /* Allows up to about 3.8TB */
 #define MD_BM_OFFSET (MD_AL_OFFSET + MD_AL_MAX_SIZE)
 
-/* Since the smalles IO unit is usually 512 byte */
+/* Since the smallest IO unit is usually 512 byte */
 #define MD_SECTOR_SHIFT	 9
 #define MD_SECTOR_SIZE	 (1<<MD_SECTOR_SHIFT)
 
@@ -1607,6 +1608,7 @@ struct bm_extent {
  * hash table. */
 #define HT_SHIFT 8
 #define DRBD_MAX_BIO_SIZE (1U<<(9+HT_SHIFT))
+#define DRBD_MAX_BIO_SIZE_SAFE (1 << 12)       /* Works always = 4k */
 
 #define DRBD_MAX_SIZE_H80_PACKET (1 << 15) /* The old header only allows packets up to 32Kib data */
 
@@ -1701,9 +1703,9 @@ extern void drbd_resume_io(struct drbd_conf *mdev);
 extern char *ppsize(char *buf, unsigned long long size);
 extern sector_t drbd_new_dev_size(struct drbd_conf *, struct drbd_backing_dev *, int);
 enum determine_dev_size { dev_size_error = -1, unchanged = 0, shrunk = 1, grew = 2 };
-extern enum determine_dev_size drbd_determin_dev_size(struct drbd_conf *, enum dds_flags) __must_hold(local);
+extern enum determine_dev_size drbd_determine_dev_size(struct drbd_conf *, enum dds_flags) __must_hold(local);
 extern void resync_after_online_grow(struct drbd_conf *);
-extern void drbd_setup_queue_param(struct drbd_conf *mdev, unsigned int) __must_hold(local);
+extern void drbd_reconsider_max_bio_size(struct drbd_conf *mdev);
 extern enum drbd_state_rv drbd_set_role(struct drbd_conf *mdev,
 					enum drbd_role new_role,
 					int force);
@@ -2023,6 +2025,8 @@ static inline void __drbd_chk_io_error_(struct drbd_conf *mdev, int forcedetach,
 		if (!forcedetach) {
 			if (DRBD_ratelimit(5*HZ, 5))
 				dev_err(DEV, "Local IO failed in %s.\n", where);
+			if (mdev->state.disk > D_INCONSISTENT)
+				_drbd_set_state(_NS(mdev, disk, D_INCONSISTENT), CS_HARD, NULL);
 			break;
 		}
 		/* NOTE fall through to detach case if forcedetach set */
@@ -2269,7 +2273,7 @@ static inline void inc_ap_pending(struct drbd_conf *mdev)
 /* counts how many resync-related answers we still expect from the peer
  *		     increase			decrease
  * C_SYNC_TARGET sends P_RS_DATA_REQUEST (and expects P_RS_DATA_REPLY)
- * C_SYNC_SOURCE sends P_RS_DATA_REPLY   (and expects P_WRITE_ACK whith ID_SYNCER)
+ * C_SYNC_SOURCE sends P_RS_DATA_REPLY   (and expects P_WRITE_ACK with ID_SYNCER)
  *					   (or P_NEG_ACK with ID_SYNCER)
  */
 static inline void inc_rs_pending(struct drbd_conf *mdev)
@@ -2342,6 +2346,10 @@ static inline int get_net_conf(struct drbd_conf *mdev)
 static inline void put_ldev(struct drbd_conf *mdev)
 {
 	int i = atomic_dec_return(&mdev->local_cnt);
+
+	/* This may be called from some endio handler,
+	 * so we must not sleep here. */
+
 	__release(local);
 	D_ASSERT(i >= 0);
 	if (i == 0) {
@@ -2413,7 +2421,7 @@ static inline void drbd_get_syncer_progress(struct drbd_conf *mdev,
 		 * Note: currently we don't support such large bitmaps on 32bit
 		 * arch anyways, but no harm done to be prepared for it here.
 		 */
-		unsigned int shift = mdev->rs_total >= (1ULL << 32) ? 16 : 10;
+		unsigned int shift = mdev->rs_total > UINT_MAX ? 16 : 10;
 		unsigned long left = *bits_left >> shift;
 		unsigned long total = 1UL + (mdev->rs_total >> shift);
 		unsigned long tmp = 1000UL - left * 1000UL/total;
@@ -2492,7 +2500,7 @@ static inline int drbd_state_is_stable(struct drbd_conf *mdev)
 		/* disk state is stable as well. */
 		break;
 
-	/* no new io accepted during tansitional states */
+	/* no new io accepted during transitional states */
 	case D_ATTACHING:
 	case D_FAILED:
 	case D_NEGOTIATING:
@@ -2554,7 +2562,7 @@ static inline void inc_ap_bio(struct drbd_conf *mdev, int count)
 	/* we wait here
 	 *    as long as the device is suspended
 	 *    until the bitmap is no longer on the fly during connection
-	 *    handshake as long as we would exeed the max_buffer limit.
+	 *    handshake as long as we would exceed the max_buffer limit.
 	 *
 	 * to avoid races with the reconnect code,
 	 * we need to atomic_inc within the spinlock. */
@@ -2630,20 +2638,7 @@ static inline int drbd_queue_order_type(struct drbd_conf *mdev)
 	return QUEUE_ORDERED_NONE;
 }
 
-/*
- * FIXME investigate what makes most sense:
- * a) blk_run_queue(q);
- *
- * b) struct backing_dev_info *bdi;
- *    b1) bdi = &q->backing_dev_info;
- *    b2) bdi = mdev->ldev->backing_bdev->bd_inode->i_mapping->backing_dev_info;
- *    blk_run_backing_dev(bdi,NULL);
- *
- * c) generic_unplug(q) ? __generic_unplug(q) ?
- *
- * d) q->unplug_fn(q), which is what all the drivers/md/ stuff uses...
- *
- */
+#ifdef blk_queue_plugged
 static inline void drbd_blk_run_queue(struct request_queue *q)
 {
 	if (q && q->unplug_fn)
@@ -2657,6 +2652,14 @@ static inline void drbd_kick_lo(struct drbd_conf *mdev)
 		put_ldev(mdev);
 	}
 }
+#else
+static inline void drbd_blk_run_queue(struct request_queue *q)
+{
+}
+static inline void drbd_kick_lo(struct drbd_conf *mdev)
+{
+}
+#endif
 
 static inline void drbd_md_flush(struct drbd_conf *mdev)
 {
