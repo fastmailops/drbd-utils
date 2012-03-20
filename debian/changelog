@@ -2,8 +2,10 @@ drbd8 (2:8.3.11-2) unstable; urgency=low
 
   * Don't create /dev/drbdX in postinst (Closes: #656143)
   * Install drbd.conf.example (Closes: #613872)
+  * Define init script as interactive (Closes: #613654)
+  * Suggest to use dpkg-statoverride (Closes: #519187)
 
- -- Philipp Hug <debian@hug.cx>  Tue, 20 Mar 2012 14:35:11 +0100
+ -- Philipp Hug <debian@hug.cx>  Tue, 20 Mar 2012 14:52:42 +0100
 
 drbd8 (2:8.3.11-1) unstable; urgency=low
 

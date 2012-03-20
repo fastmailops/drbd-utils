@@ -1,0 +1,24 @@
+From: Philipp Hug <philipp@hug.cx>
+Date: Tue, 20 Mar 2012 14:57:25 +0100
+Subject: dpkg-statoverride instead of chgrp/chmod
+
+---
+ user/drbdadm_main.c |    4 +---
+ 1 files changed, 1 insertions(+), 3 deletions(-)
+
+diff --git a/user/drbdadm_main.c b/user/drbdadm_main.c
+index ab752e6..2bedab1 100644
+--- a/user/drbdadm_main.c
++++ b/user/drbdadm_main.c
+@@ -2694,9 +2694,7 @@ int sanity_check_abs_cmd(char *cmd_name)
+ 				"  You need to fix this with these commands:\n");
+ 		did_header = 1;
+ 		fprintf(stderr,
+-			"  chgrp haclient %s\n"
+-			"  chmod o-x %s\n"
+-			"  chmod u+s %s\n\n", cmd_name, cmd_name, cmd_name);
++			"  dpkg-statoverride --add --update root haclient 4750 %s\n\n", cmd_name);
+ 	}
+ 	return 1;
+ }
+-- 
