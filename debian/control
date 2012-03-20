@@ -6,13 +6,13 @@ Uploaders: Norbert Tretkowski <norbert@tretkowski.de>, Martin Loschwitz <madkiss
 Build-Depends: debhelper (>= 5), debconf-utils, bison, flex, bzip2
 Standards-Version: 3.9.1
 Homepage: http://www.drbd.org/
-Vcs-Browser: http://svn.debian.org/wsvn/debian-ha/drbd8/
-Vcs-Svn: svn://svn.debian.org/svn/debian-ha/drbd8/
+Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd.git
+Vcs-Git: git://git.debian.org/git/debian-ha/drbd/
 
 Package: drbd8-utils
 Architecture: any
 Section: admin
-Depends: debconf | debconf-2.0, ${shlibs:Depends}
+Depends: debconf | debconf-2.0, ${shlibs:Depends}, ${misc:Depends}
 Conflicts: drbd-utils
 Provides: drbd-utils
 Replaces: drbd-utils, drbd
