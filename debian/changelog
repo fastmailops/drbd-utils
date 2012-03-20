@@ -1,3 +1,10 @@
+drbd8 (2:8.3.11-1) unstable; urgency=low
+
+  * New upstream release.
+  * Switch to dpkg-source 3.0 (quilt) format
+
+ -- Philipp Hug <hug@hug-macbook>  Tue, 20 Mar 2012 12:12:57 +0100
+
 drbd8 (2:8.3.10-1) unstable; urgency=low
 
   * New upstream release. (Closes: #635329)
