@@ -94,11 +94,16 @@ clean:
 #	remove these files from upstream tgz
 	rm -f debian/drbd8.*
 	rm -f debian/kernel-patch-wup.kpatches debian/kernel-patch-wup.README.Debian debian/kernel-export-wup.patch
+	-$(MAKE) clean
 	-$(MAKE) -C user clean
 	-$(MAKE) -C scripts clean
 	-$(MAKE) -C benchmark clean
 	-$(MAKE) -C documentation clean
 	-$(MAKE) -C drbd clean
+	rm -f user/Makefile user/config.h
+	rm -f scripts/Makefile
+	rm -f documentation/Makefile
+	rm -f Makefile
 	dh_clean
 
 install: install-arch
