@@ -4,8 +4,9 @@ drbd8 (2:8.3.11-3) unstable; urgency=low
   * Don't invoke make with '-' except for drbd/Makefile
   * Don't complain in prerm about unknown argument upgrade
   * Architecture changed to linux-any
+  * build-arch: depend on configure (Closes: #666345)
 
- -- Philipp Hug <debian@hug.cx>  Tue, 20 Mar 2012 15:38:37 +0100
+ -- Philipp Hug <debian@hug.cx>  Fri, 30 Mar 2012 18:52:55 +0200
 
 drbd8 (2:8.3.11-2) unstable; urgency=low
 
