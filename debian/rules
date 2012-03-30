@@ -81,7 +81,7 @@ configure-stamp:
 build: configure build-arch
 
 
-build-arch: build-arch-stamp
+build-arch: configure build-arch-stamp
 build-arch-stamp:
 	dh_testdir
 	make
