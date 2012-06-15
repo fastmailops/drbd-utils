@@ -1,3 +1,10 @@
+drbd8 (2:8.3.13-1) unstable; urgency=low
+
+  * Update to latest version for Linux 3.2.0
+  * Enabled hardened build flags. Thanks Moritz. (Closes: #667558)
+
+ -- Philipp Hug <debian@hug.cx>  Fri, 15 Jun 2012 20:14:36 +0200
+
 drbd8 (2:8.3.11-3) unstable; urgency=low
 
   * Install udev rule into /lib/udev/rules.d instead of /etc

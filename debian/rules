@@ -19,13 +19,11 @@ MA_DIR ?= /usr/share/modass
 -include $(MA_DIR)/include/generic.make
 -include $(MA_DIR)/include/common-rules.make
 
-CFLAGS = -Wall -g
+CFLAGS = `dpkg-buildflags --get CFLAGS`
+CFLAGS += -Wall
+CFLAGS += `dpkg-buildflags --get CPPFLAGS`
+LDFLAGS = `dpkg-buildflags --get LDFLAGS`
 
-ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
-	CFLAGS += -O0
-else
-	CFLAGS += -O2
-endif
 ifeq (,$(findstring nostrip,$(DEB_BUILD_OPTIONS)))
 	INSTALL_PROGRAM += -s
 endif
@@ -76,7 +74,7 @@ binary-modules: prep-deb-files
 
 configure: configure-stamp
 configure-stamp:
-	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-utils --with-udev --with-xen --with-pacemaker --with-rgmanager --with-bashcompletion
+	CFLAGS="$(CFLAGS)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)" ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-utils --with-udev --with-xen --with-pacemaker --with-rgmanager --with-bashcompletion
 
 build: configure build-arch
 
