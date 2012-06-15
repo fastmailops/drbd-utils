@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.3.11, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.3.13, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -124,7 +124,7 @@ AC_PATH_PROG(DPKG_BUILDPACKAGE, dpkg-buildpackage)
 AC_PATH_PROG(UDEVADM, udevadm, [false], [/sbin$PATH_SEPARATOR$PATH])
 AC_PATH_PROG(UDEVINFO, udevinfo, [false], [/sbin$PATH_SEPARATOR$PATH])
 
-if test -z $CC; then
+if test -z "$CC"; then
    if test "$WITH_UTILS" = "yes"; then
       AC_MSG_ERROR([Cannot build utils without a C compiler, either install a compiler or pass the --without-utils option.])
    fi 

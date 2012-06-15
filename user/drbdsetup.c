@@ -314,9 +314,13 @@ struct drbd_cmd commands[] = {
 		 { "no-disk-drain",'D', T_no_disk_drain,EB },
 		 { "no-md-flushes",'m', T_no_md_flush,  EB },
 		 { "max-bio-bvecs",'s',	T_max_bio_bvecs,EN(MAX_BIO_BVECS,1,NULL) },
+		 { "disk-timeout",'t',	T_disk_timeout,	EN(DISK_TIMEOUT,1,"1/10 seconds") },
 		 CLOSE_OPTIONS }} }, },
 
-	{"detach", P_detach, F_CONFIG_CMD, {{NULL, NULL}} },
+	{"detach", P_detach, F_CONFIG_CMD, {{NULL,
+	 (struct drbd_option[]) {
+		 { "force",'f',			T_detach_force, EB   },
+		 CLOSE_OPTIONS }} }, },
 
 	{"net", P_net_conf, F_CONFIG_CMD, {{
 	 (struct drbd_argument[]) {
@@ -1452,28 +1456,30 @@ static char *af_to_str(int af)
 
 static void show_address(void* address, int addr_len)
 {
-	struct sockaddr     *addr;
-	struct sockaddr_in  *addr4;
-	struct sockaddr_in6 *addr6;
+	union {
+		struct sockaddr     addr;
+		struct sockaddr_in  addr4;
+		struct sockaddr_in6 addr6;
+	} a;
 	char buffer[INET6_ADDRSTRLEN];
 
-	addr = (struct sockaddr *)address;
-	if (addr->sa_family == AF_INET
-	|| addr->sa_family == get_af_ssocks(0)
-	|| addr->sa_family == AF_INET_SDP) {
-		addr4 = (struct sockaddr_in *)address;
+	/* avoid alignment issues on certain platforms (e.g. armel) */
+	memset(&a, 0, sizeof(a));
+	memcpy(&a.addr, address, addr_len);
+	if (a.addr.sa_family == AF_INET
+	|| a.addr.sa_family == get_af_ssocks(0)
+	|| a.addr.sa_family == AF_INET_SDP) {
 		printf("\taddress\t\t\t%s %s:%d;\n",
-		       af_to_str(addr4->sin_family),
-		       inet_ntoa(addr4->sin_addr),
-		       ntohs(addr4->sin_port));
-	} else if (addr->sa_family == AF_INET6) {
-		addr6 = (struct sockaddr_in6 *)address;
+		       af_to_str(a.addr4.sin_family),
+		       inet_ntoa(a.addr4.sin_addr),
+		       ntohs(a.addr4.sin_port));
+	} else if (a.addr.sa_family == AF_INET6) {
 		printf("\taddress\t\t\t%s [%s]:%d;\n",
-		       af_to_str(addr6->sin6_family),
-		       inet_ntop(addr6->sin6_family, &addr6->sin6_addr, buffer, INET6_ADDRSTRLEN),
-		       ntohs(addr6->sin6_port));
+		       af_to_str(a.addr6.sin6_family),
+		       inet_ntop(a.addr6.sin6_family, &a.addr6.sin6_addr, buffer, INET6_ADDRSTRLEN),
+		       ntohs(a.addr6.sin6_port));
 	} else {
-		printf("\taddress\t\t\t[unknown af=%d, len=%d]\n", addr->sa_family, addr_len);
+		printf("\taddress\t\t\t[unknown af=%d, len=%d]\n", a.addr.sa_family, addr_len);
 	}
 }
 
@@ -1658,7 +1664,7 @@ static int sh_status_scmd(struct drbd_cmd *cm __attribute((unused)),
 		printf("%s_role=\n", _P);
 		printf("%s_peer=\n", _P);
 		printf("%s_disk=\n", _P);
-		printf("%s_pdisk=\n", _P);
+		printf("%s_pdsk=\n", _P);
 		printf("%s_flags_susp=\n", _P);
 		printf("%s_flags_aftr_isp=\n", _P);
 		printf("%s_flags_peer_isp=\n", _P);

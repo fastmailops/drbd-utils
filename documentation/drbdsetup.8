@@ -31,7 +31,7 @@
 drbdsetup \- Setup tool for DRBD .\" drbdsetup
 .SH "SYNOPSIS"
 .HP \w'\fBdrbdsetup\fR\ 'u
-\fBdrbdsetup\fR {\fIdevice\fR} disk {\fIlower_dev\fR} {\fImeta_data_dev\fR} {\fImeta_data_index\fR} [\-d\ {\fIsize\fR}] [\-e\ {\fIerr_handler\fR}] [\-f\ {\fIfencing_policy\fR}] [\-b]
+\fBdrbdsetup\fR {\fIdevice\fR} disk {\fIlower_dev\fR} {\fImeta_data_dev\fR} {\fImeta_data_index\fR} [\-d\ {\fIsize\fR}] [\-e\ {\fIerr_handler\fR}] [\-f\ {\fIfencing_policy\fR}] [\-b] [\-t\ {\fIdisk_timeout\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR {\fIdevice\fR} net [\fIaf:\fR] {\fIlocal_addr\fR} [\fI:port\fR] [\fIaf:\fR] {\fIremote_addr\fR} [\fI:port\fR] {\fIprotocol\fR} [\-c\ {\fItime\fR}] [\-i\ {\fItime\fR}] [\-t\ {\fIval\fR}] [\-S\ {\fIsize\fR}] [\-r\ {\fIsize\fR}] [\-k\ {\fIcount\fR}] [\-e\ {\fImax_epoch_size\fR}] [\-b\ {\fImax_buffers\fR}] [\-m] [\-a\ {\fIhash_alg\fR}] [\-x\ {\fIshared_secret\fR}] [\-A\ {\fIasb\-0p\-policy\fR}] [\-B\ {\fIasb\-1p\-policy\fR}] [\-C\ {\fIasb\-2p\-policy\fR}] [\-D] [\-R\ {\fIrole\-resync\-conflict\-policy\fR}] [\-p\ {\fIping_timeout\fR}] [\-u\ {\fIval\fR}] [\-d\ {\fIhash_alg\fR}] [\-o] [\-n] [\-g\ {\fIcongestion_policy\fR}] [\-f\ {\fIval\fR}] [\-h\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
@@ -39,7 +39,7 @@ drbdsetup \- Setup tool for DRBD .\" drbdsetup
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR {\fIdevice\fR} disconnect
 .HP \w'\fBdrbdsetup\fR\ 'u
-\fBdrbdsetup\fR {\fIdevice\fR} detach
+\fBdrbdsetup\fR {\fIdevice\fR} detach [\-f]
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR {\fIdevice\fR} down
 .HP \w'\fBdrbdsetup\fR\ 'u
@@ -190,7 +190,11 @@ To get best performance out of DRBD on top of software raid (or any other driver
 .RS 4
 DRBD has four implementations to express write\-after\-write dependencies to its backing storage device\&. DRBD will use the first method that is supported by the backing storage device and that is not disabled by the user\&.
 .sp
-When selecting the method you should not only base your decision on the measurable performance\&. In case your backing storage device has a volatile write cache (plain disks, RAID of plain disks) you should use one of the first two\&. In case your backing storage device has battery\-backed write cache you may go with option 3 or 4\&. Option 4 will deliver the best performance such devices\&.
+When selecting the method you should not only base your decision on the measurable performance\&. In case your backing storage device has a volatile write cache (plain disks, RAID of plain disks) you should use one of the first two\&. In case your backing storage device has battery\-backed write cache you may go with option 3\&. Option 4 (disable everything, use "none")
+\fIis dangerous\fR
+on most IO stacks, may result in write\-reordering, and if so, can theoretically be the reason for data corruption, or disturb the DRBD protocol, causing spurious disconnect/reconnect cycles\&.
+\fIDo not use\fR
+\fBno\-disk\-drain\fR\&.
 .sp
 Unfortunately device mapper (LVM) might not support barriers\&.
 .sp
@@ -212,14 +216,17 @@ option\&.
 .PP
 drain
 .RS 4
-The third method is simply to let write requests drain before write requests of a new reordering domain are issued\&. That was the only implementation before 8\&.0\&.9\&. You can prevent to use of this method by using the
-\fB\-\-no\-disk\-drain\fR
-option\&.
+The third method is simply to let write requests drain before write requests of a new reordering domain are issued\&. That was the only implementation before 8\&.0\&.9\&.
 .RE
 .PP
 none
 .RS 4
-The fourth method is to not express write\-after\-write dependencies to the backing store at all\&.
+The fourth method is to not express write\-after\-write dependencies to the backing store at all, by also specifying
+\fB\-\-no\-disk\-drain\fR\&. This
+\fIis dangerous\fR
+on most IO stacks, may result in write\-reordering, and if so, can theoretically be the reason for data corruption, or disturb the DRBD protocol, causing spurious disconnect/reconnect cycles\&.
+\fIDo not use\fR
+\fB\-\-no\-disk\-drain\fR\&.
 .RE
 .RE
 .PP
@@ -240,6 +247,16 @@ option) to 1, but that might cost performance\&.
 The default value of
 \fBmax\-bio\-bvecs\fR
 is 0, which means that there is no user imposed limitation\&.
+.RE
+.PP
+\fB\-t\fR, \fB\-\-disk\-timeout \fR\fB\fIdisk_timeout\fR\fR
+.RS 4
+If the driver of the
+\fIlower_device\fR
+does not finish an IO request within
+\fIdisk_timeout\fR, DRBD considers the disk as failed\&. If DRBD is connected to a remote host, it will reissue local pending IO requests to the peer, and ship all new IO requests to the peer only\&. The disk state advances to diskless, as soon as the backing block device has finished all IO requests\&.
+.sp
+The default value of is 0, which means that no timeout is enforced\&. The default unit is 100ms\&. This option is available since 8\&.3\&.12\&.
 .RE
 .SS "net"
 .\" drbdsetup: net
@@ -775,6 +792,13 @@ command from the
 \fIdevice\fR\&. This means that the
 \fIdevice\fR
 is detached from its backing storage device\&.
+.PP
+\fB\-f\fR, \fB\-\-force\fR
+.RS 4
+A regular detach returns after the disk state finally reached diskless\&. As a consequence detaching from a frozen backing block device never terminates\&.
+.sp
+On the other hand A forced detach returns immediately\&. It allows you to detach DRBD from a frozen backing block device\&. Please note that the disk will be marked as failed until all pending IO requests where finished by the backing block device\&.
+.RE
 .SS "down"
 .\" drbdsetup: down
 .PP

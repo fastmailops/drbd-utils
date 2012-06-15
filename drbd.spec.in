@@ -185,6 +185,7 @@ Pacemaker High Availability cluster manager.
 %defattr(755,root,root,-)
 %{_prefix}/lib/%{name}/crm-fence-peer.sh
 %{_prefix}/lib/%{name}/crm-unfence-peer.sh
+%{_prefix}/lib/%{name}/stonith_admin-fence-peer.sh
 %{_prefix}/lib/ocf/resource.d/linbit/drbd
 %endif # with pacemaker
 
@@ -203,17 +204,17 @@ Pacemaker High Availability cluster manager.
 # package. Thus, for RHEL 6 specifically, we must not conflict with
 # resource-agents >=3, but instead require it.
 #
+# The saga continues:
+# In RHEL 6.1 they have listed the drbd resource agent as valid agent,
+# but do not include it in their resource-agents package. -> So we
+# drop any dependency regarding rgmanager's version.
+#
 # All of this for exactly two (2) files.
 %if %{with rgmanager}
 %package rgmanager
 Summary: Red Hat Cluster Suite agent for DRBD
 Group: System Environment/Base
-Requires: %{name}-utils = %{version}-%{release}, rgmanager < 3
-# RHEL 6 removed some scripts from upstream version,
-# including drbd. Heuristic only...
-%if 0%{?centos} != 6 && 0%{?rhel} != 6
-Conflicts: resource-agents >= 3
-%endif
+Requires: %{name}-utils = %{version}-%{release}
 @RPM_SUBPACKAGE_NOARCH@
 
 %description rgmanager
@@ -226,6 +227,7 @@ in the Cluster distribution.
 %files rgmanager
 %defattr(755,root,root,-)
 %{_datadir}/cluster/drbd.sh
+%{_prefix}/lib/%{name}/rhcs_fence
 
 %defattr(-,root,root,-)
 %{_datadir}/cluster/drbd.metadata
@@ -310,6 +312,12 @@ fi
 
 
 %changelog
+* Mon May  7 2012 Philipp Reisner <phil@linbit.com> - 8.3.13-1
+- New upstream release.
+
+* Mon Oct 28 2011 Philipp Reisner <phil@linbit.com> - 8.3.12-1
+- New upstream release.
+
 * Wed Jun 29 2011 Philipp Reisner <phil@linbit.com> - 8.3.11-1
 - New upstream release.
 
