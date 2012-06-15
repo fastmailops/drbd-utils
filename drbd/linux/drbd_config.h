@@ -32,7 +32,7 @@ extern const char *drbd_buildtag(void);
 
 /* End of external module for 2.6.33 stuff */
 
-#define REL_VERSION "8.3.11"
+#define REL_VERSION "8.3.13"
 #define API_VERSION 88
 #define PRO_VERSION_MIN 86
 #define PRO_VERSION_MAX 96
@@ -154,5 +154,20 @@ extern const char *drbd_buildtag(void);
 
 /* In commit c4945b9e (v2.6.39-rc1), the little-endian bit ops got renamed */
 #define COMPAT_HAVE_FIND_NEXT_ZERO_BIT_LE
+
+/* In ancient kernels (2.6.5) kref_put() only takes a kref as argument */
+//#define COMPAT_KREF_PUT_HAS_SINGLE_ARG
+
+/* in Commit 5a7bbad27a410350e64a2d7f5ec18fc73836c14f (between Linux-3.1 and 3.2)
+   make_request() becomes type void. Before it had type int. */
+#define COMPAT_HAVE_VOID_MAKE_REQUEST
+
+/* mempool_create_page_pool did not exist prior to 2.6.16 */
+#define COMPAT_HAVE_MEMPOOL_CREATE_PAGE_POOL
+
+/* bioset_create did change its signature a few times */
+#define COMPAT_HAVE_BIOSET_CREATE
+#define COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD
+//#define COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS
 
 #endif

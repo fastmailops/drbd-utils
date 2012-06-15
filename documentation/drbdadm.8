@@ -197,6 +197,21 @@ Causes DRBD to re\-examine all sizing constraints, and resize the resource\*(Aqs
 The
 \fB\-\-assume\-peer\-has\-space\fR
 allows you to resize a device which is currently not connected to the peer\&. Use with care, since if you do not resize the peer\*(Aqs disk as well, further connect attempts of the two will fail\&.
+.sp
+The
+\fB\-\-assume\-clean\fR
+allows you to resize an existing device and avoid syncing the new space\&. This is useful when adding addtional blank storage to your device\&. Example:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+# drbdadm \-\- \-\-assume\-clean resize r0
+.fi
+.if n \{\
+.RE
+.\}
+.sp
 .RE
 .PP
 check\-resize

@@ -221,6 +221,41 @@ then
   else
     have_find_next_zero_bit_le=0
   fi
+  if grep_q "kref_put(struct kref \*kref)" $KDIR/include/linux/kref.h ; then
+    kref_put_has_single_arg=1
+  else
+    kref_put_has_single_arg=0
+  fi
+  if grep_q "typedef void (make_request_fn)" $KDIR/include/linux/blkdev.h ; then
+	  compat_have_void_make_request=1
+  else
+	  compat_have_void_make_request=0
+  fi
+  if grep_q "mempool_create_page_pool" $KDIR/include/linux/mempool.h ; then
+	  compat_have_mempool_create_page_pool=1
+  else
+	  compat_have_mempool_create_page_pool=0
+  fi
+  if grep_q "extern struct bio_set \*bioset_create(unsigned int, unsigned int);" $KDIR/include/linux/bio.h ; then
+	  compat_have_bioset_create=1
+	  compat_have_bioset_create_front_pad=1
+	  compat_bioset_create_has_three_parameters=0
+  elif grep_q "extern struct bio_set \*bioset_create(int, int, int);" $KDIR/include/linux/bio.h ; then
+	  compat_have_bioset_create=1
+	  compat_have_bioset_create_front_pad=0
+	  compat_bioset_create_has_three_parameters=1
+  elif grep_q "extern struct bio_set \*bioset_create(int, int);" $KDIR/include/linux/bio.h ; then
+	  compat_have_bioset_create=1
+	  compat_have_bioset_create_front_pad=0
+	  compat_bioset_create_has_three_parameters=0
+  elif ! grep_q "bioset_create" $KDIR/include/linux/bio.h ; then
+	  compat_have_bioset_create=0
+	  compat_have_bioset_create_front_pad=0
+	  compat_bioset_create_has_three_parameters=0
+  else
+	echo >&2 "Sorry, was not able to detect bioset_create variant..."
+	exit 1
+  fi
 else
     # not a 2.6. kernel. just leave it alone...
     exit 0
@@ -284,6 +319,18 @@ perl -pe "
   { ( $have_fmode_t ? '' : '//' ) . \$1}e;
  s{.*(#define COMPAT_HAVE_FIND_NEXT_ZERO_BIT_LE.*)}
   { ( $have_find_next_zero_bit_le ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_KREF_PUT_HAS_SINGLE_ARG.*)}
+  { ( $kref_put_has_single_arg ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_VOID_MAKE_REQUEST.*)}
+  { ( $compat_have_void_make_request ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_MEMPOOL_CREATE_PAGE_POOL.*)}
+  { ( $compat_have_mempool_create_page_pool ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_BIOSET_CREATE.*)}
+  { ( $compat_have_bioset_create ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD.*)}
+  { ( $compat_have_bioset_create_front_pad ? '' : '//' ) . \$1}e;
+ s{.*(#define COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS.*)}
+  { ( $compat_bioset_create_has_three_parameters ? '' : '//' ) . \$1}e;
  " \
 	  < ./linux/drbd_config.h \
 	  > ./linux/drbd_config.h.new

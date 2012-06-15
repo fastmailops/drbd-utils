@@ -101,6 +101,16 @@ static inline sector_t drbd_get_capacity(struct block_device *bdev)
 	return bdev ? i_size_read(bdev->bd_inode) >> 9 : 0;
 }
 
+#ifdef COMPAT_HAVE_VOID_MAKE_REQUEST
+/* in Commit 5a7bbad27a410350e64a2d7f5ec18fc73836c14f (between Linux-3.1 and 3.2)
+   make_request() becomes type void. Before it had type int. */
+#define MAKE_REQUEST_TYPE void
+#define MAKE_REQUEST_RETURN return
+#else
+#define MAKE_REQUEST_TYPE int
+#define MAKE_REQUEST_RETURN return 0
+#endif
+
 /* sets the number of 512 byte sectors of our virtual device */
 static inline void drbd_set_my_capacity(struct drbd_conf *mdev,
 					sector_t size)
@@ -1025,6 +1035,61 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 #define time_is_after_eq_jiffies(a) time_before_eq(jiffies, a)
 #endif
 
+#ifndef time_in_range
+#define time_in_range(a,b,c) \
+	(time_after_eq(a,b) && \
+	 time_before_eq(a,c))
+#endif
+
+#ifdef COMPAT_HAVE_BIOSET_CREATE
+#ifndef COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD
+/*
+ * upstream commit (included in 2.6.29)
+ * commit bb799ca0202a360fa74d5f17039b9100caebdde7
+ * Author: Jens Axboe <jens.axboe@oracle.com>
+ * Date:   Wed Dec 10 15:35:05 2008 +0100
+ *
+ *     bio: allow individual slabs in the bio_set
+ *
+ * does
+ * -struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size)
+ * +struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
+ *
+ * Note that up until 2.6.21 inclusive, it was
+ * struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size, int scale)
+ * so if we want to support old kernels (RHEL5), we will need an additional compat check.
+ *
+ * This also means that we must not use the front_pad trick as long as we want
+ * to keep compatibility with < 2.6.29.
+ */
+#ifdef COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS
+#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size, 1)
+#else
+#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size)
+#endif
+#endif /* COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD */
+#else /* COMPAT_HAVE_BIOSET_CREATE */
+/* Old kernel, no bioset_create at all!
+ * Just do plain alloc_bio, and forget about the dedicated bioset */
+static inline struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
+{
+	return NULL;
+}
+static inline void bioset_free(struct bio_set *bs)
+{
+	BUG();
+}
+static inline void bio_free(struct bio *bio, struct bio_set *bs)
+{
+	BUG();
+}
+static inline struct bio *bio_alloc_bioset(gfp_t gfp_mask, int nr_iovecs, struct bio_set *bs)
+{
+	BUG();
+	return NULL;
+}
+#endif /* COMPAT_HAVE_BIOSET_CREATE */
+
 /*
  * In commit c4945b9e (v2.6.39-rc1), the little-endian bit operations have been
  * renamed to be less weird.
@@ -1040,6 +1105,10 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 	generic___test_and_set_le_bit(nr, addr)
 #define __test_and_clear_bit_le(nr, addr) \
 	generic___test_and_clear_le_bit(nr, addr)
+#endif
+
+#ifdef COMPAT_KREF_PUT_HAS_SINGLE_ARG
+#define kref_put(KREF, RELEASE)	({ (KREF)->release=RELEASE; kref_put(KREF); })
 #endif
 
 #endif
