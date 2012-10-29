@@ -1,0 +1,16 @@
+Description: Fix name of udev rules file. (closes: #679266)
+Author: Bastian Blank <waldi@debian.org>
+Bug-Debian: http://bugs.debian.org/679266
+
+---
+--- drbd8-8.3.13.orig/scripts/Makefile.in
++++ drbd8-8.3.13/scripts/Makefile.in
+@@ -130,7 +130,7 @@ endif
+ install-udev:
+ ifeq ($(WITH_UDEV),yes)
+ 	mkdir -p $(DESTDIR)$(sysconfdir)/udev/rules.d
+-	install -m 644 drbd.rules $(DESTDIR)$(sysconfdir)/udev/rules.d/65-drbd.rules$(UDEV_RULE_SUFFIX)
++	install -m 644 drbd.rules $(DESTDIR)$(sysconfdir)/udev/rules.d/65-drbd.rules
+ endif
+ 
+ install-bashcompletion:

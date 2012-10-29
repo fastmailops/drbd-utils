@@ -1,3 +1,22 @@
+drbd8 (2:8.3.13-2) unstable; urgency=low
+
+  * Integrated NMU
+  * Comment-out default handlers for pri-on-incon-degr/pri-lost-after-sb in '/etc/drbd.d/global_common.conf'
+  ** Re-enable them if you want to improve your availability in a DRBD cluster setup. (Closes: #576511)
+  * Added recommends to mailx (Closes: #691225)
+
+ -- Philipp Hug <debian@hug.cx>  Mon, 29 Oct 2012 13:45:51 +0100
+
+drbd8 (2:8.3.13-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix name of udev rules file. (closes: #679266)
+  * Disable module version warning for sublevel missmatch.
+    (closes: #659353)
+  * Disable regeneration of buildtags file. (closes: #679460)
+
+ -- Bastian Blank <waldi@debian.org>  Thu, 28 Jun 2012 21:07:04 +0000
+
 drbd8 (2:8.3.13-1) unstable; urgency=low
 
   * Update to latest version for Linux 3.2.0

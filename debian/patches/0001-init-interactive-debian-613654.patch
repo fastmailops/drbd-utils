@@ -4,7 +4,7 @@ Subject: init-interactive-debian-613654
 
 ---
  scripts/drbd |    1 +
- 1 files changed, 1 insertions(+), 0 deletions(-)
+ 1 file changed, 1 insertion(+)
 
 diff --git a/scripts/drbd b/scripts/drbd
 index 2538e8b..eb5538c 100755

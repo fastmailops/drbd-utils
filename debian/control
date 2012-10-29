@@ -17,6 +17,7 @@ Conflicts: drbd-utils
 Provides: drbd-utils
 Replaces: drbd-utils, drbd
 Suggests: heartbeat
+Recommends: heirloom-mailx|mailx
 Description: RAID 1 over tcp/ip for Linux utilities
  Drbd is a block device which is designed to build high availability
  clusters by providing a virtual shared device which keeps disks in

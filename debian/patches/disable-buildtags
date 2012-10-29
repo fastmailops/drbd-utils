@@ -1,0 +1,25 @@
+Description: Disable regeneration of buildtags file
+Author: Bastian Blank <waldi@debian.org>
+Bug-Debian: http://bugs.debian.org/679460
+
+---
+--- a/drbd/Makefile
++++ b/drbd/Makefile
+@@ -106,8 +106,6 @@
+ 		false;\
+ 	fi
+ 
+-.PHONY: drbd_buildtag.c
+-
+   drbd_buildtag.c:
+ 	@set -e; exec > $@.new;							\
+ 	echo -e "/* automatically generated. DO NOT EDIT. */";			\
+@@ -132,7 +130,7 @@
+ 	echo -e "\t\t\" build by $$USER@$$HOSTNAME, `date "+%F %T"`\";\n}";	\
+ 	mv --force $@.new $@
+ 
+-  kbuild: drbd_buildtag.c
++  kbuild:
+ 	@rm -f .drbd_kernelrelease*
+ 	-test -f ../scripts/adjust_drbd_config_h.sh && \
+ 		KDIR=$(KDIR) O=$(O) $(SHELL) ../scripts/adjust_drbd_config_h.sh

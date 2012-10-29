@@ -1,3 +1,6 @@
-0001-disable-kernel-header-checking.patch
-0002-init-interactive-debian-613654.patch
-0003-dpkg-statoverride-instead-of-chgrp-chmod.patch
+0001-init-interactive-debian-613654.patch
+0002-dpkg-statoverride-instead-of-chgrp-chmod.patch
+udev-rules-name
+disable-version-warning
+disable-buildtags
+disable-default-handlers

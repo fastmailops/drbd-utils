@@ -4,7 +4,7 @@ Subject: dpkg-statoverride instead of chgrp/chmod
 
 ---
  user/drbdadm_main.c |    4 +---
- 1 files changed, 1 insertions(+), 3 deletions(-)
+ 1 file changed, 1 insertion(+), 3 deletions(-)
 
 diff --git a/user/drbdadm_main.c b/user/drbdadm_main.c
 index ab752e6..2bedab1 100644
