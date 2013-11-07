@@ -1,3 +1,15 @@
+drbd8 (2:8.4.4-1) UNRELEASED; urgency=low
+
+  * New upstream version (Closes: #714210, #721443)
+  * Bump compat to 9 and standards to 3.9.5
+  * Convert to dh sequencer
+  * Convert copyright to Format 1.0
+  * Remove unnecessary (build-)dependencies:
+    bison, bzip2, debconf
+  * Fix Vcs-Git URL
+
+ -- Apollon Oikonomopoulos <apoikos@gmail.com>  Thu, 07 Nov 2013 14:02:13 +0200
+
 drbd8 (2:8.3.13-2) unstable; urgency=low
 
   * Integrated NMU
