@@ -1,6 +1,4 @@
-0001-init-interactive-debian-613654.patch
 0002-dpkg-statoverride-instead-of-chgrp-chmod.patch
 udev-rules-name
 disable-version-warning
 disable-buildtags
-disable-default-handlers
