@@ -1,6 +1,6 @@
 drbd8 (2:8.4.4-1) UNRELEASED; urgency=low
 
-  * New upstream version (Closes: #714210, #721443)
+  * New upstream version (Closes: #714210, #721443, #711781)
   * Ask for participation to the user survey by default (Closes: #711352)
   * Bump compat to 9 and standards to 3.9.5
   * Convert to dh sequencer
