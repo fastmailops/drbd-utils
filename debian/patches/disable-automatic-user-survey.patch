@@ -1,0 +1,9 @@
+--- a/scripts/global_common.conf
++++ b/scripts/global_common.conf
+@@ -1,5 +1,5 @@
+ global {
+-	usage-count yes;
++	usage-count ask;
+ 	# minor-count dialog-refresh disable-ip-verification
+ }
+ 

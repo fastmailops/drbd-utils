@@ -2,3 +2,4 @@
 udev-rules-name
 disable-version-warning
 disable-buildtags
+disable-automatic-user-survey.patch
