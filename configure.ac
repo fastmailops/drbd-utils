@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.3.13, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.4.4, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -41,6 +41,7 @@ docdir="`eval echo ${docdir}`"
 
 dnl "--with-<foo>" options (all except km enabled by default, pass --without-<foo> to disable)
 WITH_UTILS=yes
+WITH_LEGACY_UTILS=yes
 WITH_KM=no
 WITH_UDEV=yes
 WITH_XEN=yes
@@ -53,6 +54,10 @@ AC_ARG_WITH([utils],
 	[AS_HELP_STRING([--with-utils],
 			[Enable management utilities])],
 	[WITH_UTILS=$withval])
+AC_ARG_WITH([legacy_utils],
+	[AS_HELP_STRING([--without-legacy_utils],
+			[Do not include legacy <= 8.3 drbdsetup/drbdadm])],
+	[WITH_LEGACY_UTILS=$withval])
 AC_ARG_WITH([km],
 	[AS_HELP_STRING([--with-km],
 			[Enable kernel module])],
@@ -101,6 +106,7 @@ AC_ARG_ENABLE([spec],
 
 
 AC_SUBST(WITH_UTILS)
+AC_SUBST(WITH_LEGACY_UTILS)
 AC_SUBST(WITH_KM)
 AC_SUBST(WITH_UDEV)
 AC_SUBST(WITH_XEN)
@@ -175,7 +181,6 @@ RPM_CONFLICTS_KM=""
 RPM_BUILDREQ_DEFAULT="gcc flex glibc-devel make"
 RPM_BUILDREQ_KM=""
 RPM_SUBPACKAGE_NOARCH=""
-INITSCRIPT_SYMLINK=""
 RPM_REQ_PACEMAKER=""
 RPM_REQ_HEARTBEAT=""
 RPM_REQ_BASH_COMPLETION=""
@@ -230,7 +235,6 @@ case "$DISTRO" in
 	RPM_BUILDREQ_KM="kernel-syms"
 	# RPM_REQ_CHKCONFIG_POST="" chkconfig is part of aaa_base on suse
 	# RPM_REQ_CHKCONFIG_PREUN="" chkconfig is part of aaa_base on suse
-	INITSCRIPT_SYMLINK="/sbin/rcdrbd"
 	AC_MSG_NOTICE([configured for SUSE (includes openSUSE, SLES).])
 
 	RPM_REQ_BASH_COMPLETION="Requires: bash"
@@ -276,7 +280,6 @@ AC_SUBST(RPM_CONFLICTS_KM)
 AC_SUBST(RPM_BUILDREQ_DEFAULT)
 AC_SUBST(RPM_BUILDREQ_KM)
 AC_SUBST(RPM_SUBPACKAGE_NOARCH)
-AC_SUBST(INITSCRIPT_SYMLINK)
 AC_SUBST(RPM_REQ_PACEMAKER)
 AC_SUBST(RPM_REQ_HEARTBEAT)
 AC_SUBST(RPM_REQ_BASH_COMPLETION)
@@ -286,21 +289,29 @@ AC_SUBST(RPM_REQ_CHKCONFIG_PREUN)
 
 AH_TEMPLATE(DRBD_LIB_DIR, [Local state directory. Commonly
 			  /var/lib/drbd or /usr/local/var/lib/drbd])
+AH_TEMPLATE(DRBD_RUN_DIR, [Runtime state directory. Commonly
+			  /var/run/drbd or /usr/local/var/run/drbd])
 AH_TEMPLATE(DRBD_LOCK_DIR, [Local lock directory. Commonly
 			   /var/lock or
 			   /usr/local/var/lock])
 AH_TEMPLATE(DRBD_CONFIG_DIR, [Local configuration directory. Commonly
 			   /etc or
 			   /usr/local/etc])
+AH_TEMPLATE(DRBD_LEGACY_83, [Include support for drbd-8.3 kernel code])
 
 AC_DEFINE_UNQUOTED(DRBD_LIB_DIR, ["$localstatedir/lib/$PACKAGE_TARNAME"])
+AC_DEFINE_UNQUOTED(DRBD_RUN_DIR, ["$localstatedir/run/$PACKAGE_TARNAME"])
 AC_DEFINE_UNQUOTED(DRBD_LOCK_DIR, ["$localstatedir/lock"])
 AC_DEFINE_UNQUOTED(DRBD_CONFIG_DIR, ["$sysconfdir"])
 
+if test "$WITH_LEGACY_UTILS" = "yes"; then
+   AC_DEFINE(DRBD_LEGACY_83, [1])
+fi
+
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/Makefile scripts/Makefile documentation/Makefile)
-   AC_CONFIG_HEADERS(user/config.h)
+   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile scripts/Makefile documentation/Makefile)
+   AC_CONFIG_HEADERS(user/config.h user/legacy/config.h)
 else
    if test "$WITH_UTILS" = "yes"; then
      AC_CONFIG_FILES(drbd.spec)

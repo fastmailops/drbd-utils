@@ -1,7 +1,7 @@
 '\" t
 .\"     Title: drbdmeta
 .\"    Author: [see the "Author" section]
-.\" Generator: DocBook XSL Stylesheets v1.75.2 <http://docbook.sf.net/>
+.\" Generator: DocBook XSL Stylesheets v1.76.1 <http://docbook.sf.net/>
 .\"      Date: 15 Oct 2008
 .\"    Manual: System Administration
 .\"    Source: DRBD 8.3.2
@@ -53,10 +53,22 @@ Some sanity checks cause drbdmeta to terminate\&. E\&.g\&. if a file system imag
 .RE
 .SH "COMMANDS"
 .PP
-create\-md
+create\-md \fB\-\-peer\-max\-bio\-size \fR\fB\fIval\fR\fR \fB\-\-al\-stripes \fR\fB\fIval\fR\fR \fB\-\-al\-stripe\-size\-kB \fR\fB\fIval\fR\fR
 .RS 4
 .\" drbdmeta: create-md
 Create\-md initializes the meta data storage\&. This needs to be done before a DRBD resource can be taken online for the first time\&. In case there is already a meta data signature of an older format in place, drbdmeta will ask you if it should convert the older format to the selected format\&.
+.sp
+If you will use the resource before it is connected to its peer for the first time DRBD may perform better if you use the
+\fB\-\-peer\-max\-bio\-size\fR
+option\&. For DRBD versions of the peer use up to these values: <8\&.3\&.7 \-> 4k, 8\&.3\&.8 \-> 32k, 8\&.3\&.9 \-> 128k, 8\&.4\&.0 \-> 1M\&.
+.sp
+If you want to use more than 6433 activity log extents, or live on top of a spriped RAID, you may specify the number of stripes (\fB\-\-al\-stripes\fR, default 1), and the stripe size (\fB\-\-al\-stripe\-size\-kB\fR, default 32)\&. To just use a larger linear on\-disk ring\-buffer, leave the number of stripes at 1, and increase the size only:
+
+\fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripe\-size 1M\fR
+.sp
+To avoid a single "spindle" from becoming a bottleneck, increase the number of stripes, to achieve an interleaved layout of the on\-disk activity\-log transactions\&. What you give as "stripe\-size" should be what is a\&.k\&.a\&. "chunk size" or "granularity" or "strip unit": the minimum skip to the next "spindle"\&.
+
+\fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripes 7 \-\-al\-stripe\-size 64k\fR
 .RE
 .PP
 get\-gi

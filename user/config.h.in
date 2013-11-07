@@ -3,11 +3,18 @@
 /* Local configuration directory. Commonly /etc or /usr/local/etc */
 #undef DRBD_CONFIG_DIR
 
+/* Include support for drbd-8.3 kernel code */
+#undef DRBD_LEGACY_83
+
 /* Local state directory. Commonly /var/lib/drbd or /usr/local/var/lib/drbd */
 #undef DRBD_LIB_DIR
 
 /* Local lock directory. Commonly /var/lock or /usr/local/var/lock */
 #undef DRBD_LOCK_DIR
+
+/* Runtime state directory. Commonly /var/run/drbd or /usr/local/var/run/drbd
+   */
+#undef DRBD_RUN_DIR
 
 /* Define to the address where bug reports for this package should be sent. */
 #undef PACKAGE_BUGREPORT

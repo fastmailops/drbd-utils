@@ -4,11 +4,11 @@
 #include <string.h>
 #include "drbdadm_parser.h"
 #include "drbdadm.h"
+#include "drbdtool_common.h"
 
 void long_string(char* text);
 void long_dqstring(char* text);
 void err_dqstring(char* text);
-static void unescape(void);
 
 #if 0
 #define DP printf("'%s' ",yytext)
@@ -65,16 +65,17 @@ disk			{ DP; return TK_DISK;			}
 proxy			{ DP; return TK_PROXY;			}
 minor			{ DP; return TK_MINOR;			}
 inside			{ DP; return TK_INSIDE;			}
+volume			{ DP; return TK_VOLUME;			}
 syncer			{ DP; return TK_SYNCER;			}
 device			{ DP; return TK_DEVICE;			}
 global			{ DP; return TK_GLOBAL;			}
 common			{ DP; return TK_COMMON;			}
+options			{ DP; return TK_OPTIONS;		}
 outside			{ DP; return TK_OUTSIDE;		}
 address			{ DP; return TK_ADDRESS;		}
 startup			{ DP; return TK_STARTUP;		}
 include			{ DP; return TK_INCLUDE;		}
 handlers		{ DP; return TK_HANDLER;		}
-protocol		{ DP; return TK_PROTOCOL;		}
 minor-count		{ DP; return TK_MINOR_COUNT;		}
 disable-ip-verification { DP; return TK_DISABLE_IP_VERIFICATION;}
 dialog-refresh		{ DP; return TK_DIALOG_REFRESH;		}
@@ -82,7 +83,6 @@ resource		{ DP; return TK_RESOURCE;		}
 meta-disk		{ DP; return TK_META_DISK;		}
 flexible-meta-disk	{ DP; return TK_FLEX_META_DISK;		}
 usage-count 		{ DP; return TK_USAGE_COUNT;		}
-_is_default 		{ DP; return TK__IS_DEFAULT;		}
 _this_host 		{ DP; return TK__THIS_HOST;		}
 _remote_host 		{ DP; return TK__REMOTE_HOST;		}
 sci			{ DP; CP; return TK_SCI;		}
@@ -95,12 +95,18 @@ on-io-error		{ DP; CP; return TK_DISK_OPTION;	}
 fencing			{ DP; CP; return TK_DISK_OPTION;	}
 max-bio-bvecs		{ DP; CP; return TK_DISK_OPTION;	}
 disk-timeout		{ DP; CP; return TK_DISK_OPTION;	}
-use-bmbv		{ DP; CP; return TK_DISK_SWITCH;		}
-no-disk-barrier		{ DP; CP; return TK_DISK_SWITCH;		}
-no-disk-flushes		{ DP; CP; return TK_DISK_SWITCH;		}
-no-disk-drain		{ DP; CP; return TK_DISK_SWITCH;		}
-no-md-flushes		{ DP; CP; return TK_DISK_SWITCH;		}
+read-balancing		{ DP; CP; return TK_DISK_OPTION;	}
+use-bmbv		{ DP; CP; return TK_DISK_FLAG;		}
+disk-barrier		{ DP; CP; return TK_DISK_FLAG;		}
+disk-flushes		{ DP; CP; return TK_DISK_FLAG;		}
+disk-drain		{ DP; CP; return TK_DISK_FLAG;          }
+md-flushes		{ DP; CP; return TK_DISK_FLAG;          }
+no-disk-barrier		{ DP; CP; return TK_DISK_NO_FLAG;		}
+no-disk-flushes		{ DP; CP; return TK_DISK_NO_FLAG;		}
+no-disk-drain		{ DP; CP; return TK_DISK_NO_FLAG;		}
+no-md-flushes		{ DP; CP; return TK_DISK_NO_FLAG;		}
 timeout			{ DP; CP; RC(TIMEOUT); return TK_NET_OPTION;	}
+protocol		{ DP; CP; RC(PROTOCOL); return TK_NET_OPTION;	}
 ko-count		{ DP; CP; RC(KO_COUNT); return TK_NET_OPTION;	}
 ping-int		{ DP; CP; RC(PING_INT); return TK_NET_OPTION;	}
 max-buffers		{ DP; CP; RC(MAX_BUFFERS); return TK_NET_OPTION;}
@@ -118,33 +124,37 @@ data-integrity-alg	{ DP; CP; return TK_NET_OPTION;         }
 on-congestion		{ DP; CP; return TK_NET_OPTION;         }
 congestion-fill		{ DP; CP; RC(CONG_FILL); return TK_NET_OPTION;   }
 congestion-extents	{ DP; CP; RC(CONG_EXTENTS); return TK_NET_OPTION;}
-allow-two-primaries	{ DP; CP; return TK_NET_SWITCH;		}
-always-asbp		{ DP; CP; return TK_NET_SWITCH;		}
-no-tcp-cork		{ DP; CP; return TK_NET_SWITCH;		}
+allow-two-primaries	{ DP; CP; return TK_NET_FLAG;		}
+always-asbp		{ DP; CP; return TK_NET_FLAG;		}
+no-tcp-cork		{ DP; CP; return TK_NET_NO_FLAG;	}
+tcp-cork		{ DP; CP; return TK_NET_FLAG;		}
 discard-my-data		{ DP; CP; return TK_NET_DELEGATE;	}
-rate			{ DP; CP; RC(RATE); return TK_SYNCER_OPTION;	}
-after			{ DP; CP; return TK_SYNCER_OPTION;	}
-verify-alg              { DP; CP; return TK_SYNCER_OPTION;      }
-csums-alg               { DP; CP; return TK_SYNCER_OPTION;      }
-al-extents		{ DP; CP; RC(AL_EXTENTS); return TK_SYNCER_OPTION;}
-cpu-mask		{ DP; CP; return TK_SYNCER_OPTION;	}
-use-rle			{ DP; CP; return TK_SYNCER_SWITCH;	}
+rate			{ DP; CP; RC(RATE); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+resync-rate		{ DP; CP; RC(RATE); return TK_DISK_OPTION;	}
+after			{ DP; CP; return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+resync-after		{ DP; CP; return TK_DISK_OPTION;	}
+verify-alg              { DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_OPTION;      }
+csums-alg               { DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_OPTION;      }
+al-extents		{ DP; CP; RC(AL_EXTENTS); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;}
+al-updates		{ DP; CP; return TK_DISK_FLAG; 	}
+cpu-mask		{ DP; CP; return TK_SYNCER_OLD_OPT | TK_RES_OPTION;	}
+use-rle			{ DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_FLAG;	}
 delay-probe-volume	{ DP; CP; return TK_DEPRECATED_OPTION;  }
 delay-probe-interval	{ DP; CP; return TK_DEPRECATED_OPTION;  }
-c-plan-ahead		{ DP; CP; RC(C_PLAN_AHEAD); return TK_SYNCER_OPTION;	}
-c-delay-target	{ DP; CP; RC(C_DELAY_TARGET); return TK_SYNCER_OPTION;	}
-c-fill-target		{ DP; CP; RC(C_FILL_TARGET); return TK_SYNCER_OPTION;	}
-c-max-rate		{ DP; CP; RC(C_MAX_RATE); return TK_SYNCER_OPTION;	}
-c-min-rate		{ DP; CP; RC(C_MIN_RATE); return TK_SYNCER_OPTION;	}
+c-plan-ahead		{ DP; CP; RC(C_PLAN_AHEAD); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+c-delay-target	{ DP; CP; RC(C_DELAY_TARGET); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+c-fill-target		{ DP; CP; RC(C_FILL_TARGET); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+c-max-rate		{ DP; CP; RC(C_MAX_RATE); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
+c-min-rate		{ DP; CP; RC(C_MIN_RATE); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
 throttle-threshold	{ DP; CP; return TK_DEPRECATED_OPTION;  }
 hold-off-threshold	{ DP; CP; return TK_DEPRECATED_OPTION;  }
-on-no-data-accessible   { DP; CP; return TK_SYNCER_OPTION;	}
+on-no-data-accessible   { DP; CP; return TK_SYNCER_OLD_OPT | TK_RES_OPTION;	}
 wfc-timeout		{ DP; CP; RC(WFC_TIMEOUT); return TK_STARTUP_OPTION;}
 degr-wfc-timeout	{ DP; CP; RC(DEGR_WFC_TIMEOUT); return TK_STARTUP_OPTION;}
 outdated-wfc-timeout	{ DP; CP; RC(OUTDATED_WFC_TIMEOUT); return TK_STARTUP_OPTION;}
 stacked-timeouts	{ DP; return TK_STARTUP_DELEGATE;       }
 become-primary-on	{ DP; return TK_STARTUP_DELEGATE;       }
-wait-after-sb		{ DP; CP; return TK_STARTUP_SWITCH;     }
+wait-after-sb		{ DP; CP; return TK_STARTUP_FLAG;     }
 pri-on-incon-degr	{ DP; CP; return TK_HANDLER_OPTION;	}
 pri-lost-after-sb	{ DP; CP; return TK_HANDLER_OPTION;	}
 pri-lost		{ DP; CP; return TK_HANDLER_OPTION;     }
@@ -159,12 +169,13 @@ before-resync-source	{ DP; CP; return TK_HANDLER_OPTION;	}
 memlimit		{ DP; CP; return TK_PROXY_OPTION | TK_PROXY_GROUP; }
 read-loops		{ DP; CP; return TK_PROXY_OPTION | TK_PROXY_GROUP; }
 compression		{ DP; CP; return TK_PROXY_OPTION | TK_PROXY_GROUP; }
+bwlimit			{ DP; CP; return TK_PROXY_OPTION | TK_PROXY_GROUP; }
 plugin			{ DP; CP; return TK_PROXY_DELEGATE;     }
 out-of-sync             { DP; CP; return TK_HANDLER_OPTION;     }
 {IPV4ADDR}		{ DP; CP; return TK_IPADDR;		}
 {IPV6ADDR}		{ DP; CP; return TK_IPADDR6;		}
 {NUM}			{ DP; CP; return TK_INTEGER;		}
-{DQSTRING}		{ unescape(); DP; CP; return TK_STRING;	}
+{DQSTRING}		{ unescape(yytext); DP; CP; return TK_STRING;	}
 {STRING}		{ DP; CP; return TK_STRING;		}
 {LONG_STRING}		{ return TK_ERR_STRING_TOO_LONG;	}
 {LONG_DQSTRING}		{ return TK_ERR_DQSTRING_TOO_LONG;	}
@@ -173,23 +184,6 @@ out-of-sync             { DP; CP; return TK_HANDLER_OPTION;     }
 
 %%
 
-
-static void unescape(void)
-{
-  /* backslash escapes from string */
-  char *ue, *e;
-  e = ue = yytext;
-  for (;;) {
-    if (*ue == '"')
-      ue++;
-    if (*ue == '\\')
-      ue++;
-    if (!*ue)
-      break;
-    *e++ = *ue++;
-  }
-  *e = '\0';
-}
 
 /* Compatibility cruft for flex version 2.5.4a */
 #ifndef YY_FLEX_SUBMINOR_VERSION

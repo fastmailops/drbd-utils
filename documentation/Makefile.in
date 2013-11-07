@@ -65,6 +65,15 @@ XSLTPROC_MANPAGES_OPTIONS ?= $(XSLTPROC_OPTIONS)
 XSLTPROC_HTML_OPTIONS ?= $(XSLTPROC_OPTIONS)
 XSLTPROC_FO_OPTIONS ?= $(XSLTPROC_OPTIONS)
 
+DRBDSETUP_CMDS = new-resource new-minor del-resource del-minor
+DRBDSETUP_CMDS += attach connect disk-options net-options resource-options
+DRBDSETUP_CMDS += disconnect detach primary secondary verify invalidate invalidate-remote
+DRBDSETUP_CMDS += down wait-connect wait-sync role cstate dstate
+DRBDSETUP_CMDS += resize check-resize pause-sync resume-sync
+DRBDSETUP_CMDS += outdate show-gi get-gi show events
+DRBDSETUP_CMDS += suspend-io resume-io new-current-uuid
+
+
 all:
 	@echo "To (re)make the documentation: make doc"
 
@@ -101,9 +110,19 @@ ifeq ($(WITH_UTILS),yes)
 	$(FO_STYLESHEET) $<
 endif
 
+../user/drbdsetup:
+	(cd ../user; make drbdsetup)
+
+drbdsetup_xml-help_%.xml: ../user/drbdsetup
+	../user/drbdsetup xml-help $* > $@
+
+drbdsetup_%.xml: drbdsetup_xml-help_%.xml xml-usage-to-docbook.xsl
+	$(XSLTPROC) -o $@ xml-usage-to-docbook.xsl $<
+
 distclean:
 	rm -f *.[58] manpage.links manpage.refs *~ manpage.log
 	rm -f *.ps.gz *.pdf *.ps *.html pod2htm*
+	rm -f drbdsetup_*.xml
 
 #######
 
@@ -121,7 +140,7 @@ install:
 uninstall:
 	@ set -e; for f in $(MANPAGES) ; do \
 		s=$${f##*.}; \
-		rm -v $(DESTDIR)$(mandir)/man$$s/$$f ; \
+		rm -vf $(DESTDIR)$(mandir)/man$$s/$$f ; \
 	done
 
 html:	$(SOURCES:.xml=.html)
@@ -130,5 +149,4 @@ pdf:	$(SOURCES:.xml=.pdf)
 
 ps:	$(SOURCES:.xml=.ps)
 
-
-
+drbdsetup.8: drbdsetup.xml $(patsubst %,drbdsetup_%.xml,$(DRBDSETUP_CMDS))

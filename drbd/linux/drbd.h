@@ -52,7 +52,6 @@
 
 #endif
 
-
 enum drbd_io_error_p {
 	EP_PASS_ON, /* FIXME should the better be named "Ignore"? */
 	EP_CALL_HELPER,
@@ -60,7 +59,8 @@ enum drbd_io_error_p {
 };
 
 enum drbd_fencing_p {
-	FP_DONT_CARE,
+	FP_NOT_AVAIL = -1, /* Not a policy */
+	FP_DONT_CARE = 0,
 	FP_RESOURCE,
 	FP_STONITH
 };
@@ -96,6 +96,20 @@ enum drbd_on_congestion {
 	OC_DISCONNECT,
 };
 
+enum drbd_read_balancing {
+	RB_PREFER_LOCAL,
+	RB_PREFER_REMOTE,
+	RB_ROUND_ROBIN,
+	RB_LEAST_PENDING,
+	RB_CONGESTED_REMOTE,
+	RB_32K_STRIPING,
+	RB_64K_STRIPING,
+	RB_128K_STRIPING,
+	RB_256K_STRIPING,
+	RB_512K_STRIPING,
+	RB_1M_STRIPING,
+};
+
 /* KEEP the order, do not delete or insert. Only append. */
 enum drbd_ret_code {
 	ERR_CODE_BASE		= 100,
@@ -116,7 +130,7 @@ enum drbd_ret_code {
 	ERR_AUTH_ALG		= 120,
 	ERR_AUTH_ALG_ND		= 121,
 	ERR_NOMEM		= 122,
-	ERR_DISCARD		= 123,
+	ERR_DISCARD_IMPOSSIBLE	= 123,
 	ERR_DISK_CONFIGURED	= 124,
 	ERR_NET_CONFIGURED	= 125,
 	ERR_MANDATORY_TAG	= 126,
@@ -124,8 +138,8 @@ enum drbd_ret_code {
 	ERR_INTR		= 129, /* EINTR */
 	ERR_RESIZE_RESYNC	= 130,
 	ERR_NO_PRIMARY		= 131,
-	ERR_SYNC_AFTER		= 132,
-	ERR_SYNC_AFTER_CYCLE	= 133,
+	ERR_RESYNC_AFTER	= 132,
+	ERR_RESYNC_AFTER_CYCLE	= 133,
 	ERR_PAUSE_IS_SET	= 134,
 	ERR_PAUSE_IS_CLEAR	= 135,
 	ERR_PACKET_NR		= 137,
@@ -149,7 +163,19 @@ enum drbd_ret_code {
 	ERR_CONG_NOT_PROTO_A	= 155,
 	ERR_PIC_AFTER_DEP	= 156,
 	ERR_PIC_PEER_DEP	= 157,
-
+	ERR_RES_NOT_KNOWN	= 158,
+	ERR_RES_IN_USE		= 159,
+	ERR_MINOR_CONFIGURED    = 160,
+	ERR_MINOR_EXISTS	= 161,
+	ERR_INVALID_REQUEST	= 162,
+	ERR_NEED_APV_100	= 163,
+	ERR_NEED_ALLOW_TWO_PRI  = 164,
+	ERR_MD_UNCLEAN          = 165,
+	ERR_MD_LAYOUT_CONNECTED = 166,
+	ERR_MD_LAYOUT_TOO_BIG   = 167,
+	ERR_MD_LAYOUT_TOO_SMALL = 168,
+	ERR_MD_LAYOUT_NO_FIT    = 169,
+	ERR_IMPLICIT_SHRINK     = 170,
 	/* insert new ones above this line */
 	AFTER_LAST_ERR_CODE
 };
@@ -262,18 +288,6 @@ union drbd_state {
 #else
 # error "this endianness is not supported"
 #endif
-#ifndef DRBD_DEBUG_STATE_CHANGES
-# ifdef CONFIG_DYNAMIC_DEBUG
-#  define DRBD_DEBUG_STATE_CHANGES 1
-# else
-#  define DRBD_DEBUG_STATE_CHANGES 0
-# endif
-#endif
-#if DRBD_DEBUG_STATE_CHANGES
-		unsigned int line;
-		const char *func;
-		unsigned long long seq;
-#endif
 	};
 	unsigned int i;
 };
@@ -302,14 +316,10 @@ enum drbd_state_rv {
 	SS_NOT_SUPPORTED = -17,      /* drbd-8.2 only */
 	SS_IN_TRANSIENT_STATE = -18,  /* Retry after the next state change */
 	SS_CONCURRENT_ST_CHG = -19,   /* Concurrent cluster side state change! */
-	SS_AFTER_LAST_ERROR = -20,    /* Keep this at bottom */
+	SS_O_VOL_PEER_PRI = -20,
+	SS_OUTDATE_WO_CONN = -21,
+	SS_AFTER_LAST_ERROR = -22,    /* Keep this at bottom */
 };
-
-/* from drbd_strings.c */
-extern const char *drbd_conn_str(enum drbd_conns);
-extern const char *drbd_role_str(enum drbd_role);
-extern const char *drbd_disk_str(enum drbd_disk_state);
-extern const char *drbd_set_st_err_str(enum drbd_state_rv);
 
 #define SHARED_SECRET_MAX 64
 
@@ -319,7 +329,9 @@ extern const char *drbd_set_st_err_str(enum drbd_state_rv);
 #define MDF_FULL_SYNC		(1 << 3)
 #define MDF_WAS_UP_TO_DATE	(1 << 4)
 #define MDF_PEER_OUT_DATED	(1 << 5)
-#define MDF_CRASHED_PRIMARY      (1 << 6)
+#define MDF_CRASHED_PRIMARY	(1 << 6)
+#define MDF_AL_CLEAN		(1 << 7)
+#define MDF_AL_DISABLED		(1 << 8)
 
 enum drbd_uuid_index {
 	UI_CURRENT,
@@ -339,45 +351,25 @@ enum drbd_timeout_flag {
 
 #define UUID_JUST_CREATED ((__u64)4)
 
+/* magic numbers used in meta data and network packets */
 #define DRBD_MAGIC 0x83740267
-#define BE_DRBD_MAGIC __constant_cpu_to_be32(DRBD_MAGIC)
 #define DRBD_MAGIC_BIG 0x835a
-#define BE_DRBD_MAGIC_BIG __constant_cpu_to_be16(DRBD_MAGIC_BIG)
+#define DRBD_MAGIC_100 0x8620ec20
+
+#define DRBD_MD_MAGIC_07   (DRBD_MAGIC+3)
+#define DRBD_MD_MAGIC_08   (DRBD_MAGIC+4)
+#define DRBD_MD_MAGIC_84_UNCLEAN	(DRBD_MAGIC+5)
+
+
+/* how I came up with this magic?
+ * base64 decode "actlog==" ;) */
+#define DRBD_AL_MAGIC 0x69cb65a2
 
 /* these are of type "int" */
 #define DRBD_MD_INDEX_INTERNAL -1
 #define DRBD_MD_INDEX_FLEX_EXT -2
 #define DRBD_MD_INDEX_FLEX_INT -3
 
-/* Start of the new netlink/connector stuff */
-
-#define DRBD_NL_CREATE_DEVICE 0x01
-#define DRBD_NL_SET_DEFAULTS  0x02
-
-/* The following line should be moved over to linux/connector.h
- * when the time comes */
-#ifndef CN_IDX_DRBD
-# define CN_IDX_DRBD			0x4
-/* Ubuntu "intrepid ibex" release defined CN_IDX_DRBD as 0x6 */
-#endif
-#define CN_VAL_DRBD			0x1
-
-/* For searching a vacant cn_idx value */
-#define CN_IDX_STEP			6977
-
-struct drbd_nl_cfg_req {
-	int packet_type;
-	unsigned int drbd_minor;
-	int flags;
-	unsigned short tag_list[];
-};
-
-struct drbd_nl_cfg_reply {
-	int packet_type;
-	unsigned int minor;
-	/* FIXME: This is super ugly. */
-	int ret_code; /* enum drbd_ret_code or enum drbd_state_rv */
-	unsigned short tag_list[]; /* only used with get_* calls */
-};
+#define DRBD_CPU_MASK_SIZE 32
 
 #endif

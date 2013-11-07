@@ -36,7 +36,6 @@ UDEV_RULE_SUFFIX = @UDEV_RULE_SUFFIX@
 INITDIR = @INITDIR@
 LIBDIR = @prefix@/lib/@PACKAGE_TARNAME@
 LN_S = @LN_S@
-INITSCRIPT_SYMLINK = @INITSCRIPT_SYMLINK@
 
 # features enabled or disabled by configure
 WITH_UTILS = @WITH_UTILS@
@@ -82,9 +81,6 @@ ifeq ($(WITH_UTILS),yes)
 	  $(LN_S) -f notify.sh notify-out-of-sync.sh; )
 	install -d $(DESTDIR)$(sbindir)
 	install -m 755 drbd-overview.pl $(DESTDIR)$(sbindir)/drbd-overview
-ifeq ($(DISTRO),suse)
-	$(LN_S) -f ..$(sysconfdir)/init.d/drbd $(DESTDIR)$(INITSCRIPT_SYMLINK)
-endif
 ifeq ($(DISTRO),debian)
 	@ echo "Don't forget to run update-rc.d"
 else
@@ -150,5 +146,6 @@ uninstall:
 	rm -f $(DESTDIR)$(sysconfdir)/ha.d/resource.d/drbddisk
 	rm -f $(DESTDIR)$(sysconfdir)/ha.d/resource.d/drbdupper
 	rm -f $(DESTDIR)$(sysconfdir)/xen/scripts/block-drbd
-	rm -f $(DESTDIR)$(sysconfdir)/bash_completion.d/$(COMPLETION)
+	rm -f $(DESTDIR)$(sysconfdir)/bash_completion.d/drbdadm$(BASH_COMPLETION_SUFFIX)
+	rm -f $(DESTDIR)$(sbindir)/drbd-overview
 	! test -L $(DESTDIR)/sbin/rcdrbd || rm $(DESTDIR)/sbin/rcdrbd

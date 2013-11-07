@@ -23,6 +23,26 @@ sed_rsc_location_suitable_for_string_compare()
 	}' | sort
 }
 
+cibadmin_invocations=0
+set_constraint()
+{
+	cibadmin_invocations=$(( $cibadmin_invocations + 1 ))
+	cibadmin -C -o constraints -X "$new_constraint"
+}
+
+remove_constraint()
+{
+	cibadmin_invocations=$(( $cibadmin_invocations + 1 ))
+	cibadmin -D -X "<rsc_location rsc=\"$master_id\" id=\"$id_prefix-$master_id\"/>"
+}
+
+cib_xml=""
+get_cib_xml() {
+	cibadmin_invocations=$(( $cibadmin_invocations + 1 ))
+	cib_xml=$( set +x; cibadmin "$@" )
+}
+
+
 # if not passed in, try to "guess" it from the cib
 # we only know the DRBD_RESOURCE.
 fence_peer_init()
@@ -72,10 +92,10 @@ fence_peer_init()
 #    On loss of all cluster comm (cluster split-brain),
 #    without STONITH configured, you always still risk data divergence.
 #
-# There are two timeouts:
+# There are different timeouts:
 #
 # --timeout is how long we poll the DC for a definite "unreachable" node state,
-# before we deduce that the peer is in fact still reachable.
+# before we give up and say "unknown".
 # This should be longer than "dead time" or "stonith timeout",
 # the time it takes the cluster manager to declare the other node dead and
 # shoot it, just to be sure.
@@ -87,6 +107,11 @@ fence_peer_init()
 # to wait for a new DC to be elected. Usually such election takes only
 # fractions of a second, but it can take much longer (the default election
 # timeout in pacemaker is ~2 minutes!).
+#
+# --network-hickup is how long we wait for the replication link to recover,
+# if crmadmin confirms that the peer is in fact still alive.
+# It may have been just a network hickup. If so, no need to potentially trigger
+# node level fencing.
 #
 # a) Small-ish (1s) timeout, medium (10..20s) dc-timeout:
 #    Intended use case: fencing resource-only, no STONITH configured.
@@ -104,7 +129,8 @@ fence_peer_init()
 #    Difference to a)
 #
 #       If peer is still reachable according to the cib,
-#	we first poll the cib until timeout has elapsed,
+#	we first poll the cib/try to confirm with crmadmin,
+#	until either crmadim confirms reachability, timeout has elapsed,
 #	or the peer becomes definetely unreachable.
 #
 #	This gives STONITH the chance to kill us.
@@ -112,14 +138,16 @@ fence_peer_init()
 #	completing transactions to userland which might otherwise be lost.
 #
 #	We then place the constraint (if we are UpToDate), as explained below,
-#	and return reachable/unreachable according to our last cib status poll.
+#	and return reachable/unreachable according to our last cib status poll
+#	or crmadmin -S result.
 #
 
 #
 #    replication link loss, current Primary calls this handler:
 #	We are UpToDate, but we potentially need to wait for a DC election.
 #	Once we have contacted the DC, we poll the cib until the peer is
-#	confirmed unreachable, or timeout expired.
+#	confirmed unreachable, or crmadmin -S confirms it as reachable,
+#	or timeout expired.
 #	Then we place the constraint, and are done.
 #
 #	If it is complete communications loss, one will stonith the other.
@@ -129,6 +157,10 @@ fence_peer_init()
 #	In dual-primary setups, if it is only replication link loss, both nodes
 #	will call this handler, but only one will succeed to place the
 #	constraint. The other will then typically need to "commit suicide".
+#	With stonith enabled, and --suicide-on-failure-if-primary,
+#	we will trigger a node level fencing, telling
+#	pacemaker to "terminate" that node,
+#	and scheduling a reboot -f just in case.
 #
 #    Primary crash, promotion of former Secondary:
 #	DC-election, if any, will have taken place already.
@@ -150,23 +182,68 @@ fence_peer_init()
 #	know that the peer is dead - if it is.
 #
 
+# slightly different logic than crm_is_true
+crm_is_not_false()
+{
+	case $1 in
+	no|n|false|0|off)
+		false ;;
+	*)
+		true ;;
+	esac
+}
+
+check_cluster_properties()
+{
+	local x properties=$(set +x; echo "$cib_xml" |
+		sed -n -e '/<crm_config/,/<\/crm_config/ !d;' \
+			-e '/<cluster_property_set/,/<\/cluster_property_set/ !d;' \
+			-e '/<nvpair / !d' \
+			-e 's/^.* name="\([^"]*\)".* value="\([^"]*\)".*$/\1=\2/p' \
+			-e 's/^.* value="\([^"]*\)".* name="\([^"]*\)".*$/\2=\1/p')
+
+	for x in $properties ; do
+		case $x in
+		startup[-_]fencing=*)	startup_fencing=${x#*=} ;;
+		stonith[-_]enabled=*)	stonith_enabled=${x#*=} ;;
+		esac
+	done
+
+	crm_is_not_false $startup_fencing && startup_fencing=true || startup_fencing=false
+	crm_is_not_false $stonith_enabled && stonith_enabled=true || stonith_enabled=false
+}
+
 try_place_constraint()
 {
 	local peer_state
-	check_peer_node_reachable
+
+	rc=1
+
+	while :; do
+		check_peer_node_reachable
+		[[ $peer_state != "reachable" ]] && break
+		# if it really is still reachable, maybe the replication link
+		# recovers by itself, and we can get away without taking action?
+		(( $net_hickup_time > $SECONDS )) || break
+		sleep $(( net_hickup_time - SECONDS ))
+	done
+
 	set_states_from_proc_drbd
-	case $DRBD_peer in
-	Secondary|Primary)
+	: == DEBUG == DRBD_peer=${DRBD_peer[*]} ===
+	case "${DRBD_peer[*]}" in
+	*Secondary*|*Primary*)
 		# WTF? We are supposed to fence the peer,
 		# but the replication link is just fine?
-		echo WARNING "peer is $DRBD_peer, did not place the constraint!"
+		echo WARNING "peer is not Unknown, did not place the constraint!"
 		rc=0
 		return
 		;;
 	esac
-	: == DEBUG == $peer_state/$DRBD_disk/$unreachable_peer_is ==
-	case $peer_state/$DRBD_disk/$unreachable_peer_is in
-	*//*)
+	: == DEBUG == CTS_mode=$CTS_mode ==
+	: == DEBUG == DRBD_disk_all_consistent=$DRBD_disk_all_consistent ==
+	: == DEBUG == DRBD_disk_all_uptodate=$DRBD_disk_all_uptodate ==
+	: == DEBUG == $peer_state/${DRBD_disk[*]}/$unreachable_peer_is ==
+	if [[ ${#DRBD_disk[*]} = 0 ]]; then
 		# Someone called this script, without the corresponding drbd
 		# resource being configured. That's not very useful.
 		echo WARNING "could not determine my disk state: did not place the constraint!"
@@ -174,23 +251,39 @@ try_place_constraint()
 		# keep drbd_fence_peer_exit_code at "generic error",
 		# which will cause a "script is broken" message in case it was
 		# indeed called as handler from within drbd
-		;;
-	reachable/Consistent/*|\
-	reachable/UpToDate/*)
-		cibadmin -C -o constraints -X "$new_constraint" &&
+
+	# No, NOT fenced/Consistent:
+	# just because we have been able to shoot him
+	# does not make our data any better.
+	elif [[ $peer_state = reachable ]] && $DRBD_disk_all_consistent; then
+		#           = reachable ]] && $DRBD_disk_all_uptodate
+		#	is implicitly handled here as well.
+		set_constraint &&
 		drbd_fence_peer_exit_code=4 rc=0 &&
+		echo INFO "peer is $peer_state, my disk is ${DRBD_disk[*]}: placed constraint '$id_prefix-$master_id'"
+
+	elif [[ $peer_state = fenced ]] && $DRBD_disk_all_uptodate ; then
+		set_constraint &&
+		drbd_fence_peer_exit_code=7 rc=0 &&
 		echo INFO "peer is $peer_state, my disk is $DRBD_disk: placed constraint '$id_prefix-$master_id'"
-		;;
-	*/UpToDate/*)
+
+	# Peer is neither "reachable" nor "fenced" (above would have matched)
+	# So we just hit some timeout.
+	# As long as we are UpToDate, place the constraint and continue.
+	# If you don't like that, use a ridiculously high timeout,
+	# or patch this script.
+	elif $DRBD_disk_all_uptodate ; then
 		# We could differentiate between unreachable,
 		# and DC-unreachable.  In the latter case, placing the
 		# constraint will fail anyways, and  drbd_fence_peer_exit_code
 		# will stay at "generic error".
-		cibadmin -C -o constraints -X "$new_constraint" &&
+		set_constraint &&
 		drbd_fence_peer_exit_code=5 rc=0 &&
 		echo INFO "peer is not reachable, my disk is UpToDate: placed constraint '$id_prefix-$master_id'"
-		;;
-	unreachable/Consistent/outdated)
+
+	# This block is reachable by operator intervention only
+	# (unless you are hacking this script and know what you are doing)
+	elif [[ $peer_state != reachable ]] && [[ $unreachable_peer_is = outdated ]] && $DRBD_disk_all_consistent; then
 		# If the peer is not reachable, but we are only Consistent, we
 		# may need some way to still allow promotion.
 		# Easy way out: --force primary with drbdsetup.
@@ -199,18 +292,58 @@ try_place_constraint()
 		# to set the constraint.  Next promotion attempt will find the
 		# "correct" constraint, consider the peer as successfully
 		# fenced, and continue.
-		cibadmin -C -o constraints -X "$new_constraint" &&
+		set_constraint &&
 		drbd_fence_peer_exit_code=5 rc=0 &&
 		echo WARNING "peer is unreachable, my disk is only Consistent: --unreachable-peer-is-outdated FORCED constraint '$id_prefix-$master_id'" &&
 		echo WARNING "This MAY RISK DATA INTEGRITY"
-		;;
-	*)
-		echo WARNING "peer is $peer_state, my disk is $DRBD_disk: did not place the constraint!"
+
+	# So I'm not UpToDate, and peer is not reachable.
+	# Tell the module about "not reachable", and don't do anything else.
+	else
+		echo WARNING "peer is $peer_state, my disk is ${DRBD_disk[*]}: did not place the constraint!"
 		drbd_fence_peer_exit_code=5 rc=0
 		# I'd like to return 6 here, otherwise pacemaker will retry
 		# forever to promote, even though 6 is not strictly correct.
-		;;
-	esac
+	fi
+	return $rc
+}
+
+commit_suicide()
+{
+	local reboot_timeout=20
+	local extra_msg
+
+	if $stonith_enabled ; then
+		# avoid double fence, tell pacemaker to kill me
+		echo WARNING "trying to have pacemaker kill me now!"
+		crm_attribute -t status -N $HOSTNAME -n terminate -v 1
+		echo WARNING "told pacemaker to kill me, but scheduling reboot -f in 300 seconds just in case"
+
+		# -------------------------
+		echo WARNING $'\n'"    told pacemaker to kill me,"\
+			     $'\n'"    but scheduling reboot -f in 300 seconds just in case."\
+			     $'\n'"    kill $$ # to cancel" | wall
+		# -------------------------
+
+		reboot_timeout=300
+		extra_msg="Pacemaker terminate pending. If that fails, I'm "
+
+	else
+		# -------------------------
+		echo WARNING $'\n'"    going to reboot -f in $reboot_timeout seconds"\
+			     $'\n'"    kill $$ # to cancel!" | wall
+		# -------------------------
+	fi
+
+	reboot_timeout=$(( reboot_timeout + SECONDS ))
+	# pacemaker apparently cannot kill me.
+	while (( $SECONDS < $reboot_timeout )); do
+		echo WARNING "${extra_msg}going to reboot -f in $(( reboot_timeout - SECONDS )) seconds! To cancel: kill $$"
+		sleep 2
+	done
+	echo WARNING "going to reboot -f now!"
+	reboot -f
+	sleep 864000
 }
 
 # drbd_peer_fencing fence|unfence
@@ -225,12 +358,15 @@ drbd_peer_fencing()
 	local have_constraint new_constraint
 
 	# if I cannot query the local cib, give up
-	local cib_xml
-	cib_xml=$(cibadmin -Ql) || return
+	get_cib_xml -Ql || return
 	fence_peer_init || return
 
 	case $1 in
 	fence)
+
+		local startup_fencing stonith_enabled
+		check_cluster_properties
+
 		if [[ $fencing_attribute = "#uname" ]]; then
 			fencing_value=$HOSTNAME
 		elif ! fencing_value=$(crm_attribute -Q -t nodes -n $fencing_attribute 2>/dev/null); then
@@ -261,13 +397,23 @@ drbd_peer_fencing()
 			# So we need to differentiate between node reachable or
 			# not, and DRBD "Consistent" or "UpToDate".
 
-			try_place_constraint
-		elif [[ "$have_constraint" = "$(set +x; echo "$new_constraint" |
+			try_place_constraint && return
+
+			# maybe callback and operator raced for the same constraint?
+			# before we potentially trigger node level fencing
+			# or keep IO frozen, double check.
+			# try_place_constraint has updated cib_xml from DC
+
+			have_constraint=$(set +x; echo "$cib_xml" |
+				sed_rsc_location_suitable_for_string_compare "$id_prefix-$master_id")
+		fi
+
+		if [[ "$have_constraint" = "$(set +x; echo "$new_constraint" |
 			sed_rsc_location_suitable_for_string_compare "$id_prefix-$master_id")" ]]; then
 			echo INFO "suitable constraint already placed: '$id_prefix-$master_id'"
 			drbd_fence_peer_exit_code=4
 			rc=0
-		else
+		elif [[ -n "$have_constraint" ]] ; then
 			# if this id already exists, but looks different, we may have lost a shootout
 			echo WARNING "constraint "$have_constraint" already exists"
 			# anything != 0 will do;
@@ -288,9 +434,9 @@ drbd_peer_fencing()
 		fi
 
 		# XXX policy decision:
-		if $suicide_on_failure_if_primary && [[ $DRBD_role = Primary ]] &&
-			[[ $drbd_fence_peer_exit_code != [3457] ]]; then
-			commit_suicide # shell function yet to be written
+		if $suicide_on_failure_if_primary && [[ $drbd_fence_peer_exit_code != [3457] ]]; then
+			set_states_from_proc_drbd
+			[[ "${DRBD_role[*]}" = *Primary* ]] && commit_suicide
 		fi
 
 		return $rc
@@ -298,43 +444,123 @@ drbd_peer_fencing()
 	unfence)
 		if [[ -n $have_constraint ]]; then
 			# remove it based on that id
-			cibadmin -D -X "<rsc_location rsc=\"$master_id\" id=\"$id_prefix-$master_id\"/>"
+			remove_constraint
 		else
 			return 0
 		fi
 	esac
 }
 
+guess_if_pacemaker_will_fence()
+{
+	# try to guess whether it is useful to wait and poll again,
+	# (node fencing in progress...),
+	# or if pacemaker thinks the node is "clean" dead.
+	local x
+
+	# "return values:"
+	crmd= in_ccm= expected= join= will_fence=false
+
+	# Older pacemaker has an "ha" attribute, too.
+	# For stonith-enabled=false, the "crmd" attribute may stay "online",
+	# but once ha="dead", we can stop waiting for changes.
+	ha_dead=false
+
+	for x in ${node_state%/>} ; do
+		case $x in
+		in_ccm=\"*\")	x=${x#*=\"}; x=${x%\"}; in_ccm=$x ;;
+		crmd=\"*\")	x=${x#*=\"}; x=${x%\"}; crmd=$x ;;
+		expected=\"*\")	x=${x#*=\"}; x=${x%\"}; expected=$x ;;
+		join=\"*\")	x=${x#*=\"}; x=${x%\"}; join=$x ;;
+		ha=\"dead\")	ha_dead=true ;;
+		esac
+	done
+
+	# if it is not enabled, no point in waiting for it.
+	if ! $stonith_enabled ; then
+		# "normalize" the rest of the logic
+		# where this is called.
+		# for stonith-enabled=false, and ha="dead",
+		# reset crmd="offline".
+		# Then we stop polling the cib for changes.
+
+		$ha_dead && crmd="offline"
+		return
+	fi
+
+	if [[ -z $node_state ]] ; then
+		# if we don't know nothing about the peer,
+		# and startup_fencing is explicitly disabled,
+		# no fencing will take place.
+		$startup_fencing || return
+	fi
+
+	# for further inspiration, see pacemaker:lib/pengine/unpack.c, determine_online_status_fencing()
+	[[ -z $in_ccm ]] && will_fence=true
+	[[ $crmd = "banned" ]] && will_fence=true
+	if [[ ${expected-down} = "down" && $in_ccm = "false"  && $crmd != "online" ]]; then
+		: "pacemaker considers this as clean down"
+	elif [[ $in_ccm = false ]] || [[ $crmd != "online" ]]; then
+		will_fence=true
+	fi
+}
+
 # return value in $peer_state:
-# reachable
-#	Peer is probably still reachable.  We have had at least one successful
-#	round-trip with cibadmin -Q to the DC.
-# unreachable
-#	Peer is not reachable, according to the cib of the DC.
 # DC-unreachable
 #	We have not been able to contact the DC.
+# fenced
+#	According to the node_state recorded in the cib,
+#	the peer is offline and expected down
+#	(which means successfully fenced, if stonith is enabled)
+# reachable
+#	cib says it's online, and crmadmin -S says peer state is "ok"
+# unreachable
+#	cib says it's offline (but does not yet say "expected" down)
+#	and we reached the timeout
+# unknown
+#	cib does not say it was offline (or we don't know who the peer is)
+#	and we reached the timeout
+#
 check_peer_node_reachable()
 {
-	# We would really need a reliable method to find out if hearbeat/pacemaker
-	# can reach the other node(s). Waiting for heartbeat's dead time and then
-	# looking at the CIB is the only solution I currently have.
-
-	# we are going to increase the cib timeout with every timeout.
+	# we are going to increase the cib timeout with every timeout (see below).
 	# for the actual invocation, we use int(cibtimeout/10).
-	local cibtimeout=10
-	local node_state state_lines nr_other_nodes
+	# scaled by 5 / 4 with each iteration,
+	# this results in a timeout sequence of 1 2 2 3 4 5 6 7 9 ... seconds 
+	local cibtimeout=18
+	local full_timeout
+	local nr_other_nodes
+	local other_node_uname_attrs
+
+	# we have a cibadmin -Ql in cib_xml already
+	# filter out <node uname, but ignore type="ping" nodes,
+	# they don't run resources
+	other_node_uname_attrs=$(set +x; echo "$cib_xml" |
+		sed -e '/<node /!d; / type="ping"/d;s/^.* \(uname="[^"]*"\).*>$/\1/' |
+		grep -v -F uname=\"$HOSTNAME\")
+	set -- $other_node_uname_attrs
+	nr_other_nodes=$#
+
 	while :; do
+		local state_lines= node_state=
+		local crmd= in_ccm= expected= join= will_fence= ha_dead=
+
 		while :; do
-			# TODO It would be great to figure out that a node is definitly
-			# still reachable without resorting to sleep and repoll for
-			# timeout seconds.
+			local t=$SECONDS
+			#
 			# Update our view of the cib, ask the DC this time.
 			# Timeout, in case no DC is available.
 			# Caution, some cibadmin (pacemaker 0.6 and earlier)
 			# apparently use -t use milliseconds, so will timeout
 			# many times until a suitably long timeout is reached
 			# by increasing below.
-			cib_xml=$(cibadmin -Q -t $[cibtimeout/10]) && break
+			#
+			# Why not use the default timeout?
+			# Because that would unecessarily wait for 30 seconds
+			# or longer, even if the DC is re-elected right now,
+			# and available within the next second.
+			#
+			get_cib_xml -Q -t $(( cibtimeout/10 )) && break
 
 			# bash magic $SECONDS is seconds since shell invocation.
 			if (( $SECONDS > $dc_timeout )) ; then
@@ -343,10 +569,14 @@ check_peer_node_reachable()
 				return
 			fi
 
+			# avoid busy loop
+			[[ $t = $SECONDS ]] && sleep 1
+
 			# try again, longer timeout.
 			let "cibtimeout = cibtimeout * 5 / 4"
 		done
-		state_lines=$(echo "$cib_xml" | grep '<node_state')
+		state_lines=$( set +x; echo "$cib_xml" | grep '<node_state ' |
+			grep -F -e "$other_node_uname_attrs" )
 
 		if $CTS_mode; then
 			# CTS requires startup-fencing=false.
@@ -361,65 +591,158 @@ check_peer_node_reachable()
 			fi
 		fi
 
-		nr_other_nodes=$(echo "$state_lines" | grep -v -F uname=\"$HOSTNAME\" | wc -l)
-		if [[ $nr_other_nodes -gt 1 ]]; then
-			# Many nodes cluster, look at $DRBD_PEER, if set.
-			# Note that this should not be neccessary.  The problem
-			# we try to solve is relevant on two-node clusters
-			# (no real quorum)
-			if [[ $DRBD_PEER ]]; then
-				if ! echo "$state_lines" | grep -v -F uname=\"$DRBD_PEER\" | grep -q 'ha="active"'; then
-					peer_state="unreachable"
-					return
-				fi
-			else
-				# Loop through DRBD_PEERS. FIXME If at least
-				# one of the potential peers was not "active"
-				# even before this handler was called, but some
-				# others are, then this may not be good enough.
-				for P in $DRBD_PEERS; do
-					if ! echo "$state_lines" | grep -v -F uname=\"$P\" | grep -q 'ha="active"'; then
-						peer_state="unreachable"
-						return
-					fi
-				done
+		# very unlikely: no DRBD_PEER passed in,
+		# but in fact only one other cluster node.
+		# Use that one as DRBD_PEER.
+		if [[ -z $DRBD_PEER ]] && [[ $nr_other_nodes = 1 ]]; then
+			DRBD_PEER=${other_node_uname_attrs#uname=\"}
+			DRBD_PEER=${DRBD_PEER%\"}
+		fi
+
+		if [[ -z $DRBD_PEER ]]; then
+			# Multi node cluster, but unknown DRBD Peer.
+			# This should not be a problem, unless you have
+			# no_quorum_policy=ignore in an N > 2 cluster.
+			# (yes, I've seen such beasts in the wild!)
+			# As we don't know the peer,
+			# we could only safely return here if *all*
+			# potential peers are confirmed down.
+			# Don't try to be smart, just wait for the full
+			# timeout, which should allow STONITH to
+			# complete.
+			full_timeout=$(( $timeout - $SECONDS ))
+			if (( $full_timeout > 0 )) ; then
+				echo WARNING "don't know who my peer is; sleep $full_timeout seconds just in case"
+				sleep $full_timeout
 			fi
-		else
-			# two node case, ignore $DRBD_PEERS
-			if ! echo "$state_lines" | grep -v -F uname=\"$HOSTNAME\" | grep -q 'ha="active"'; then
-				peer_state="unreachable"
+
+			# In the unlikely case that we don't know our DRBD peer,
+			#	there is no point in polling the cib again,
+			#	that won't teach us who our DRBD peer is.
+			#
+			#	We waited $full_timeout seconds already,
+			#	to allow for node level fencing to shoot us.
+			#
+			#	So if we are still alive, then obviously no-one has shot us.
+			#
+
+			peer_state="unknown"
+			return
+		fi
+
+		#
+		# we know the peer or/and are a two node cluster
+		#
+
+		node_state=$(set +x; echo "$state_lines" | grep -F uname=\"$DRBD_PEER\")
+
+		# populates in_ccm, crmd, exxpected, join, will_fence=[false|true]
+		guess_if_pacemaker_will_fence
+
+		if ! $will_fence && [[ $crmd != "online" ]] ; then
+
+			# "legacy" cman + pacemaker clusters older than 1.1.10
+			# may "forget" about startup fencing.
+			# We can detect this because the "expected" attribute is missing.
+			# Does not make much difference for our logic, though.
+			[[ $expected/$in_ccm = "down/false" ]] && peer_state="fenced" || peer_state="unreachable"
+
+			return
+		fi
+
+		# So the cib does still indicate the peer was reachable.
+		#
+		# try crmadmin; if we can sucessfully query the state of the remote crmd,
+		# it is obviously reachable.
+		#
+		# Do this only after we have been able to reach a DC above.
+		# Note: crmadmin timeout is in milli-seconds, and defaults to 30000 (30 seconds).
+		# Our variable $cibtimeout should be in deci-seconds (see above)
+		# (unless you use a very old version of pacemaker, so don't do that).
+		# Convert deci-seconds to milli-seconds, and double it.
+		if [[ $crmd = "online" ]] ; then
+			local out
+			if out=$( crmadmin -t $(( cibtimeout * 200 )) -S $DRBD_PEER ) \
+			&& [[ $out = *"(ok)" ]]; then
+				peer_state="reachable"
 				return
 			fi
 		fi
 
+		# We know our DRBD peer.
+		# We are still not sure about its status, though.
+		#
+		# It is not (yet) "expected down" per the cib, but it is not
+		# reliably reachable via crmadmin -S either.
+		#
+		# If we already polled for longer than timeout, give up.
+		#
 		# For a resource-and-stonith setup, or dual-primaries (which
 		# you should only use with resource-and-stonith, anyways),
 		# the recommended timeout is larger than the deadtime or
 		# stonith timeout, and according to beekhof maybe should be
 		# tuned up to the election-timeout (which, btw, defaults to 2
-		# minuts!).
+		# minutes!).
+		#
 		if (( $SECONDS >= $timeout )) ; then
-			peer_state="reachable"
+			[[ $crmd = offline ]] && peer_state="unreachable" || peer_state="unknown"
 			return
 		fi
 
-		# wait a bit before we poll the DC again.
-		sleep 1
+		# wait a bit before we poll the DC again
+		sleep 2
 	done
 	# NOT REACHED
 }
 
 set_states_from_proc_drbd()
 {
+	local IFS line lines i disk
 	# DRBD_MINOR exported by drbdadm since 8.3.3
 	[[ $DRBD_MINOR ]] || DRBD_MINOR=$(drbdadm ${DRBD_CONF:+ -c "$DRBD_CONF"} sh-minor $DRBD_RESOURCE) || return
+
+	# if we have more than one minor, do a word split, ...
+	set -- $DRBD_MINOR
+	# ... and convert into regex:
+	IFS="|$IFS"; DRBD_MINOR="($*)"; IFS=${IFS#?}
+
 	# We must not recurse into netlink,
 	# this may be a callback triggered by "drbdsetup primary".
 	# grep /proc/drbd instead
-	set -- $(sed -ne "/^ *$DRBD_MINOR: cs:/ { s/:/ /g; p; q; }" /proc/drbd)
-	DRBD_peer=${5#*/}
-	DRBD_role=${5%/*}
-	DRBD_disk=${7%/*}
+	# This magic does not work, if 
+	#
+
+	DRBD_peer=()
+	DRBD_role=()
+	DRBD_disk=()
+	DRBD_disk_all_uptodate=true
+	DRBD_disk_all_consistent=true
+
+	IFS=$'\n'
+	lines=($(sed -nre "/^ *$DRBD_MINOR: cs:/ { s/:/ /g; p; }" /proc/drbd))
+	IFS=$' \t\n'
+
+	i=0
+	for line in "${lines[@]}"; do
+		set -- $line
+		DRBD_peer[i]=${5#*/}
+		DRBD_role[i]=${5%/*}
+		disk=${7%/*}
+		DRBD_disk[i]=${disk:-Unconfigured}
+		case $disk in
+		UpToDate) ;;
+		Consistent)
+			DRBD_disk_all_uptodate=false ;;
+		*)
+			DRBD_disk_all_uptodate=false
+			DRBD_disk_all_consistent=false ;;
+		esac
+		let i++
+	done
+	if (( i = 0 )) ; then
+		DRBD_disk_all_uptodate=false
+		DRBD_disk_all_consistent=false
+	fi
 }
 ############################################################
 
@@ -509,6 +832,13 @@ while [[ $# != 0 ]]; do
 		dc_timeout=$2
 		shift
 		;;
+	--net-hickup=*|--network-hickup=*)
+		net_hickup_time=${1#*=}
+		;;
+	--net-hickup|--network-hickup)
+		net_hickup_time=$2
+		shift
+		;;
 	--CTS-mode)
 		CTS_mode=true
 		;;
@@ -519,9 +849,9 @@ while [[ $# != 0 ]]; do
 		test -t 0 &&
 		unreachable_peer_is=outdated
 		;;
-	# --suicide-on-failure-if-primary)
-	# 	suicide_on_failure_if_primary=true
-	# 	;;
+	--suicide-on-failure-if-primary)
+		suicide_on_failure_if_primary=true
+		;;
 	-*)
 		echo >&2 "ignoring unknown option $1"
 		;;
@@ -540,9 +870,10 @@ done
 : "== id_prefix           == ${id_prefix:="drbd-fence-by-handler"}"
 : "== role                == ${role:="Master"}"
 
-# defaults suitable for single-primary no-stonith.
-: "== timeout             == ${timeout:=1}"
-: "== dc_timeout          == ${dc_timeout:=$[20+timeout]}"
+# defaults suitable for most cases
+: "== net_hickup_time     == ${net_hickup_time:=0}"
+: "== timeout             == ${timeout:=90}"
+: "== dc_timeout          == ${dc_timeout:=20}"
 
 # check envars normally passed in by drbdadm
 # TODO DRBD_CONF is also passed in.  we may need to use it in the
@@ -579,11 +910,15 @@ drbd_fence_peer_exit_code=1
 case $PROG in
     crm-fence-peer.sh)
 	if drbd_peer_fencing fence; then
+		: == DEBUG == $cibadmin_invocations cibadmin calls ==
+		: == DEBUG == $SECONDS seconds ==
 		exit $drbd_fence_peer_exit_code
 	fi
 	;;
     crm-unfence-peer.sh)
 	if drbd_peer_fencing unfence; then
+		: == DEBUG == $cibadmin_invocations cibadmin calls ==
+		: == DEBUG == $SECONDS seconds ==
 		exit 0
 	fi
 esac

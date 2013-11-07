@@ -1,13 +1,13 @@
 '\" t
 .\"     Title: drbd.conf
 .\"    Author: [see the "Author" section]
-.\" Generator: DocBook XSL Stylesheets v1.75.2 <http://docbook.sf.net/>
-.\"      Date: 5 Dec 2008
+.\" Generator: DocBook XSL Stylesheets v1.76.1 <http://docbook.sf.net/>
+.\"      Date: 6 May 2011
 .\"    Manual: Configuration Files
-.\"    Source: DRBD 8.3.2
+.\"    Source: DRBD 8.4.0
 .\"  Language: English
 .\"
-.TH "DRBD\&.CONF" "5" "5 Dec 2008" "DRBD 8.3.2" "Configuration Files"
+.TH "DRBD\&.CONF" "5" "6 May 2011" "DRBD 8.4.0" "Configuration Files"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -41,14 +41,19 @@ The file format was designed as to allow to have a verbatim copy of the file on 
 should be the same on both nodes of the cluster\&. Changes to
 \fB/etc/drbd\&.conf\fR
 do not apply immediately\&.
-.PP \fBExample\ \&1.\ \&A small drbd.conf file\fR .sp .if n \{\ .RS 4 .\} .nf global { usage\-count yes; } common { syncer { rate 10M; } } resource r0 { protocol C; net { cram\-hmac\-alg sha1; shared\-secret "FooFunFactory"; } on alice { device minor 1; disk /dev/sda7; address 10\&.1\&.1\&.31:7789; meta\-disk internal; } on bob { device minor 1; disk /dev/sda7; address 10\&.1\&.1\&.32:7789; meta\-disk internal; } } .fi .if n \{\ .RE .\}
-In this example, there is a single DRBD resource (called r0) which uses protocol C for the connection between its devices\&. The device which runs on host
+.PP
+By convention the main config contains two include statements\&. The first one includes the file
+\fB/etc/drbd\&.d/global_common\&.conf\fR, the second one all file with a
+\fB\&.res\fR
+suffix\&.
+.PP
+.PP \fBExample\ \&1.\ \&A small example.res file\fR .sp .if n \{\ .RS 4 .\} .nf resource r0 { net { protocol C; cram\-hmac\-alg sha1; shared\-secret "FooFunFactory"; } disk { resync\-rate 10M; } on alice { volume 0 { device minor 1; disk /dev/sda7; meta\-disk internal; } address 10\&.1\&.1\&.31:7789; } on bob { volume 0 { device minor 1; disk /dev/sda7; meta\-disk internal; } address 10\&.1\&.1\&.32:7789; } } .fi .if n \{\ .RE .\}In this example, there is a single DRBD resource (called r0) which uses protocol C for the connection between its devices\&. It contains a single volume which runs on host
 \fIalice\fR
 uses
 \fI/dev/drbd1\fR
 as devices for its application, and
 \fI/dev/sda7\fR
-as low\-level storage for the data\&. The IP addresses are used to specify the networking interfaces to be used\&. An eventually running resync process should use about 10MByte/second of IO bandwidth\&.
+as low\-level storage for the data\&. The IP addresses are used to specify the networking interfaces to be used\&. An eventually running resync process should use about 10MByte/second of IO bandwidth\&. This sync\-rate statement is valid for volume 0, but would also be valid for further volumes\&. In this example it assigns full 10MByte/second to each volume\&.
 .PP
 There may be multiple resource sections in a single drbd\&.conf file\&. For more examples, please have a look at the
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2\&.
@@ -70,7 +75,7 @@ Comments may be placed into the configuration file and must begin with a hash si
 .\" drbd.conf: skip
 Comments out chunks of text, even spanning more than one line\&. Characters between the keyword
 \fBskip\fR
-and the opening brace (\(lq{\(rq) are ignored\&. Everything enclosed by the braces is skipped\&. This comes in handy, if you just want to comment out some \*(Aq\fBresource [name] {\&.\&.\&.}\fR\*(Aq section: just precede it with \*(Aq\(lqskip\(rq\*(Aq\&.
+and the opening brace (\(lq{\(rq) are ignored\&. Everything enclosed by the braces is skipped\&. This comes in handy, if you just want to comment out some \*(Aq\fBresource [name] {\&.\&.\&.}\fR\*(Aq section: just precede it with \*(Aq\fBskip\fR\*(Aq\&.
 .RE
 .PP
 \fBglobal\fR
@@ -90,7 +95,7 @@ are allowed here\&. You may only have one global section, preferably as the firs
 .\" drbd.conf: common
 All resources inherit the options set in this section\&. The common section might have a
 \fBstartup\fR, a
-\fBsyncer\fR, a
+\fBoptions\fR, a
 \fBhandlers\fR, a
 \fBnet\fR
 and a
@@ -105,13 +110,13 @@ Configures a DRBD resource\&. Each resource section needs to have two (or more)
 \fBon \fR\fB\fIhost\fR\fR
 sections and may have a
 \fBstartup\fR, a
-\fBsyncer\fR, a
+\fBoptions\fR, a
 \fBhandlers\fR, a
 \fBnet\fR
 and a
 \fBdisk\fR
-section\&. Required parameter in this section:
-\fBprotocol\fR\&.
+section\&. It might contain
+\fBvolume\fRs sections\&.
 .RE
 .PP
 \fBon \fR\fB\fIhost\-name\fR\fR
@@ -151,12 +156,19 @@ is mandatory and must match the Linux host name (uname \-n) of one of the nodes\
 .sp
 See also the
 \fBfloating\fR
-section keyword\&. Required parameters in this section:
+section keyword\&. Required statements in this section:
+\fBaddress\fR
+and
+\fBvolume\fR\&. Note for backward compatibility and convenience it is valid to embed the statements of a single volume directly into the host section\&.
+.RE
+.PP
+\fBvolume \fR\fB\fIvnr\fR\fR
+.RS 4
+.\" drbd.conf: volume
+Defines a volume within a connection\&. The minor numbers of a replicated volume might be different on different hosts, the volume number (\fIvnr\fR) is what groups them together\&. Required parameters in this section:
 \fBdevice\fR,
 \fBdisk\fR,
-\fBaddress\fR,
-\fBmeta\-disk\fR,
-\fBflexible\-meta\-disk\fR\&.
+\fBmeta\-disk\fR\&.
 .RE
 .PP
 \fBstacked\-on\-top\-of \fR\fB\fIresource\fR\fR
@@ -182,8 +194,7 @@ section\&. The difference to the
 section is that the matching of the host sections to machines is done by the IP\-address instead of the node name\&. Required parameters in this section:
 \fBdevice\fR,
 \fBdisk\fR,
-\fBmeta\-disk\fR,
-\fBflexible\-meta\-disk\fR, all of which
+\fBmeta\-disk\fR, all of which
 \fImay\fR
 be inherited from the resource section, in which case you may shorten this section down to just the address identifier\&.
 .sp
@@ -211,7 +222,6 @@ be inherited from the resource section, in which case you may shorten this secti
 .if n \{\
 .RE
 .\}
-.sp
 .RE
 .PP
 \fBdisk\fR
@@ -223,13 +233,22 @@ for detailed description of the parameters\&. Optional parameters:
 \fBon\-io\-error\fR,
 \fBsize\fR,
 \fBfencing\fR,
-\fBuse\-bmbv\fR,
-\fBno\-disk\-barrier\fR,
-\fBno\-disk\-flushes\fR,
-\fBno\-disk\-drain\fR,
-\fBno\-md\-flushes\fR,
+\fBdisk\-barrier\fR,
+\fBdisk\-flushes\fR,
+\fBdisk\-drain\fR,
+\fBmd\-flushes\fR,
 \fBmax\-bio\-bvecs\fR,
-\fBdisk\-timeout\fR\&.
+\fBresync\-rate\fR,
+\fBresync\-after\fR,
+\fBal\-extents\fR,
+\fBal\-updates\fR,
+\fBc\-plan\-ahead\fR,
+\fBc\-fill\-target\fR,
+\fBc\-delay\-target\fR,
+\fBc\-max\-rate\fR,
+\fBc\-min\-rate\fR,
+\fBdisk\-timeout\fR,
+\fBread\-balancing\fR\&.
 .RE
 .PP
 \fBnet\fR
@@ -238,6 +257,7 @@ for detailed description of the parameters\&. Optional parameters:
 This section is used to fine tune DRBD\*(Aqs properties\&. Please refer to
 \fBdrbdsetup\fR(8)
 for a detailed description of this section\*(Aqs parameters\&. Optional parameters:
+\fBprotocol\fR,
 \fBsndbuf\-size\fR,
 \fBrcvbuf\-size\fR,
 \fBtimeout\fR,
@@ -257,7 +277,10 @@ for a detailed description of this section\*(Aqs parameters\&. Optional paramete
 \fBno\-tcp\-cork\fR,
 \fBon\-congestion\fR,
 \fBcongestion\-fill\fR,
-\fBcongestion\-extents\fR
+\fBcongestion\-extents\fR,
+\fBverify\-alg\fR,
+\fBuse\-rle\fR,
+\fBcsums\-alg\fR\&.
 .RE
 .PP
 \fBstartup\fR
@@ -275,25 +298,13 @@ and
 \fBbecome\-primary\-on\fR\&.
 .RE
 .PP
-\fBsyncer\fR
+\fBoptions\fR
 .RS 4
-.\" drbd.conf: syncer
-This section is used to fine tune the synchronization daemon for the device\&. Please refer to
+.\" drbd.conf: options
+This section is used to fine tune the behaviour of the resource object\&. Please refer to
 \fBdrbdsetup\fR(8)
 for a detailed description of this section\*(Aqs parameters\&. Optional parameters:
-\fBrate\fR,
-\fBafter\fR,
-\fBal\-extents\fR,
-\fBuse\-rle\fR,
-\fBcpu\-mask\fR,
-\fBverify\-alg\fR,
-\fBcsums\-alg\fR,
-\fBc\-plan\-ahead\fR,
-\fBc\-fill\-target\fR,
-\fBc\-delay\-target\fR,
-\fBc\-max\-rate\fR,
-\fBc\-min\-rate\fR
-and
+\fBcpu\-mask\fR, and
 \fBon\-no\-data\-accessible\fR\&.
 .RE
 .PP
@@ -313,32 +324,64 @@ In this section you can define handlers (executables) that are started by the DR
 \fBafter\-resync\-target\fR\&.
 .sp
 The interface is done via environment variables:
-.PP
-\fBDRBD_RESOURCE\fR
+.sp
 .RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBDRBD_RESOURCE\fR
 is the name of the resource
 .RE
-.PP
-\fBDRBD_MINOR\fR
+.sp
 .RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBDRBD_MINOR\fR
 is the minor number of the DRBD device, in decimal\&.
 .RE
-.PP
-\fBDRBD_CONF\fR
+.sp
 .RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBDRBD_CONF\fR
 is the path to the primary configuration file; if you split your configuration into multiple files (e\&.g\&. in
 \fB/etc/drbd\&.conf\&.d/\fR), this will not be helpful\&.
 .RE
-.PP
-\fBDRBD_PEER_AF\fR, \fBDRBD_PEER_ADDRESS\fR, \fBDRBD_PEERS\fR
+.sp
 .RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+\fBDRBD_PEER_AF\fR
+,
+\fBDRBD_PEER_ADDRESS\fR
+,
+\fBDRBD_PEERS\fR
 are the address family (e\&.g\&.
 \fBipv6\fR), the peer\*(Aqs address and hostnames\&.
 .RE
 .sp
 
 \fBDRBD_PEER\fR
-(note the singular form) is deprecated, and superseeded by DRBD_PEERS\&.
+is deprecated\&.
 .sp
 Please note that not all of these might be set for all handlers, and that some values might not be useable for a
 \fBfloating\fR
@@ -349,11 +392,10 @@ definition\&.
 \fBminor\-count \fR\fB\fIcount\fR\fR
 .RS 4
 .\" drbd.conf: minor-count\fIcount\fR
-may be a number from 1 to 255\&.
+may be a number from 1 to 1048575\&.
 .sp
-Use
-\fIminor\-count\fR
-if you want to define massively more resources later without reloading the DRBD kernel module\&. Per default the module loads with 11 more resources than you have currently in your config but at least 32\&.
+\fIMinor\-count\fR
+is a sizing hint for DRBD\&. It helps to right\-size various memory pools\&. It should be set in the in the same order of magnitude than the actual number of minors you use\&. Per default the module loads with 11 more resources than you have currently in your config but at least 32\&.
 .RE
 .PP
 \fBdialog\-refresh \fR\fB\fItime\fR\fR
@@ -462,24 +504,20 @@ which is used to connect to the node\*(Aqs partner device\&. Two different DRBD 
 combination on the same node\&.
 .RE
 .PP
-\fBmeta\-disk \fR\fB\fIinternal\fR\fR, \fBflexible\-meta\-disk \fR\fB\fIinternal\fR\fR, \fBmeta\-disk \fR\fB\fIdevice [index]\fR\fR, \fBflexible\-meta\-disk \fR\fB\fIdevice \fR\fR
+\fBmeta\-disk internal\fR, \fBmeta\-disk \fR\fB\fIdevice\fR\fR, \fBmeta\-disk \fR\fB\fIdevice\fR\fR\fB [\fR\fB\fIindex\fR\fR\fB]\fR
 .RS 4
-.\" drbd.conf: meta-disk.\" drbd.conf: flexible-meta-disk
-Internal means that the last part of the backing device is used to store the meta\-data\&. You must not use
-\fI[index]\fR
-with internal\&. Note: Regardless of whether you use the
-\fBmeta\-disk\fR
-or the
-\fBflexible\-meta\-disk\fR
-keyword, it will always be of the size needed for the remaining storage size\&.
+.\" drbd.conf: meta-disk
+Internal means that the last part of the backing device is used to store the meta\-data\&. The size of the meta\-data is computed based on the size of the device\&.
 .sp
-You can use a single block
+When a
 \fIdevice\fR
-to store meta\-data of multiple DRBD devices\&. E\&.g\&. use meta\-disk /dev/sde6[0]; and meta\-disk /dev/sde6[1]; for two different resources\&. In this case the meta\-disk would need to be at least 256 MB in size\&.
+is specified, either with or without an
+\fIindex\fR, DRBD stores the meta\-data on this device\&. Without
+\fIindex\fR, the size of the meta\-data is determined by the size of the data device\&. This is usually used with LVM, which allows to have many variable sized block devices\&. The meta\-data size is 36kB + Backing\-Storage\-size / 32k, rounded up to the next 4kb boundary\&. (Rule of the thumb: 32kByte per 1GByte of storage, rounded up to the next MB\&.)
 .sp
-With the
-\fBflexible\-meta\-disk\fR
-keyword you specify a block device as meta\-data storage\&. You usually use this with LVM, which allows you to have many variable sized block devices\&. The required size of the meta\-disk block device is 36kB + Backing\-Storage\-size / 32k\&. Round this number to the next 4kb boundary up and you have the exact size\&. Rule of the thumb: 32kByte per 1GByte of storage, round up to the next MB\&.
+When an
+\fIindex\fR
+is specified, each index number refers to a fixed slot of meta\-data of 128 MB, which allows a maximum data size of 4 GB\&. This way, multiple DBRD devices can share the same meta\-data device\&. For example, if /dev/sde6[0] and /dev/sde6[1] are used, /dev/sde6 must be at least 256 MB big\&. Because of the hard size limit, use of meta\-disk indexes is discouraged\&.
 .RE
 .PP
 \fBon\-io\-error \fR\fB\fIhandler\fR\fR
@@ -531,21 +569,20 @@ command\&.
 .RE
 .RE
 .PP
-\fBuse\-bmbv\fR
+\fBdisk\-barrier\fR, \fBdisk\-flushes\fR, \fBdisk\-drain\fR
 .RS 4
-.\" drbd.conf: use-bmbv
-In case the backing storage\*(Aqs driver has a merge_bvec_fn() function, DRBD has to pretend that it can only process IO requests in units not larger than 4KiB\&. (At the time of writing the only known drivers which have such a function are: md (software raid driver), dm (device mapper \- LVM) and DRBD itself)\&.
+.\" drbd.conf: disk-barrier
+.\" drbd.conf: disk-flushes
+.\" drbd.conf: disk-drain
+DRBD has four implementations to express write\-after\-write dependencies to its backing storage device\&. DRBD will use the first method that is supported by the backing storage device and that is not disabled\&. By default the
+\fIflush\fR
+method is used\&.
 .sp
-To get the best performance out of DRBD on top of software RAID (or any other driver with a merge_bvec_fn() function) you might enable this function, if you know for sure that the merge_bvec_fn() function will deliver the same results on all nodes of your cluster\&. I\&.e\&. the physical disks of the software RAID are of exactly the same type\&.
-\fIUse this option only if you know what you are doing\&.\fR
-.RE
-.PP
-\fBno\-disk\-barrier\fR, \fBno\-disk\-flushes\fR, \fBno\-disk\-drain\fR
-.RS 4
-.\" drbd.conf: no-disk-barrier
-.\" drbd.conf: no-disk-flushes
-.\" drbd.conf: no-disk-drain
-DRBD has four implementations to express write\-after\-write dependencies to its backing storage device\&. DRBD will use the first method that is supported by the backing storage device and that is not disabled by the user\&.
+Since drbd\-8\&.4\&.2
+\fBdisk\-barrier\fR
+is disabled by default because since linux\-2\&.6\&.36 (or 2\&.6\&.32 RHEL6) there is no reliable way to determine if queuing of IO\-barriers works\&.
+\fIDangerous\fR
+only enable if you are told so by one that knows for sure\&.
 .sp
 When selecting the method you should not only base your decision on the measurable performance\&. In case your backing storage device has a volatile write cache (plain disks, RAID of plain disks) you should use one of the first two\&. In case your backing storage device has battery\-backed write cache you may go with option 3\&. Option 4 (disable everything, use "none")
 \fIis dangerous\fR
@@ -563,16 +600,18 @@ The letter after "wo:" in /proc/drbd indicates with method is currently in use f
 .PP
 barrier
 .RS 4
-The first requires that the driver of the backing storage device support barriers (called \*(Aqtagged command queuing\*(Aq in SCSI and \*(Aqnative command queuing\*(Aq in SATA speak)\&. The use of this method can be disabled by the
-\fBno\-disk\-barrier\fR
-option\&.
+The first requires that the driver of the backing storage device support barriers (called \*(Aqtagged command queuing\*(Aq in SCSI and \*(Aqnative command queuing\*(Aq in SATA speak)\&. The use of this method can be enabled by setting the
+\fBdisk\-barrier\fR
+options to
+\fByes\fR\&.
 .RE
 .PP
 flush
 .RS 4
-The second requires that the backing device support disk flushes (called \*(Aqforce unit access\*(Aq in the drive vendors speak)\&. The use of this method can be disabled using the
-\fBno\-disk\-flushes\fR
-option\&.
+The second requires that the backing device support disk flushes (called \*(Aqforce unit access\*(Aq in the drive vendors speak)\&. The use of this method can be disabled setting
+\fBdisk\-flushes\fR
+to
+\fBno\fR\&.
 .RE
 .PP
 drain
@@ -591,11 +630,11 @@ on most IO stacks, may result in write\-reordering, and if so, can theoretically
 .RE
 .RE
 .PP
-\fBno\-md\-flushes\fR
+\fBmd\-flushes\fR
 .RS 4
-.\" drbd.conf: no-md-flushes
+.\" drbd.conf: md-flushes
 Disables the use of disk flushes and barrier BIOs when accessing the meta data device\&. See the notes on
-\fBno\-disk\-flushes\fR\&.
+\fBdisk\-flushes\fR\&.
 .RE
 .PP
 \fBmax\-bio\-bvecs\fR
@@ -620,6 +659,29 @@ does not finish an IO request within
 \fIdisk_timeout\fR, DRBD considers the disk as failed\&. If DRBD is connected to a remote host, it will reissue local pending IO requests to the peer, and ship all new IO requests to the peer only\&. The disk state advances to diskless, as soon as the backing block device has finished all IO requests\&.
 .sp
 The default value of is 0, which means that no timeout is enforced\&. The default unit is 100ms\&. This option is available since 8\&.3\&.12\&.
+.RE
+.PP
+\fBread\-balancing \fR\fB\fImethod\fR\fR
+.RS 4
+.\" drbd.conf: read-balancing
+The supported
+\fImethods\fR
+for load balancing of read requests are
+\fBprefer\-local\fR,
+\fBprefer\-remote\fR,
+\fBround\-robin\fR,
+\fBleast\-pending\fR,
+\fBwhen\-congested\-remote\fR,
+\fB32K\-striping\fR,
+\fB64K\-striping\fR,
+\fB128K\-striping\fR,
+\fB256K\-striping\fR,
+\fB512K\-striping\fR
+and
+\fB1M\-striping\fR\&.
+.sp
+The default value of is
+\fBprefer\-local\fR\&. This option is available since 8\&.4\&.1\&.
 .RE
 .PP
 \fBsndbuf\-size \fR\fB\fIsize\fR\fR
@@ -672,7 +734,7 @@ The time the peer has time to answer to a keep\-alive packet\&. In case the peer
 \fBmax\-buffers \fR\fB\fInumber\fR\fR
 .RS 4
 .\" drbd.conf: max-buffers
-Maximum number of requests to be allocated by DRBD\&. Unit is PAGE_SIZE, which is 4 KiB on most systems\&. The minimum is hard coded to 32 (=128 KiB)\&. For high\-performance installations it might help if you increase that number\&. These buffers are used to hold data blocks while they are written to disk\&.
+Limits the memory usage per DRBD minor device on the receiving side, or for internal buffers during resync or online\-verify\&. Unit is PAGE_SIZE, which is 4 KiB on most systems\&. The minimum possible setting is hard coded to 32 (=128 KiB)\&. These buffers are used to hold data blocks while they are written to/read from disk\&. To avoid possible distributed deadlocks on congestion, this setting is used as a throttle threshold rather than a hard limit\&. Once more than max\-buffers pages are in use, further allocation from this pool is throttled\&. You want to increase max\-buffers if you cannot saturate the IO backend on the receiving side\&.
 .RE
 .PP
 \fBko\-count \fR\fB\fInumber\fR\fR
@@ -701,8 +763,10 @@ With this option set you may assign the primary role to both nodes\&. You only s
 \fBunplug\-watermark \fR\fB\fInumber\fR\fR
 .RS 4
 .\" drbd.conf: unplug-watermark
+This setting has no effect with recent kernels that use explicit on\-stack plugging (upstream Linux kernel 2\&.6\&.39, distributions may have backported)\&.
+.sp
 When the number of pending write requests on the standby (secondary) node exceeds the
-\fBunplug\-watermark\fR, we trigger the request processing of our backing storage device\&. Some storage controllers deliver better performance with small values, others deliver best performance when the value is set to the same value as max\-buffers\&. Minimum 16, default 128, maximum 131072\&.
+\fBunplug\-watermark\fR, we trigger the request processing of our backing storage device\&. Some storage controllers deliver better performance with small values, others deliver best performance when the value is set to the same value as max\-buffers, yet others don\*(Aqt feel much effect at all\&. Minimum 16, default 128, maximum 131072\&.
 .RE
 .PP
 \fBcram\-hmac\-alg\fR
@@ -871,10 +935,14 @@ available\&. By default this is not enabled\&.
 See also the notes on data integrity\&.
 .RE
 .PP
-\fBno\-tcp\-cork\fR
+\fBtcp\-cork\fR
 .RS 4
-.\" drbd.conf: no-tcp-cork
-DRBD usually uses the TCP socket option TCP_CORK to hint to the network stack when it can expect more data, and when it should flush out what it has in its send queue\&. It turned out that there is at least one network stack that performs worse when one uses this hinting method\&. Therefore we introducted this option, which disables the setting and clearing of the TCP_CORK socket option by DRBD\&.
+.\" drbd.conf: tcp-cork
+DRBD usually uses the TCP socket option TCP_CORK to hint to the network stack when it can expect more data, and when it should flush out what it has in its send queue\&. It turned out that there is at least one network stack that performs worse when one uses this hinting method\&. Therefore we introducted this option\&. By setting
+\fBtcp\-cork\fR
+to
+\fBno\fR
+you can disable the setting and clearing of the TCP_CORK socket option by DRBD\&.
 .RE
 .PP
 \fBon\-congestion \fR\fB\fIcongestion_policy\fR\fR, \fBcongestion\-fill \fR\fB\fIfill_threshold\fR\fR, \fBcongestion\-extents \fR\fB\fIactive_extents_threshold\fR\fR
@@ -951,9 +1019,9 @@ and
 statements\&. Only do that if the peer of the stacked resource is usually not available or will usually not become primary\&. By using this option incorrectly, you run the risk of causing unexpected split brain\&.
 .RE
 .PP
-\fBrate \fR\fB\fIrate\fR\fR
+\fBresync\-rate \fR\fB\fIrate\fR\fR
 .RS 4
-.\" drbd.conf: rate
+.\" drbd.conf: resync-rate
 To ensure a smooth operation of the application on top of DRBD, it is possible to limit the bandwidth which may be used by background synchronizations\&. The default is 250 KB/sec, the default unit is KB/sec\&. Optional suffixes K, M, G are allowed\&.
 .RE
 .PP
@@ -967,10 +1035,10 @@ Because the bitmap typically contains compact areas where all bits are unset (cl
 For backward compatibilty reasons, and because on fast links this possibly does not improve transfer time but consumes cpu cycles, this defaults to off\&.
 .RE
 .PP
-\fBafter \fR\fB\fIres\-name\fR\fR
+\fBresync\-after \fR\fB\fIres\-name\fR\fR
 .RS 4
-.\" drbd.conf: after
-By default, resynchronization of all devices would run in parallel\&. By defining a sync\-after dependency, the resynchronization of this resource will start only if the resource
+.\" drbd.conf: resync-after
+By default, resynchronization of all devices would run in parallel\&. By defining a resync\-after dependency, the resynchronization of this resource will start only if the resource
 \fIres\-name\fR
 is already in connected state (i\&.e\&., has finished its resynchronization)\&.
 .RE
@@ -980,7 +1048,21 @@ is already in connected state (i\&.e\&., has finished its resynchronization)\&.
 .\" drbd.conf: al-extents
 DRBD automatically performs hot area detection\&. With this parameter you control how big the hot area (= active set) can get\&. Each extent marks 4M of the backing storage (= low\-level device)\&. In case a primary node leaves the cluster unexpectedly, the areas covered by the active set must be resynced upon rejoining of the failed node\&. The data structure is stored in the meta\-data area, therefore each change of the active set is a write operation to the meta\-data device\&. A higher number of extents gives longer resync times but less updates to the meta\-data\&. The default number of
 \fIextents\fR
-is 127\&. (Minimum: 7, Maximum: 3843)
+is 1237\&. (Minimum: 7, Maximum: 65534)
+.sp
+Note that the effective maximum may be smaller, depending on how you created the device meta data, see also
+\fBdrbdmeta\fR(8)\&. The effective maximum is 919 * (available on\-disk activity\-log ring\-buffer area/4kB \-1), the default 32kB ring\-buffer effects a maximum of 6433 (covers more than 25 GiB of data)\&. We recommend to keep this well within the amount your backend storage and replication link are able to resync inside of about 5 minutes\&.
+.RE
+.PP
+\fBal\-updates \fR\fB{yes | no}\fR
+.RS 4
+.\" drbd.conf: al-updates
+DRBD\*(Aqs activity log transaction writing makes it possible, that after the crash of a primary node a partial (bit\-map based) resync is sufficient to bring the node back to up\-to\-date\&. Setting
+\fBal\-updates\fR
+to
+\fBno\fR
+might increase normal operation performance but causes DRBD to do a full resync when a crashed primary gets reconnected\&. The default value is
+\fByes\fR\&.
 .RE
 .PP
 \fBverify\-alg \fR\fB\fIhash\-alg\fR\fR
@@ -1055,7 +1137,6 @@ Note: Although the name might suggest that it is a lower bound for the dynamic r
 \fBc\-min\-rate\fR
 setting\&.
 .sp
-
 \fIMin_rate\fR
 has 4096 (4MiB/s) and KiB/s as default unit\&.
 .RE
@@ -1166,7 +1247,7 @@ Both mechanisms might deliver false positives if the user of DRBD modifies the d
 .PP
 The
 \fBdata\-integrity\-alg\fR
-causes the receiving side to log an error about "Digest integrity check FAILED: Ns +x\en", where N is the sector offset, and x is the size of the requst in bytes\&. It will then disconnect, and reconnect, thus causing a quick resync\&. If the sending side at the same time detected a modification, it warns about "Digest mismatch, buffer modified by upper layers during write: Ns +x\en", which shows that this was a false positive\&. The sending side may detect these buffer modifications immediately after the unmodified data has been copied to the tcp buffers, in which case the receiving side won\*(Aqt notice it\&.
+causes the receiving side to log an error about "Digest integrity check FAILED: Ns +x\en", where N is the sector offset, and x is the size of the request in bytes\&. It will then disconnect, and reconnect, thus causing a quick resync\&. If the sending side at the same time detected a modification, it warns about "Digest mismatch, buffer modified by upper layers during write: Ns +x\en", which shows that this was a false positive\&. The sending side may detect these buffer modifications immediately after the unmodified data has been copied to the tcp buffers, in which case the receiving side won\*(Aqt notice it\&.
 .PP
 The most recent (2007) example of systematic corruption was an issue with the TCP offloading engine and the driver of a certain type of GBit NIC\&. The actual corruption happened on the DMA transfer from core memory to the card\&. Since the TCP checksum gets calculated on the card, this type of corruption stays undetected as long as you do not use either the online
 \fBverify\fR
@@ -1180,7 +1261,7 @@ only during a pre\-production phase due to its CPU costs\&. Further we suggest t
 runs regularly e\&.g\&. once a month during a low load period\&.
 .SH "VERSION"
 .sp
-This document was revised for version 8\&.3\&.2 of the DRBD distribution\&.
+This document was revised for version 8\&.4\&.0 of the DRBD distribution\&.
 .SH "AUTHOR"
 .sp
 Written by Philipp Reisner philipp\&.reisner@linbit\&.com and Lars Ellenberg lars\&.ellenberg@linbit\&.com\&.
@@ -1192,9 +1273,11 @@ Report bugs to drbd\-user@lists\&.linbit\&.com\&.
 Copyright 2001\-2008 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
 .SH "SEE ALSO"
 .PP
+
 \fBdrbd\fR(8),
 \fBdrbddisk\fR(8),
 \fBdrbdsetup\fR(8),
+\fBdrbdmeta\fR(8),
 \fBdrbdadm\fR(8),
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,
 \m[blue]\fBDRBD web site\fR\m[]\&\s-2\u[3]\d\s+2

@@ -17,6 +17,7 @@
 # Default-Stop:   0 1 6
 # X-Start-Before: heartbeat corosync
 # X-Stop-After:   heartbeat corosync
+# X-Interactive:  true
 # Short-Description:    Control drbd resources.
 ### END INIT INFO
 
@@ -47,45 +48,11 @@ function assure_module_is_loaded
 {
     [ -e "$PROC_DRBD" ] && return
 
-    $MODPROBE -s drbd `$DRBDADM sh-mod-parms` $ADD_MOD_PARAM || {
+    $MODPROBE -s drbd $ADD_MOD_PARAM || {
 	echo "Can not load the drbd module."$'\n'; exit 20
     }
     # tell klogd to reload module symbol information ...
     [ -e /var/run/klogd.pid ] && [ -x /sbin/klogd ] && /sbin/klogd -i
-}
-
-function adjust_with_progress
-{
-    IFS_O=$IFS
-    NEWLINE='
-'
-    IFS=$NEWLINE
-    local res out
-
-    COMMANDS=`$DRBDADM -d -n res adjust all` || exit 20
-    echo -n "[ "
-
-    for CMD in $COMMANDS; do
-	case "$CMD" in
-		res=*)		eval "$CMD";;
-		*\ disk\ *)
-			# Check for offline resize. If using internal meta data,
-			# we may need to move it first to its expected location.
-				out=$($DRBDADM check-resize "$res" 2>&1)
-				[[ -z $out ]] ||
-				printf "\n%s\n%s\n" "$res" "$out"
-				echo -n "d($res) " ;;
-		*\ syncer\ *)	echo -n "s($res) " ;;
-		*\ net\ *)	echo -n "n($res) " ;;
-		*)		echo ".. " ;;
-	esac
-	if ! eval "$CMD"; then
-	    echo -e "\n[$res] cmd $CMD failed - continuing!\n "
-	fi
-    done
-    echo -n "]"
-
-    IFS=$IFS_O
 }
 
 drbd_pretty_status()
@@ -168,19 +135,27 @@ case "$1" in
 	# file, or we need to ask the user about registering this installation
 	# at http://usage.drbd.org, we call drbdadm here without any IO
 	# redirection.
-	$DRBDADM sh-nop
+	# If "no op" has a non-zero exit code, the config is unusable,
+	# and every other command will fail.
 	log_daemon_msg "Starting DRBD resources"
+	if ! out=$($DRBDADM sh-nop 2>&1) ; then
+	    printf "\n%s\n" "$out" >&2
+	    log_end_msg 1
+	    exit 1
+	fi
 	assure_module_is_loaded
-	adjust_with_progress
+
+	$DRBDADM adjust-with-progress all
+	[[ $? -gt 1 ]] && exit 20
 
 	# make sure udev has time to create the device files
-	for RESOURCE in `$DRBDADM sh-resources`; do
-	    for DEVICE in `$DRBDADM sh-dev $RESOURCE`; do
-		UDEV_TIMEOUT_LOCAL=$UDEV_TIMEOUT
-		while [ ! -e $DEVICE ] && [ $UDEV_TIMEOUT_LOCAL -gt 0 ] ; do
-		    sleep 1
+	# FIXME this probably should, on platforms that have it,
+	# use udevadm settle --timeout=X --exit-if-exists=$DEVICE
+	for DEVICE in `$DRBDADM sh-dev all`; do
+	    UDEV_TIMEOUT_LOCAL=$UDEV_TIMEOUT
+	    while [ ! -e $DEVICE ] && [ $UDEV_TIMEOUT_LOCAL -gt 0 ] ; do
+		sleep 1
 		UDEV_TIMEOUT_LOCAL=$(( $UDEV_TIMEOUT_LOCAL-1 ))
-		done
 	    done
 	done
 
@@ -193,7 +168,9 @@ case "$1" in
     stop)
 	$DRBDADM sh-nop
 	log_daemon_msg "Stopping all DRBD resources"
-	if [ -e $PROC_DRBD ] ; then
+	for try in 1 2; do
+	    if [ -e $PROC_DRBD ] ; then
+		[[ $try = 2 ]] && echo "Retrying once..."
 		# bypass drbdadm and drbd config file and everything,
 		# to avoid leaving devices around that are not referenced by
 		# the current config file, or in case the current config file
@@ -206,11 +183,14 @@ case "$1" in
 			*" not mounted") :;;
 			*) echo "$M" >&2 ;;
 			esac
-			$DRBDSETUP "$d" down
+		done
+		for res in $(drbdsetup all show | sed -ne 's/^resource \(.*\) {$/\1/p'); do
+			drbdsetup "$res" down
 		done
 		_udev_settle &> /dev/null
-		$RMMOD drbd
-	fi
+		$RMMOD drbd && break
+	    fi
+	done
 	[ -f /var/lock/subsys/drbd ] && rm /var/lock/subsys/drbd
 	log_end_msg 0
 	;;

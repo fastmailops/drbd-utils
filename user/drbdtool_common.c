@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#define _XOPEN_SOURCE 600
+#define _FILE_OFFSET_BITS 64
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -19,29 +21,25 @@
 #include "drbdtool_common.h"
 #include "config.h"
 
-int force = 0;
-int confirmed(const char *text)
+/* In-place unescape double quotes and backslash escape sequences from a
+ * double quoted string. Note: backslash is only useful to quote itself, or
+ * double quote, no special treatment to any c-style escape sequences. */
+void unescape(char *txt)
 {
-	const char yes[] = "yes";
-	const ssize_t N = sizeof(yes);
-	char *answer = NULL;
-	size_t n = 0;
-	int ok;
-
-	printf("\n%s\n", text);
-
-	if (force) {
-	    printf("*** confirmation forced via --force option ***\n");
-	    ok = 1;
+	char *ue, *e;
+	e = ue = txt;
+	for (;;) {
+		if (*ue == '"') {
+			ue++;
+			continue;
+		}
+		if (*ue == '\\')
+			ue++;
+		if (!*ue)
+			break;
+		*e++ = *ue++;
 	}
-	else {
-	    printf("[need to type '%s' to confirm] ", yes);
-	    ok = getline(&answer,&n,stdin) == N &&
-		strncmp(answer,yes,N-1) == 0;
-	    if (answer) free(answer);
-	    printf("\n");
-	}
-	return ok;
+	*e = '\0';
 }
 
 
@@ -62,21 +60,29 @@ char *ppsize(char *buf, unsigned long long size)
 	return buf;
 }
 
-const char *make_optstring(struct option *options, char startc)
+const char *make_optstring(struct option *options)
 {
 	static char buffer[200];
+	char seen[256];
 	struct option *opt;
 	char *c;
 
+	memset(seen, 0, sizeof(seen));
 	opt = options;
 	c = buffer;
-	if (startc)
-		*c++ = startc;
 	while (opt->name) {
-		if (0 < opt->val || opt->val < 256) {
+		if (0 < opt->val && opt->val < 256) {
+			if (seen[opt->val]++) {
+				fprintf(stderr, "internal error: --%s has duplicate opt->val '%c'\n",
+						opt->name, opt->val);
+				abort();
+			}
 			*c++ = opt->val;
-			if (opt->has_arg)
+			if (opt->has_arg != no_argument) {
 				*c++ = ':';
+				if (opt->has_arg == optional_argument)
+					*c++ = ':';
+			}
 		}
 		opt++;
 	}
@@ -305,33 +311,11 @@ int only_digits(const char *s)
 	return c != s && *c == 0;
 }
 
-int dt_lock_drbd(const char* device)
+int dt_lock_drbd(int minor)
 {
-	int lfd;
-	struct stat drbd_stat;
-	char lfname[40];
-	int dev_major,dev_minor;
+	int sz, lfd;
+	char *lfname;
 
-	dev_major = LANANA_DRBD_MAJOR;
-
-	/* if called from drbdadm, "device" is usually just the minor number.
-	 * if someone happens to mkdir /0, drbdsetup 0 anything would simply
-	 * say "0 is not a block device!" */
-
-	if (!only_digits(device) && !stat(device, &drbd_stat)) {
-		if (!S_ISBLK(drbd_stat.st_mode)) {
-			fprintf(stderr, "%s is not a block device!\n", device);
-			exit(20);
-		}
-
-		dev_major = major(drbd_stat.st_rdev);
-
-		if (dev_major != LANANA_DRBD_MAJOR) {
-			fprintf(stderr, "%s does not appear to be a DRBD (major %u, expected %u)!\n",
-					device, dev_major, LANANA_DRBD_MAJOR);
-			exit(20);
-		}
-	}
 	/* THINK.
 	 * maybe we should also place a fcntl lock on the
 	 * _physical_device_ we open later...
@@ -350,16 +334,15 @@ int dt_lock_drbd(const char* device)
 	 * and make sure that /var/lock/drbd is drwx.-..-. root:root  ...
 	 */
 
-	dev_minor = dt_minor_of_dev(device);
-	if (dev_minor < 0) {
-		fprintf(stderr,
-			"Could not determine device minor number of '%s'.\n"
-			"Try /dev/drbd<minor-number> or just <minor-number> instead.\n", device);
+	sz = asprintf(&lfname, DRBD_LOCK_DIR "/drbd-%d-%d",
+		      LANANA_DRBD_MAJOR, minor);
+	if (sz < 0) {
+		perror("");
 		exit(20);
 	}
-	snprintf(lfname, 39, DRBD_LOCK_DIR "/drbd-%d-%d", dev_major, dev_minor);
 
-	lfd = get_fd_lockfile_timeout(lfname,1);
+	lfd = get_fd_lockfile_timeout(lfname, 1);
+	free (lfname);
 	if (lfd < 0)
 		exit(20);
 	return lfd;
@@ -368,7 +351,8 @@ int dt_lock_drbd(const char* device)
 /* ignore errors */
 void dt_unlock_drbd(int lock_fd)
 {
-	if (lock_fd >= 0) unlock_fd(lock_fd);
+	if (lock_fd >= 0)
+		unlock_fd(lock_fd);
 }
 
 void dt_print_gc(const uint32_t* gen_cnt)
@@ -456,6 +440,7 @@ void dt_pretty_print_uuids(const uint64_t* uuid, unsigned int flags)
 			: "Inconsistent",
 	       (flags & MDF_FULL_SYNC) ? ", need full sync" : "",
 	       (flags & MDF_PEER_OUT_DATED) ? ", peer Outdated" : "");
+	printf("meta-data: %s\n", (flags & MDF_AL_CLEAN) ? "clean" : "need apply-al");
 }
 
 /*    s: token buffer
