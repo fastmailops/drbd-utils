@@ -3,9 +3,9 @@ Author: Bastian Blank <waldi@debian.org>
 Bug-Debian: http://bugs.debian.org/679266
 
 ---
---- drbd8-8.3.13.orig/scripts/Makefile.in
-+++ drbd8-8.3.13/scripts/Makefile.in
-@@ -130,7 +130,7 @@ endif
+--- a/scripts/Makefile.in
++++ b/scripts/Makefile.in
+@@ -126,7 +126,7 @@
  install-udev:
  ifeq ($(WITH_UDEV),yes)
  	mkdir -p $(DESTDIR)$(sysconfdir)/udev/rules.d

@@ -6,11 +6,9 @@ Subject: dpkg-statoverride instead of chgrp/chmod
  user/drbdadm_main.c |    4 +---
  1 file changed, 1 insertion(+), 3 deletions(-)
 
-diff --git a/user/drbdadm_main.c b/user/drbdadm_main.c
-index ab752e6..2bedab1 100644
 --- a/user/drbdadm_main.c
 +++ b/user/drbdadm_main.c
-@@ -2694,9 +2694,7 @@ int sanity_check_abs_cmd(char *cmd_name)
+@@ -3176,9 +3176,7 @@
  				"  You need to fix this with these commands:\n");
  		did_header = 1;
  		fprintf(stderr,
@@ -21,4 +19,3 @@ index ab752e6..2bedab1 100644
  	}
  	return 1;
  }
--- 
