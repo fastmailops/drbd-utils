@@ -1,159 +1,22 @@
 #!/usr/bin/make -f
 # -*- makefile -*-
-# Sample debian/rules that uses debhelper.
-# GNU copyright 1997 to 1999 by Joey Hess.
-#
-# Modified to make a template file for a multi-binary package with separated
-# build-arch and build-indep targets  by Bill Allombert 2001
-
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
-#include /usr/share/dpatch/dpatch.make
+%:
+	dh $@
 
-# This has to be exported to make some magic below work.
-export DH_OPTIONS
-
-PACKAGE=drbd8
-MA_DIR ?= /usr/share/modass
--include $(MA_DIR)/include/generic.make
--include $(MA_DIR)/include/common-rules.make
-
-CFLAGS = `dpkg-buildflags --get CFLAGS`
-CFLAGS += -Wall
-CFLAGS += `dpkg-buildflags --get CPPFLAGS`
-LDFLAGS = `dpkg-buildflags --get LDFLAGS`
-
-ifeq (,$(findstring nostrip,$(DEB_BUILD_OPTIONS)))
-	INSTALL_PROGRAM += -s
-endif
-
-# module-assistant stuff
-MAJOR=$(shell echo $(KVERS) | sed -e 's/\(...\).*/\1/')
-ifeq ($(MAJOR),2.6)
-KO=k
-endif
-
-ifeq ($(DEB_BUILD_ARCH),i386)
-ifeq ($(KPKG_ARCH),amd64)
-KBUILD_PARAMS := "CROSS_COMPILE=amd64-linux- ARCH=x86_64"
-CC=amd64-linux-gcc
-endif
-endif
-
-kdist_clean:
-	dh_clean
-	$(MAKE) -C $(KSRC) M=$(CURDIR)/drbd/ clean 
-
-# prep-deb-files rewrites the debian/ files as needed. See RATIONALE for
-# details
-kdist_config: prep-deb-files
-# ... additional kernel specific things to configure...
-
-kdist_configure: kdist_config
-
-binary-modules: prep-deb-files
-	dh_testdir
-	dh_testroot
-	dh_clean -k
-	make -C $(KSRC) M=$(CURDIR)/drbd/ modules
-	install -m644 -b -D drbd/drbd.$(KO)o $(CURDIR)/debian/$(PKGNAME)/lib/modules/$(KVERS)/kernel/extra/drbd.$(KO)o
-	# this is broken, dunno why:
-	#make -C $(KSRC) M=$(CURDIR)/drbd/ modules_install INSTALL_MOD_PATH=$(CURDIR)/debian/$(PKGNAME) INSTALL_MOD_DIR=extra/
-	dh_installdocs
-	dh_installchangelogs
-	dh_compress
-	dh_fixperms
-	dh_installmodules
-	dh_installdeb
-	dh_gencontrol -- -v$(VERSION)
-	dh_md5sums
-	dh_builddeb --destdir=$(DEB_DESTDIR)
-
-#Architecture
-
-configure: configure-stamp
-configure-stamp:
-	CFLAGS="$(CFLAGS)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)" ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-utils --with-udev --with-xen --with-pacemaker --with-rgmanager --with-bashcompletion
-
-build: configure build-arch
+override_dh_auto_configure:
+	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
+		--with-utils --with-udev --with-xen --with-pacemaker \
+		--with-rgmanager --with-bashcompletion
 
 
-build-arch: configure build-arch-stamp
-build-arch-stamp:
-	dh_testdir
-	make
-	touch build-arch-stamp
-
-clean:
-	dh_testdir
-	dh_testroot
-	rm -f build-arch-stamp configure-stamp
-	# not possible to fix as there's a bug in drbd/Makefile
-	-$(MAKE) -C drbd clean
-	-$(MAKE) clean
-	[ ! -f scripts/Makefile ] || $(MAKE) -C scripts clean
-	[ ! -f benchmark/Makefile ] || $(MAKE) -C benchmark clean
-	[ ! -f documentation/Makefile ] || $(MAKE) -C documentation clean
-	[ ! -f user/Makefile ] || $(MAKE) -C user clean
-	rm -f user/Makefile user/config.h
-	rm -f scripts/Makefile
-	rm -f documentation/Makefile
-	rm -f Makefile
-	rm -f config.log config.status
-
-	dh_clean
-
-install: install-arch
-
-install-arch:
-	dh_testdir
-	dh_testroot
-	dh_clean -k -s
-	dh_installdirs -s
-
-	$(MAKE) DESTDIR=$(CURDIR)/debian/drbd8-utils/ install
-	dh_install --source=debian/drbd8-utils --list-missing -s
+override_dh_install:
+	dh_install --fail-missing
 
 	# Move udev rule to /lib/udev/rules.d (Fixes lintian warning)
-	mkdir -p $(CURDIR)/debian/drbd8-utils/lib/udev/
-	mv $(CURDIR)/debian/drbd8-utils/etc/udev/rules.d $(CURDIR)/debian/drbd8-utils/lib/udev/
+	mv $(CURDIR)/debian/drbd8-utils/etc/udev/rules.d/* $(CURDIR)/debian/drbd8-utils/lib/udev/rules.d/
+	rm -r $(CURDIR)/debian/drbd8-utils/etc/udev
 
-# Must not depend on anything. This is to be called by
-# binary-arch/binary-indep
-# in another 'make' thread.
-binary-common:
-	dh_testdir
-	dh_testroot
-	dh_installchangelogs ChangeLog
-	dh_installdocs
-	dh_installexamples
-#	dh_installmenu
-#	dh_installdebconf
-#	dh_installlogrotate
-#	dh_installemacsen
-#	dh_installpam
-#	dh_installmime
-#	dh_installinit
-#	dh_installcron
-#	dh_installinfo
-	dh_installman
-	dh_link
-	dh_strip
-	dh_compress
-	dh_fixperms
-#	dh_perl
-#	dh_python
-	dh_makeshlibs
-	dh_installdeb
-	dh_shlibdeps
-	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
-
-# Build architecture dependant packages using the common target.
-binary-arch: build-arch install-arch
-	$(MAKE) -f debian/rules DH_OPTIONS=-a binary-common
-
-binary: binary-arch
-.PHONY: build clean binary-arch binary install install-arch
+.PHONY: override_dh_auto_configure override_dh_install
