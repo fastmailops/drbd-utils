@@ -9,7 +9,7 @@ Build-Depends: debhelper (>= 9), flex, xsltproc, git
 Standards-Version: 3.9.5
 Homepage: http://www.drbd.org/
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd.git
-Vcs-Git: git://anonscm.debian.org/git/debian-ha/drbd/
+Vcs-Git: git://anonscm.debian.org/debian-ha/drbd/
 
 Package: drbd8-utils
 Architecture: linux-any
