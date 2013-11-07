@@ -13,7 +13,6 @@ Vcs-Git: git://anonscm.debian.org/git/debian-ha/drbd/
 
 Package: drbd8-utils
 Architecture: linux-any
-Section: admin
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Conflicts: drbd-utils
 Provides: drbd-utils
