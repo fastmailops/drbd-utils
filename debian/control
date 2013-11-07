@@ -5,8 +5,7 @@ Maintainer: Debian DRBD Maintainers <debian-ha-maintainers@lists.alioth.debian.o
 Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
  Martin Loschwitz <madkiss@debian.org>,
  Philipp Hug <debian@hug.cx>
-Build-Depends: debhelper (>= 9), debconf-utils, bison, flex, bzip2,
-               xsltproc, git
+Build-Depends: debhelper (>= 9), flex, xsltproc, git
 Standards-Version: 3.9.5
 Homepage: http://www.drbd.org/
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd.git
