@@ -8,8 +8,8 @@
 
 override_dh_auto_configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
-		--with-utils --with-udev --with-xen --with-pacemaker \
-		--with-rgmanager --with-bashcompletion
+		--sbindir=/sbin --with-utils --with-udev --with-xen \
+		--with-pacemaker --with-rgmanager --with-bashcompletion
 
 
 override_dh_install:
@@ -18,5 +18,9 @@ override_dh_install:
 	# Move udev rule to /lib/udev/rules.d (Fixes lintian warning)
 	mv $(CURDIR)/debian/drbd8-utils/etc/udev/rules.d/* $(CURDIR)/debian/drbd8-utils/lib/udev/rules.d/
 	rm -r $(CURDIR)/debian/drbd8-utils/etc/udev
+
+	# Move drbd-overview to /usr/sbin
+	mv $(CURDIR)/debian/drbd8-utils/sbin/drbd-overview $(CURDIR)/debian/drbd8-utils/usr/sbin/
+
 
 .PHONY: override_dh_auto_configure override_dh_install
