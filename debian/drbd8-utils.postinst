@@ -1,9 +1,0 @@
-#!/bin/sh
-
-set -e
-
-if [ -x "/etc/init.d/drbd" ]; then
-	update-rc.d drbd defaults 70 8 >/dev/null
-fi
-
-#DEBHELPER#

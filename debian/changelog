@@ -4,6 +4,8 @@ drbd8 (2:8.4.4-1) UNRELEASED; urgency=low
   * Ask for participation to the user survey by default (Closes: #711352)
   * Bump compat to 9 and standards to 3.9.5
   * Convert to dh sequencer
+    + use dh_installinit for the initscript and use the default ordering
+     (Closes: #476544)
   * Convert copyright to Format 1.0
   * Remove unnecessary (build-)dependencies:
     bison, bzip2, debconf

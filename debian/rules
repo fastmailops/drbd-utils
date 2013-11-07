@@ -6,6 +6,10 @@
 %:
 	dh $@
 
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -f debian/drbd8-utils.drbd.init
+
 override_dh_auto_configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
 		--sbindir=/sbin --with-utils --with-udev --with-xen \
@@ -22,5 +26,13 @@ override_dh_install:
 	# Move drbd-overview to /usr/sbin
 	mv $(CURDIR)/debian/drbd8-utils/sbin/drbd-overview $(CURDIR)/debian/drbd8-utils/usr/sbin/
 
+	# Place the initscript where dh_installinit can find it
+	mv $(CURDIR)/debian/drbd8-utils/etc/init.d/drbd $(CURDIR)/debian/drbd8-utils.drbd.init
 
-.PHONY: override_dh_auto_configure override_dh_install
+
+override_dh_installinit:
+	dh_installinit --name=drbd --no-start
+
+
+.PHONY: override_dh_auto_configure override_dh_install \
+	override_dh_auto_clean override_dh_installinit
