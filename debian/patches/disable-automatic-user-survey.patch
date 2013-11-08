@@ -1,3 +1,6 @@
+Description: do not participate in the DRBD usage count survey by default
+Author: Apollon Oikonomopoulos <apoikos@gmail.com>
+Bug-Debian: http://bugs.debian.org/711352
 --- a/scripts/global_common.conf
 +++ b/scripts/global_common.conf
 @@ -1,5 +1,5 @@
