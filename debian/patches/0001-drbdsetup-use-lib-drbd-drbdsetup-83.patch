@@ -1,0 +1,54 @@
+From 6c8a55b25f9c61b0481930f25f3943218b4e2e0b Mon Sep 17 00:00:00 2001
+From: Apollon Oikonomopoulos <apollon@skroutz.gr>
+Date: Fri, 8 Nov 2013 22:59:39 +0200
+Subject: [PATCH 1/2] drbdsetup: use /lib/drbd/drbdsetup-83
+
+The whole auto-detection logic is flawed. drbdsetup-83 is shipped under
+/lib/drbd, however drbdsetup would simply search in the path or the same
+directory if it was called with an absolute path. drbdadm already uses
+different semantics (just adds /lib/drbd to the path). Since we are shipping
+this as part of a package with well-known locations, we replace this whole
+logic with a simple execv().
+---
+ user/drbdsetup.c |   25 +------------------------
+ 1 file changed, 1 insertion(+), 24 deletions(-)
+
+diff --git a/user/drbdsetup.c b/user/drbdsetup.c
+index cb97dbf..70b68ee 100644
+--- a/user/drbdsetup.c
++++ b/user/drbdsetup.c
+@@ -2416,30 +2416,7 @@ static int modprobe_drbd(void)
+ void exec_legacy_drbdsetup(char **argv)
+ {
+ #ifdef DRBD_LEGACY_83
+-	static const char * const legacy_drbdsetup = "drbdsetup-83";
+-	char *progname, *drbdsetup;
+-
+-	/* in case drbdsetup is called with an absolute or relative pathname
+-	 * look for the legacy drbdsetup binary in the same location,
+-	 * otherwise, just let execvp sort it out... */
+-	if ((progname = strrchr(argv[0], '/')) == 0) {
+-		drbdsetup = strdup(legacy_drbdsetup);
+-	} else {
+-		size_t len_dir, l;
+-
+-		++progname;
+-		len_dir = progname - argv[0];
+-
+-		l = len_dir + strlen(legacy_drbdsetup) + 1;
+-		drbdsetup = malloc(l);
+-		if (!drbdsetup) {
+-			fprintf(stderr, "Malloc() failed\n");
+-			exit(20);
+-		}
+-		strncpy(drbdsetup, argv[0], len_dir);
+-		strcpy(drbdsetup + len_dir, legacy_drbdsetup);
+-	}
+-	execvp(drbdsetup, argv);
++	execv("/lib/drbd/drbdsetup-83", argv);
+ #else
+ 	fprintf(stderr, "This drbdsetup was not built with support for legacy drbd-8.3\n"
+ 		"Eventually rebuild with ./configure --with-legacy-connector\n");
+-- 
+1.7.10.4
+

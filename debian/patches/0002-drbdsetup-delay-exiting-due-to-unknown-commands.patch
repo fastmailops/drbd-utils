@@ -1,0 +1,47 @@
+From 094dd8cfacb5c45089bee662e8db3e1eb3bd07ee Mon Sep 17 00:00:00 2001
+From: Apollon Oikonomopoulos <apollon@skroutz.gr>
+Date: Fri, 8 Nov 2013 23:15:26 +0200
+Subject: [PATCH 2/2] drbdsetup: delay exiting due to unknown commands
+
+If a command is not found, it doesn't necessarily mean it's invalid. It may as
+well be an 8.3 command, so we have to wait and see if we need to call
+drbdsetup-83 instead.
+---
+ user/drbdsetup.c |    7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/user/drbdsetup.c b/user/drbdsetup.c
+index 79411db..717d4e3 100644
+--- a/user/drbdsetup.c
++++ b/user/drbdsetup.c
+@@ -2480,8 +2480,6 @@ int main(int argc, char **argv)
+ 		print_usage_and_exit(0);
+ 
+ 	cmd = find_cmd_by_name(argv[1]);
+-	if (!cmd)
+-		print_usage_and_exit("invalid command");
+ 
+ 	if (!modprobe_drbd()) {
+ 		if (!strcmp(argv[1], "down") ||
+@@ -2493,7 +2491,7 @@ int main(int argc, char **argv)
+ 	}
+ 
+ 	if (try_genl) {
+-		if (cmd->continuous_poll)
++		if (cmd && cmd->continuous_poll)
+ 			drbd_genl_family.nl_groups = -1;
+ 		drbd_sock = genl_connect_to_family(&drbd_genl_family);
+ 		if (!drbd_sock) {
+@@ -2515,6 +2513,9 @@ int main(int argc, char **argv)
+ 		}
+ 	}
+ 
++	if (!cmd)
++		print_usage_and_exit("invalid command");
++
+ 	context = 0;
+ 	if (cmd->ctx_key & (CTX_MINOR | CTX_RESOURCE | CTX_ALL | CTX_RESOURCE_AND_CONNECTION)) {
+ 		if (argc < 3) {
+-- 
+1.7.10.4
+

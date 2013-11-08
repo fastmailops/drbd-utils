@@ -6,6 +6,10 @@ drbd8 (2:8.4.4-1) unstable; urgency=low
   * Convert to dh sequencer
     + use dh_installinit for the initscript and use the default ordering
      (Closes: #476544)
+  * Two new patches, fixing automatic chainloading of legacy drbdsetup when
+    kernel DRBD is 8.3:
+    + 0001-drbdsetup-use-lib-drbd-drbdsetup-83.patch
+    + 0002-drbdsetup-delay-exiting-due-to-unknown-commands.patch
   * Convert copyright to Format 1.0
   * Remove unnecessary (build-)dependencies:
     bison, bzip2, debconf
