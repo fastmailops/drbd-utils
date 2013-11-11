@@ -1,6 +1,7 @@
 #ifndef DRBDADM_H
 #define DRBDADM_H
 
+#include <stdbool.h>
 #include <linux/drbd_config.h>
 #include <sys/utsname.h>
 #include <sys/types.h>
@@ -45,6 +46,10 @@ enum usage_count_type {
   UC_ASK,
 };
 
+enum pp_flags {
+	MATCH_ON_PROXY = 1,
+};
+
 struct d_globals
 {
   int disable_io_hints;
@@ -82,27 +87,49 @@ struct d_proxy_info
   char* outside_addr;
   char* outside_port;
   char* outside_af;
+  struct d_option *options; /* named proxy_options in other places */
+  struct d_option *plugins; /* named proxy_plugins in other places */
+};
+
+struct d_volume
+{
+  unsigned vnr;
+  char* device;
+  unsigned device_minor;
+  char* disk;
+  char* meta_disk;
+  char* meta_index;
+  int meta_major;
+  int meta_minor;
+  struct d_volume *next;
+  struct d_option* disk_options; /* Additional per volume options */
+
+  /* Do not dump an explicit volume section */
+  unsigned int implicit :1 ;
+
+  /* flags for "drbdadm adjust" */
+  unsigned int adj_del_minor :1;
+  unsigned int adj_add_minor :1;
+  unsigned int adj_detach :1;
+  unsigned int adj_attach :1;
+  unsigned int adj_resize :1;
+  unsigned int adj_disk_opts :1;
 };
 
 struct d_host_info
 {
   struct d_name *on_hosts;
-  char* device;
-  unsigned device_minor;
-  char* disk;
+  struct d_volume *volumes;
   char* address;
   char* port;
-  char* meta_disk;
   char* address_family;
-  int meta_major;
-  int meta_minor;
-  char* meta_index;
   struct d_proxy_info *proxy;
   struct d_host_info* next;
   struct d_resource* lower;  /* for device stacking */
   char *lower_name;          /* for device stacking, before bind_stacked_res() */
   int config_line;
   unsigned int by_address:1; /* Match to machines by address, not by names (=on_hosts) */
+  struct d_option* res_options; /* Additional per host options */
 };
 
 struct d_option
@@ -111,28 +138,22 @@ struct d_option
   char* value;
   struct d_option* next;
   unsigned int mentioned  :1 ; // for the adjust command.
-  unsigned int is_default :1 ; // for the adjust command.
   unsigned int is_escaped :1 ;
+  unsigned int adj_skip :1;
 };
 
 struct d_resource
 {
   char* name;
-  char* protocol;
 
-  /* these get propagated to host_info sections later. */
-  char* device;
-  unsigned device_minor;
-  char* disk;
-  char* meta_disk;
-  char* meta_index;
+  struct d_volume *volumes;   /* gets propagated to host_info sections later. */
 
   struct d_host_info* me;
   struct d_host_info* peer;
   struct d_host_info* all_hosts;
   struct d_option* net_options;
   struct d_option* disk_options;
-  struct d_option* sync_options;
+  struct d_option* res_options;
   struct d_option* startup_options;
   struct d_option* handlers;
   struct d_option* proxy_options;
@@ -145,50 +166,103 @@ struct d_resource
   unsigned int ignore:1;
   unsigned int stacked:1;        /* Stacked on this node */
   unsigned int stacked_on_one:1; /* Stacked either on me or on peer */
+
+  /* if a prerequisite command failed, don't try any further commands.
+   * see run_deferred_cmds() */
+  unsigned int skip_further_deferred_command:1;
 };
 
+struct adm_cmd;
+
+struct cfg_ctx {
+	/* res == NULL: does not care for resources, or iterates over all
+	 * resources in the global "struct d_resource *config" */
+	struct d_resource *res;
+	/* vol == NULL: operate on the resource itself, or iterates over all
+	 * volumes in res */
+	struct d_volume *vol;
+
+	const char *arg;
+};
+
+
 extern char *canonify_path(char *path);
-extern int adm_attach(struct d_resource* ,const char* );
-extern int adm_connect(struct d_resource* ,const char* );
-extern int adm_resize(struct d_resource* ,const char* );
-extern int adm_syncer(struct d_resource* ,const char* );
-extern int adm_generic_s(struct d_resource* ,const char* );
-extern int _admm_generic(struct d_resource* ,const char*, int flags);
-extern void m__system(char **argv, int flags, struct d_resource *res, pid_t *kid, int *fd, int *ex);
-static inline int m_system_ex(char **argv, int flags, struct d_resource *res)
+
+extern int adm_adjust(struct cfg_ctx *);
+extern int adm_new_minor(struct cfg_ctx *ctx);
+extern int adm_new_resource(struct cfg_ctx *);
+extern int adm_res_options(struct cfg_ctx *);
+extern int adm_set_default_res_options(struct cfg_ctx *);
+extern int adm_attach(struct cfg_ctx *);
+extern int adm_disk_options(struct cfg_ctx *);
+extern int adm_set_default_disk_options(struct cfg_ctx *);
+extern int adm_resize(struct cfg_ctx *);
+extern int adm_connect(struct cfg_ctx *);
+extern int adm_net_options(struct cfg_ctx *);
+extern int adm_set_default_net_options(struct cfg_ctx *);
+extern int adm_disconnect(struct cfg_ctx *);
+extern int adm_generic_s(struct cfg_ctx *);
+
+extern int adm_create_md(struct cfg_ctx *);
+extern int _admm_generic(struct cfg_ctx *, int flags);
+
+extern void m__system(char **argv, int flags, const char *res_name, pid_t *kid, int *fd, int *ex);
+static inline int m_system_ex(char **argv, int flags, const char *res_name)
 {
 	int ex;
-	m__system(argv, flags, res, NULL, NULL, &ex);
+	m__system(argv, flags, res_name, NULL, NULL, &ex);
 	return ex;
 }
 extern struct d_option* find_opt(struct d_option*,char*);
-extern void validate_resource(struct d_resource *);
-extern void schedule_dcmd( int (* function)(struct d_resource*,const char* ),
-			   struct d_resource* res,
-			   char* arg,
-			   int order);
+extern void validate_resource(struct d_resource *, enum pp_flags);
+/* stages of configuration, as performed on "drbdadm up"
+ * or "drbdadm adjust":
+ */
+enum drbd_cfg_stage {
+	/* prerequisite stage: create objects, start daemons, ... */
+	CFG_PREREQ,
+
+	/* run time changeable settings of resources */
+	CFG_RESOURCE,
+
+	/* detach/attach local disks, */
+	CFG_DISK_PREREQ,
+	CFG_DISK,
+
+	/* The stage to discard network configuration, during adjust.
+	 * This is after the DISK stage, because we don't want to cut access to
+	 * good data while in primary role.  And before the SETTINGS stage, as
+	 * some proxy or syncer settings may cause side effects and additional
+	 * handshakes while we have an established connection.
+	 */
+	CFG_NET_PREREQ,
+
+	/* discard/set connection parameters */
+	CFG_NET,
+
+	__CFG_LAST
+};
+
+extern void schedule_deferred_cmd( int (*function)(struct cfg_ctx *),
+				   struct cfg_ctx *ctx,
+				   const char *arg,
+				   enum drbd_cfg_stage stage);
 
 extern int version_code_kernel(void);
 extern int version_code_userland(void);
 extern void warn_on_version_mismatch(void);
+extern void maybe_exec_drbdadm_83(char **argv);
 extern void uc_node(enum usage_count_type type);
-extern int adm_create_md(struct d_resource* res ,const char* cmd);
 extern void convert_discard_opt(struct d_resource* res);
 extern void convert_after_option(struct d_resource* res);
 extern int have_ip(const char *af, const char *ip);
 
-/* See drbdadm_minor_table.c */
-extern int register_minor(int minor, const char *path);
-extern int unregister_minor(int minor);
-extern char *lookup_minor(int minor);
-
 enum pr_flags {
   NoneHAllowed  = 4,
-  IgnDiscardMyData = 8
+  PARSE_FOR_ADJUST = 8
 };
-enum pp_flags {
-	match_on_proxy = 1,
-};
+
+extern struct d_resource* parse_resource_for_adjust(struct cfg_ctx *ctx);
 extern struct d_resource* parse_resource(char*, enum pr_flags);
 extern void post_parse(struct d_resource *config, enum pp_flags);
 extern struct d_option *new_opt(char *name, char *value);
@@ -203,12 +277,15 @@ extern void set_me_in_resource(struct d_resource* res, int match_on_proxy);
 extern void set_peer_in_resource(struct d_resource* res, int peer_required);
 extern void set_on_hosts_in_res(struct d_resource *res);
 extern void set_disk_in_res(struct d_resource *res);
-extern char *proxy_connection_name(struct d_resource *res);
-int parse_proxy_settings(struct d_resource *res, int check_proxy_token);
+extern int _proxy_connect_name_len(struct d_resource *res);
+extern char *_proxy_connection_name(char *conn_name, struct d_resource *res);
+#define proxy_connection_name(RES) \
+	_proxy_connection_name(alloca(_proxy_connect_name_len(RES)), RES)
+int parse_proxy_options_section(struct d_resource *res);
 /* conn_name is optional and mostly for compatibility with dcmd */
-int do_proxy_conn_up(struct d_resource *res, const char *conn_name);
-int do_proxy_conn_down(struct d_resource *res, const char *conn_name);
-int do_proxy_conn_plugins(struct d_resource *res, const char *conn_name);
+int do_proxy_conn_up(struct cfg_ctx *ctx);
+int do_proxy_conn_down(struct cfg_ctx *ctx);
+int do_proxy_conn_plugins(struct cfg_ctx *ctx);
 
 extern char *config_file;
 extern char *config_save;
@@ -224,13 +301,18 @@ extern int dry_run;
 extern int verbose;
 extern char* drbdsetup;
 extern char* drbd_proxy_ctl;
+extern char* drbdadm_83;
 extern char ss_buffer[1024];
 extern struct utsname nodeinfo;
-
-extern char* setup_opts[10];
 extern char* connect_to_host;
-extern int soi;
 
+struct setup_option {
+	bool explicit;
+	char *option;
+};
+struct setup_option *setup_options;
+
+extern void add_setup_option(bool explicit, char *option);
 
 /* ssprintf() places the result of the printf in the current stack
    frame and sets ptr to the resulting string. If the current stack
@@ -255,7 +337,8 @@ extern int soi;
 #define for_each_resource(res,tmp,config) \
 	for (res = (config); res && (tmp = res->next, 1); res = tmp)
 
-#endif
+#define for_each_volume(v_,volumes_) \
+	for (v_ = volumes_; v_; v_ = v_->next)
 
 #define APPEND(LIST,ITEM) ({		      \
   typeof((LIST)) _l = (LIST);		      \
@@ -270,7 +353,31 @@ extern int soi;
   _l;					      \
 })
 
+#define INSERT_SORTED(LIST,ITEM,SORT) ({	\
+	typeof((LIST)) _l = (LIST);	\
+	typeof((ITEM)) _i = (ITEM);	\
+	typeof((ITEM)) _t, _p = NULL;	\
+	for (_t = _l; _t && _t->SORT <= _i->SORT; _p = _t, _t = _t->next); \
+	if (_p)				\
+		_p->next = _i;		\
+	else				\
+		_l = _i;		\
+	_i->next = _t;			\
+	_l;				\
+})
 
-#define PARSER_CHECK_PROXY_KEYWORD (1)
-#define PARSER_STOP_IF_INVALID (2)
+#define SPLICE(LIST,ITEMS) ({		      \
+  typeof((LIST)) _l = (LIST);		      \
+  typeof((ITEMS)) _i = (ITEMS);		      \
+  typeof((ITEMS)) _t;			      \
+  if (_l == NULL) { _l = _i; }		      \
+  else {				      \
+    for (_t = _l; _t->next; _t = _t->next);   \
+    _t->next = _i;			      \
+  };					      \
+  _l;					      \
+})
+
+
+#endif
 

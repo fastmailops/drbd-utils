@@ -3,7 +3,8 @@
 #  snapshot-resync-target-lvm.sh
 #  This file is part of DRBD by Philipp Reisner and Lars Ellenberg.
 #
-# The caller (drbdadm) sets DRBD_RESOURCE for us.
+# The caller (drbdadm) sets for us:
+# DRBD_RESOURCE, DRBD_VOLUME, DRBD_MINOR, DRBD_LL_DISK etc.
 #
 ###########
 #
@@ -13,15 +14,15 @@
 
 export LC_ALL=C LANG=C
 
-if [ -z "$DRBD_RESOURCE" ]; then
-	echo "DRBD_RESOURCE not set. This script is supposed to"
+if [[ -z "$DRBD_RESOURCE" || -z "$DRBD_LL_DISK" ]]; then
+	echo "DRBD_RESOURCE/DRBD_LL_DISK is not set. This script is supposed to"
 	echo "get called by drbdadm as a handler script"
 	exit 0
 fi
 
 PROG=$(basename $0)
 exec > >(exec 2>&- ; logger -t "$PROG[$$]" -p local5.info) 2>&1
-echo "invoked for $DRBD_RESOURCE"
+echo "invoked for $DRBD_RESOURCE/$DRBD_VOLUME (drbd$DRBD_MINOR)"
 
 TEMP=$(getopt -o p:a:nv --long percent:,additional:,disconnect-on-error,verbose -- "$@")
 
@@ -30,12 +31,12 @@ if [ $? != 0 ]; then
 	exit 0
 fi
 
-if BACKING_BDEV=$(drbdadm sh-ll-dev "$DRBD_RESOURCE"); then
+if BACKING_BDEV=$(drbdadm sh-ll-dev "$DRBD_RESOURCE/$DRBD_VOLUME"); then
 	is_stacked=false
-elif BACKING_BDEV=$(drbdadm sh-ll-dev "$(drbdadm -S sh-lr-of "$DRBD_RESOURCE")"); then
+elif BACKING_BDEV=$(drbdadm sh-ll-dev "$(drbdadm -S sh-lr-of "$DRBD_RESOURCE")/$DRBD_VOLUME"); then
 	is_stacked=true
 else
-	echo "Cannot determine lower level device of resource $DRBD_RESOURCE, sorry."
+	echo "Cannot determine lower level device of resource $DRBD_RESOURCE/$DRBD_VOLUME, sorry."
 	exit 0
 fi
 

@@ -18,7 +18,9 @@
 #define __packed __attribute__((packed))
 #endif
 
-#define ARRY_SIZE(A) (sizeof(A)/sizeof(A[0]))
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(A) (sizeof(A)/sizeof(A[0]))
+#endif
 
 #define COMM_TIMEOUT 120
 
@@ -50,13 +52,13 @@ enum new_strtoll_errs {
 struct option;
 
 extern int only_digits(const char *s);
-extern int dt_lock_drbd(const char* device);
+extern int dt_lock_drbd(int minor);
 extern void dt_unlock_drbd(int lock_fd);
 extern void dt_release_lockfile(int drbd_fd);
 extern int dt_minor_of_dev(const char *device);
 extern int new_strtoll(const char *s, const char def_unit, unsigned long long *rv);
 extern unsigned long long m_strtoll(const char* s,const char def_unit);
-extern const char* make_optstring(struct option *options, char startc);
+extern const char* make_optstring(struct option *options);
 extern char* ppsize(char* buf, unsigned long long size);
 extern void dt_print_gc(const uint32_t* gen_cnt);
 extern void dt_pretty_print_gc(const uint32_t* gen_cnt);
@@ -67,10 +69,12 @@ extern int sget_token(char *s, int size, const char** text);
 extern uint64_t bdev_size(int fd);
 extern void get_random_bytes(void* buffer, int len);
 
-extern int force; /* global option to force implicit confirmation */
-extern int confirmed(const char *text);
-
 extern const char* shell_escape(const char* s);
+
+/* In-place unescape double quotes and backslash escape sequences from a
+ * double quoted string. Note: backslash is only useful to quote itself, or
+ * double quote, no special treatment to any c-style escape sequences. */
+extern void unescape(char *txt);
 
 /* Since glibc 2.8~20080505-0ubuntu7 asprintf() is declared with the
    warn_unused_result attribute.... */

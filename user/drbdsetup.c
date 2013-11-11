@@ -1,70 +1,143 @@
 /*
-   drbdsetup.c
-
-   This file is part of DRBD by Philipp Reisner and Lars Ellenberg.
-
-   Copyright (C) 2001-2008, LINBIT Information Technologies GmbH.
-   Copyright (C) 1999-2008, Philipp Reisner <philipp.reisner@linbit.com>.
-   Copyright (C) 2002-2008, Lars Ellenberg <lars.ellenberg@linbit.com>.
-
-   drbd is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
-
-   drbd is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with drbd; see the file COPYING.  If not, write to
-   the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
-
+ * DRBD setup via genetlink
+ *
+ * This file is part of DRBD by Philipp Reisner and Lars Ellenberg.
+ *
+ * Copyright (C) 2001-2008, LINBIT Information Technologies GmbH.
+ * Copyright (C) 1999-2008, Philipp Reisner <philipp.reisner@linbit.com>.
+ * Copyright (C) 2002-2008, Lars Ellenberg <lars.ellenberg@linbit.com>.
+ *
+ * drbd is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * drbd is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with drbd; see the file COPYING.  If not, write to
+ * the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define _GNU_SOURCE
+#define _XOPEN_SOURCE 600
+#define _FILE_OFFSET_BITS 64
 
+#include <stdbool.h>
 #include <errno.h>
 #include <unistd.h>
-#include <dirent.h>
-#include <mntent.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
-#include <sys/poll.h>
+#include <sys/time.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include <getopt.h>
 #include <stdlib.h>
-#include <sys/time.h>
+#include <time.h>
+#include <signal.h>
+#include <assert.h>
+#include <libgen.h>
 #include <time.h>
 
-#define __bitwise /* Build-workaround for broken RHEL4 kernels (2.6.9_78.0.1) */
-#include <linux/types.h>
 #include <linux/netlink.h>
-#include <linux/connector.h>
+#include <linux/genetlink.h>
 
-#include <linux/drbd.h>
-#include <linux/drbd_tag_magic.h>
+#define EXIT_NOMEM 20
+#define EXIT_NO_FAMILY 20
+#define EXIT_SEND_ERR 20
+#define EXIT_RECV_ERR 20
+#define EXIT_TIMED_OUT 20
+#define EXIT_NOSOCK 30
+#define EXIT_THINKO 42
+
+/*
+ * We are not using libnl,
+ * using its API for the few things we want to do
+ * ends up being almost as much lines of code as
+ * coding the necessary bits right here.
+ */
+
+#include "libgenl.h"
+#include "drbd_nla.h"
+#include <linux/drbd_config.h>
+#include <linux/drbd_genl_api.h>
 #include <linux/drbd_limits.h>
-
-#include "unaligned.h"
+#include <linux/genl_magic_func.h>
 #include "drbdtool_common.h"
+#include "registry.h"
+#include "config.h"
+#include "config_flags.h"
+#include "wrap_printf.h"
+#include "drbd_strings.h"
 
-#ifndef __CONNECTOR_H
-#error "You need to set KDIR while building drbdsetup."
-#endif
+char *progname;
+
+/* for parsing of messages */
+static struct nlattr *global_attrs[128];
+/* there is an other table, nested_attr_tb, defined in genl_magic_func.h,
+ * which can be used after <struct>_from_attrs,
+ * to check for presence of struct fields. */
+#define ntb(t)	nested_attr_tb[__nla_type(t)]
+
+#ifdef PRINT_NLMSG_LEN
+/* I'm to lazy to check the maximum possible nlmsg length by hand */
+int main(void)
+{
+	static __u16 nla_attr_minlen[NLA_TYPE_MAX+1] __read_mostly = {
+		[NLA_U8]        = sizeof(__u8),
+		[NLA_U16]       = sizeof(__u16),
+		[NLA_U32]       = sizeof(__u32),
+		[NLA_U64]       = sizeof(__u64),
+		[NLA_NESTED]    = NLA_HDRLEN,
+	};
+	int i;
+	int sum_total = 0;
+#define LEN__(policy) do {					\
+	int sum = 0;						\
+	for (i = 0; i < ARRAY_SIZE(policy); i++) {		\
+		sum += nla_total_size(policy[i].len ?:		\
+			nla_attr_minlen[policy[i].type]);	\
+								\
+	}							\
+	sum += 4;						\
+	sum_total += sum;					\
+	printf("%-30s %4u [%4u]\n",				\
+			#policy ":", sum, sum_total);		\
+} while (0)
+#define LEN_(p) LEN__(p ## _nl_policy)
+	LEN_(disk_conf);
+	LEN_(syncer_conf);
+	LEN_(net_conf);
+	LEN_(set_role_parms);
+	LEN_(resize_parms);
+	LEN_(state_info);
+	LEN_(start_ov_parms);
+	LEN_(new_c_uuid_parms);
+	sum_total += sizeof(struct nlmsghdr) + sizeof(struct genlmsghdr)
+		+ sizeof(struct drbd_genlmsghdr);
+	printf("sum total inclusive hdr overhead: %4u\n", sum_total);
+	return 0;
+}
+#else
 
 #ifndef AF_INET_SDP
 #define AF_INET_SDP 27
 #define PF_INET_SDP AF_INET_SDP
 #endif
+
+/* pretty print helpers */
+static int indent = 0;
+#define INDENT_WIDTH	4
+#define printI(fmt, args... ) printf("%*s" fmt,INDENT_WIDTH * indent,"" , ## args )
 
 enum usage_type {
 	BRIEF,
@@ -72,358 +145,198 @@ enum usage_type {
 	XML,
 };
 
-struct drbd_tag_list {
-	struct nlmsghdr *nl_header;
-	struct cn_msg   *cn_header;
-	struct drbd_nl_cfg_req* drbd_p_header;
-	unsigned short *tag_list_start;
-	unsigned short *tag_list_cpos;
-	int    tag_size;
-};
-
 struct drbd_argument {
 	const char* name;
-	const enum drbd_tags tag;
+	__u16 nla_type;
 	int (*convert_function)(struct drbd_argument *,
-				struct drbd_tag_list *,
+				struct msg_buff *,
+				struct drbd_genlmsghdr *dhdr,
 				char *);
 };
 
-struct drbd_option {
-	const char* name;
-	const char short_name;
-	const enum drbd_tags tag;
-	int (*convert_function)(struct drbd_option *,
-				struct drbd_tag_list *,
-				char *);
-	void (*show_function)(struct drbd_option *,unsigned short*);
-	int (*usage_function)(struct drbd_option *, char*, int);
-	void (*xml_function)(struct drbd_option *);
-	union {
-		struct {
-			const long long min;
-			const long long max;
-			const long long def;
-			const unsigned char unit_prefix;
-			const char* unit;
-		} numeric_param; // for conv_numeric
-		struct {
-			const char** handler_names;
-			const int number_of_handlers;
-			const int def;
-		} handler_param; // conv_handler
-	};
+/* Configuration requests typically need a context to operate on.
+ * Possible keys are device minor/volume id (both fit in the drbd_genlmsghdr),
+ * the replication link (aka connection) name,
+ * and/or the replication group (aka resource) name */
+enum cfg_ctx_key {
+	/* Only one of these can be present in a command: */
+	CTX_MINOR = 1,
+	CTX_RESOURCE = 2,
+	CTX_ALL = 4,
+	CTX_CONNECTION = 8,
+
+	CTX_RESOURCE_AND_CONNECTION = 16,
 };
 
 struct drbd_cmd {
 	const char* cmd;
-	const int packet_id;
-	int (*function)(struct drbd_cmd *, unsigned, int, char **);
-	void (*usage)(struct drbd_cmd *, enum usage_type);
-	union {
-		struct {
-			struct drbd_argument *args;
-			struct drbd_option *options;
-		} cp; // for generic_config_cmd, config_usage
-		struct {
-			int (*show_function)(struct drbd_cmd *, unsigned,
-					     unsigned short* );
-		} gp; // for generic_get_cmd, get_usage
-		struct {
-			struct option *options;
-			int (*proc_event)(unsigned int, int,
-					  struct drbd_nl_cfg_reply *);
-		} ep; // for events_cmd, events_usage
-	};
+	const enum cfg_ctx_key ctx_key;
+	const int cmd_id;
+	const int tla_id; /* top level attribute id */
+	int (*function)(struct drbd_cmd *, int, char **);
+	struct drbd_argument *drbd_args;
+	int (*show_function)(struct drbd_cmd*, struct genl_info *);
+	struct option *options;
+	bool missing_ok;
+	bool continuous_poll;
+	bool wait_for_connect_timeouts;
+	bool set_defaults;
+	struct context_def *ctx;
 };
-
-
-// Connector functions
-#define NL_TIME (COMM_TIMEOUT*1000)
-static int open_cn();
-static int send_cn(int sk_nl, struct nlmsghdr* nl_hdr, int size);
-static int receive_cn(int sk_nl, struct nlmsghdr* nl_hdr, int size, int timeout_ms);
-static int call_drbd(int sk_nl, struct drbd_tag_list *tl, struct nlmsghdr* nl_hdr,
-		     int size, int timeout_ms);
-static void close_cn(int sk_nl);
 
 // other functions
 static int get_af_ssocks(int warn);
-static void print_command_usage(int i, const char *addinfo, enum usage_type);
+static void print_command_usage(struct drbd_cmd *cm, enum usage_type);
 
 // command functions
-static int generic_config_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv);
-static int down_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv);
-static int generic_get_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv);
-static int events_cmd(struct drbd_cmd *cm, unsigned minor, int argc,char **argv);
-
-// usage functions
-static void config_usage(struct drbd_cmd *cm, enum usage_type);
-static void get_usage(struct drbd_cmd *cm, enum usage_type);
-static void events_usage(struct drbd_cmd *cm, enum usage_type);
-
-// sub usage functions for config_usage
-static int numeric_opt_usage(struct drbd_option *option, char* str, int strlen);
-static int handler_opt_usage(struct drbd_option *option, char* str, int strlen);
-static int bit_opt_usage(struct drbd_option *option, char* str, int strlen);
-static int string_opt_usage(struct drbd_option *option, char* str, int strlen);
-
-// sub usage function for config_usage as xml
-static void numeric_opt_xml(struct drbd_option *option);
-static void handler_opt_xml(struct drbd_option *option);
-static void bit_opt_xml(struct drbd_option *option);
-static void string_opt_xml(struct drbd_option *option);
+static int generic_config_cmd(struct drbd_cmd *cm, int argc, char **argv);
+static int down_cmd(struct drbd_cmd *cm, int argc, char **argv);
+static int generic_get_cmd(struct drbd_cmd *cm, int argc, char **argv);
+static int del_minor_cmd(struct drbd_cmd *cm, int argc, char **argv);
+static int del_resource_cmd(struct drbd_cmd *cm, int argc, char **argv);
 
 // sub commands for generic_get_cmd
-static int show_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int role_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int status_xml_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int sh_status_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int cstate_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int dstate_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int uuids_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
-static int lk_bdev_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl);
+static int show_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int role_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int sh_status_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int cstate_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int dstate_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int uuids_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int lk_bdev_scmd(struct drbd_cmd *cm, struct genl_info *info);
+static int print_broadcast_events(struct drbd_cmd *, struct genl_info *);
+static int w_connected_state(struct drbd_cmd *, struct genl_info *);
+static int w_synced_state(struct drbd_cmd *, struct genl_info *);
 
 // convert functions for arguments
-static int conv_block_dev(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg);
-static int conv_md_idx(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg);
-static int conv_address(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg);
-static int conv_protocol(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg);
-
-// convert functions for options
-static int conv_numeric(struct drbd_option *od, struct drbd_tag_list *tl, char* arg);
-static int conv_sndbuf(struct drbd_option *od, struct drbd_tag_list *tl, char* arg);
-static int conv_handler(struct drbd_option *od, struct drbd_tag_list *tl, char* arg);
-static int conv_bit(struct drbd_option *od, struct drbd_tag_list *tl, char* arg);
-static int conv_string(struct drbd_option *od, struct drbd_tag_list *tl, char* arg);
-
-// show functions for options (used by show_scmd)
-static void show_numeric(struct drbd_option *od, unsigned short* tp);
-static void show_handler(struct drbd_option *od, unsigned short* tp);
-static void show_bit(struct drbd_option *od, unsigned short* tp);
-static void show_string(struct drbd_option *od, unsigned short* tp);
-
-// sub functions for events_cmd
-static int print_broadcast_events(unsigned int seq, int, struct drbd_nl_cfg_reply *reply);
-static int w_connected_state(unsigned int seq, int, struct drbd_nl_cfg_reply *reply);
-static int w_synced_state(unsigned int seq, int, struct drbd_nl_cfg_reply *reply);
-
-const char *on_error[] = {
-	[EP_PASS_ON]         = "pass_on",
-	[EP_CALL_HELPER]  = "call-local-io-error",
-	[EP_DETACH]         = "detach",
-};
-
-const char *fencing_n[] = {
-	[FP_DONT_CARE] = "dont-care",
-	[FP_RESOURCE] = "resource-only",
-	[FP_STONITH]  = "resource-and-stonith",
-};
-
-const char *asb0p_n[] = {
-        [ASB_DISCONNECT]        = "disconnect",
-	[ASB_DISCARD_YOUNGER_PRI] = "discard-younger-primary",
-	[ASB_DISCARD_OLDER_PRI]   = "discard-older-primary",
-	[ASB_DISCARD_ZERO_CHG]    = "discard-zero-changes",
-	[ASB_DISCARD_LEAST_CHG]   = "discard-least-changes",
-	[ASB_DISCARD_LOCAL]      = "discard-local",
-	[ASB_DISCARD_REMOTE]     = "discard-remote"
-};
-
-const char *asb1p_n[] = {
-	[ASB_DISCONNECT]        = "disconnect",
-	[ASB_CONSENSUS]         = "consensus",
-	[ASB_VIOLENTLY]         = "violently-as0p",
-	[ASB_DISCARD_SECONDARY]  = "discard-secondary",
-	[ASB_CALL_HELPER]        = "call-pri-lost-after-sb"
-};
-
-const char *asb2p_n[] = {
-	[ASB_DISCONNECT]        = "disconnect",
-	[ASB_VIOLENTLY]         = "violently-as0p",
-	[ASB_CALL_HELPER]        = "call-pri-lost-after-sb"
-};
-
-const char *rrcf_n[] = {
-	[ASB_DISCONNECT]        = "disconnect",
-	[ASB_VIOLENTLY]         = "violently",
-	[ASB_CALL_HELPER]        = "call-pri-lost"
-};
-
-const char *on_no_data_n[] = {
-	[OND_IO_ERROR]		= "io-error",
-	[OND_SUSPEND_IO]	= "suspend-io"
-};
-
-const char *on_congestion_n[] = {
-	[OC_BLOCK]              = "block",
-	[OC_PULL_AHEAD]         = "pull-ahead",
-	[OC_DISCONNECT]         = "disconnect"
-};
+static int conv_block_dev(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
+static int conv_md_idx(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
+static int conv_resource_name(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
+static int conv_volume(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
+static int conv_minor(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
 
 struct option wait_cmds_options[] = {
 	{ "wfc-timeout",required_argument, 0, 't' },
 	{ "degr-wfc-timeout",required_argument,0,'d'},
 	{ "outdated-wfc-timeout",required_argument,0,'o'},
-	{ "wait-after-sb",no_argument,0,'w'},
+	{ "wait-after-sb",optional_argument,0,'w'},
 	{ 0,            0,           0,  0  }
 };
 
-#define EN(N,U,UN) \
-	conv_numeric, show_numeric, numeric_opt_usage, numeric_opt_xml, \
-	{ .numeric_param = { DRBD_ ## N ## _MIN, DRBD_ ## N ## _MAX, \
-		DRBD_ ## N ## _DEF ,U,UN  } }
-#define EN_sndbuf(N,U,UN) \
-	conv_sndbuf, show_numeric, numeric_opt_usage, numeric_opt_xml, \
-	{ .numeric_param = { DRBD_ ## N ## _MIN, DRBD_ ## N ## _MAX, \
-		DRBD_ ## N ## _DEF ,U,UN  } }
-#define EH(N,D) \
-	conv_handler, show_handler, handler_opt_usage, handler_opt_xml, \
-	{ .handler_param = { N, ARRY_SIZE(N), \
-	DRBD_ ## D ## _DEF } }
-#define EB      conv_bit, show_bit, bit_opt_usage, bit_opt_xml, { }
-#define ES      conv_string, show_string, string_opt_usage, string_opt_xml, { }
-#define CLOSE_OPTIONS  { NULL,0,0,NULL,NULL,NULL, NULL, { } }
+struct option show_cmd_options[] = {
+	{ "show-defaults", no_argument, 0, 'D' },
+	{ }
+};
 
-#define F_CONFIG_CMD	generic_config_cmd, config_usage
-#define F_GET_CMD	generic_get_cmd, get_usage
-#define F_EVENTS_CMD	events_cmd, events_usage
+#define F_CONFIG_CMD	generic_config_cmd
+#define NO_PAYLOAD	0
+#define F_GET_CMD(scmd)	DRBD_ADM_GET_STATUS, NO_PAYLOAD, generic_get_cmd, \
+			.show_function = scmd
 
 struct drbd_cmd commands[] = {
-	{"primary", P_primary, F_CONFIG_CMD, {{ NULL,
-	 (struct drbd_option[]) {
-		 { "overwrite-data-of-peer",'o',T_primary_force, EB   }, /* legacy name */
-		 { "force",'f',			T_primary_force, EB   },
-		 CLOSE_OPTIONS }} }, },
+	{"primary", CTX_MINOR, DRBD_ADM_PRIMARY, DRBD_NLA_SET_ROLE_PARMS,
+		F_CONFIG_CMD,
+	 .ctx = &primary_cmd_ctx },
 
-	{"secondary", P_secondary, F_CONFIG_CMD, {{NULL, NULL}} },
+	{"secondary", CTX_MINOR, DRBD_ADM_SECONDARY, NO_PAYLOAD, F_CONFIG_CMD },
 
-	{"disk", P_disk_conf, F_CONFIG_CMD, {{
-	 (struct drbd_argument[]) {
+	{"attach", CTX_MINOR, DRBD_ADM_ATTACH, DRBD_NLA_DISK_CONF,
+		F_CONFIG_CMD,
+	 .drbd_args = (struct drbd_argument[]) {
 		 { "lower_dev",		T_backing_dev,	conv_block_dev },
 		 { "meta_data_dev",	T_meta_dev,	conv_block_dev },
 		 { "meta_data_index",	T_meta_dev_idx,	conv_md_idx },
-		 { NULL,                0,           	NULL}, },
-	 (struct drbd_option[]) {
-		 { "size",'d',		T_disk_size,	EN(DISK_SIZE_SECT,'s',"bytes") },
-		 { "on-io-error",'e',	T_on_io_error,	EH(on_error,ON_IO_ERROR) },
-		 { "fencing",'f',	T_fencing,      EH(fencing_n,FENCING) },
-		 { "use-bmbv",'b',	T_use_bmbv,     EB },
-		 { "no-disk-barrier",'a',T_no_disk_barrier,EB },
-		 { "no-disk-flushes",'i',T_no_disk_flush,EB },
-		 { "no-disk-drain",'D', T_no_disk_drain,EB },
-		 { "no-md-flushes",'m', T_no_md_flush,  EB },
-		 { "max-bio-bvecs",'s',	T_max_bio_bvecs,EN(MAX_BIO_BVECS,1,NULL) },
-		 { "disk-timeout",'t',	T_disk_timeout,	EN(DISK_TIMEOUT,1,"1/10 seconds") },
-		 CLOSE_OPTIONS }} }, },
+		 { } },
+	 .ctx = &attach_cmd_ctx },
 
-	{"detach", P_detach, F_CONFIG_CMD, {{NULL,
-	 (struct drbd_option[]) {
-		 { "force",'f',			T_detach_force, EB   },
-		 CLOSE_OPTIONS }} }, },
+	{"disk-options", CTX_MINOR, DRBD_ADM_CHG_DISK_OPTS, DRBD_NLA_DISK_CONF,
+		F_CONFIG_CMD,
+	 .set_defaults = true,
+	 .ctx = &disk_options_ctx },
 
-	{"net", P_net_conf, F_CONFIG_CMD, {{
-	 (struct drbd_argument[]) {
-		 { "[af:]local_addr[:port]",T_my_addr,	conv_address },
-		 { "[af:]remote_addr[:port]",T_peer_addr,conv_address },
-		 { "protocol",		T_wire_protocol,conv_protocol },
-		 { NULL,                0,           	NULL}, },
-	 (struct drbd_option[]) {
-		 { "timeout",'t',	T_timeout,	EN(TIMEOUT,1,"1/10 seconds") },
-		 { "max-epoch-size",'e',T_max_epoch_size,EN(MAX_EPOCH_SIZE,1,NULL) },
-		 { "max-buffers",'b',	T_max_buffers,	EN(MAX_BUFFERS,1,NULL) },
-		 { "unplug-watermark",'u',T_unplug_watermark, EN(UNPLUG_WATERMARK,1,NULL) },
-		 { "connect-int",'c',	T_try_connect_int, EN(CONNECT_INT,1,"seconds") },
-		 { "ping-int",'i',	T_ping_int,	   EN(PING_INT,1,"seconds") },
-		 { "sndbuf-size",'S',	T_sndbuf_size,	   EN_sndbuf(SNDBUF_SIZE,1,"bytes") },
-		 { "rcvbuf-size",'r',	T_rcvbuf_size,	   EN_sndbuf(RCVBUF_SIZE,1,"bytes") },
-		 { "ko-count",'k',	T_ko_count,	   EN(KO_COUNT,1,NULL) },
-		 { "allow-two-primaries",'m',T_two_primaries, EB },
-		 { "cram-hmac-alg",'a',	T_cram_hmac_alg,   ES },
-		 { "shared-secret",'x',	T_shared_secret,   ES },
-		 { "after-sb-0pri",'A',	T_after_sb_0p,EH(asb0p_n,AFTER_SB_0P) },
-		 { "after-sb-1pri",'B',	T_after_sb_1p,EH(asb1p_n,AFTER_SB_1P) },
-		 { "after-sb-2pri",'C',	T_after_sb_2p,EH(asb2p_n,AFTER_SB_2P) },
-		 { "always-asbp",'P',   T_always_asbp,     EB },
-		 { "rr-conflict",'R',	T_rr_conflict,EH(rrcf_n,RR_CONFLICT) },
-		 { "ping-timeout",'p',  T_ping_timeo,	   EN(PING_TIMEO,1,"1/10 seconds") },
-		 { "discard-my-data",'D', T_want_lose,     EB },
-		 { "data-integrity-alg",'d', T_integrity_alg,     ES },
-		 { "no-tcp-cork",'o',   T_no_cork,         EB },
-		 { "dry-run",'n',   T_dry_run,		   EB },
-		 { "on-congestion", 'g', T_on_congestion, EH(on_congestion_n,ON_CONGESTION) },
-		 { "congestion-fill", 'f', T_cong_fill,    EN(CONG_FILL,'s',"byte") },
-		 { "congestion-extents", 'h', T_cong_extents, EN(CONG_EXTENTS,1,NULL) },
-		 CLOSE_OPTIONS }} }, },
+	{"detach", CTX_MINOR, DRBD_ADM_DETACH, DRBD_NLA_DETACH_PARMS, F_CONFIG_CMD,
+	 .ctx = &detach_cmd_ctx },
 
-	{"disconnect", P_disconnect, F_CONFIG_CMD, {{NULL,
-	 (struct drbd_option[]) {
-		 { "force", 'F',	T_force,	EB },
-		CLOSE_OPTIONS }} }, },
+	{"connect", CTX_RESOURCE_AND_CONNECTION, DRBD_ADM_CONNECT, DRBD_NLA_NET_CONF,
+		F_CONFIG_CMD,
+	 .ctx = &connect_cmd_ctx },
 
-	{"resize", P_resize, F_CONFIG_CMD, {{ NULL,
-	 (struct drbd_option[]) {
-		 { "size",'s',T_resize_size,		EN(DISK_SIZE_SECT,'s',"bytes") },
-		 { "assume-peer-has-space",'f',T_resize_force,	EB },
-		 { "assume-clean", 'c',        T_no_resync, EB },
-		 CLOSE_OPTIONS }} }, },
+	{"net-options", CTX_CONNECTION, DRBD_ADM_CHG_NET_OPTS, DRBD_NLA_NET_CONF,
+		F_CONFIG_CMD,
+	 .set_defaults = true,
+	 .ctx = &net_options_ctx },
 
-	{"syncer", P_syncer_conf, F_CONFIG_CMD, {{ NULL,
-	 (struct drbd_option[]) {
-		 { "rate",'r',T_rate,			EN(RATE,'k',"bytes/second") },
-		 { "after",'a',T_after,			EN(AFTER,1,NULL) },
-		 { "al-extents",'e',T_al_extents,	EN(AL_EXTENTS,1,NULL) },
-		 { "csums-alg", 'C',T_csums_alg,        ES },
-		 { "verify-alg", 'v',T_verify_alg,      ES },
-		 { "cpu-mask",'c',T_cpu_mask,           ES },
-		 { "use-rle",'R',T_use_rle,   EB },
-		 { "on-no-data-accessible",'n',	T_on_no_data, EH(on_no_data_n,ON_NO_DATA) },
-		 { "c-plan-ahead", 'p',         T_c_plan_ahead, EN(C_PLAN_AHEAD,1,"1/10 seconds") },
-		 { "c-delay-target", 'd',       T_c_delay_target, EN(C_DELAY_TARGET,1,"1/10 seconds") },
-		 { "c-fill-target", 's',        T_c_fill_target, EN(C_FILL_TARGET,'s',"bytes") },
-		 { "c-max-rate", 'M',		T_c_max_rate, EN(C_MAX_RATE,'k',"bytes/second") },
-		 { "c-min-rate", 'm',	        T_c_min_rate, EN(C_MIN_RATE,'k',"bytes/second") },
-		 CLOSE_OPTIONS }} }, },
+	{"disconnect", CTX_CONNECTION, DRBD_ADM_DISCONNECT, DRBD_NLA_DISCONNECT_PARMS,
+		F_CONFIG_CMD,
+	 .ctx = &disconnect_cmd_ctx },
 
-	{"new-current-uuid", P_new_c_uuid, F_CONFIG_CMD, {{NULL,
-	 (struct drbd_option[]) {
-		 { "clear-bitmap",'c',T_clear_bm, EB   },
-		 CLOSE_OPTIONS }} }, },
+	{"resize", CTX_MINOR, DRBD_ADM_RESIZE, DRBD_NLA_RESIZE_PARMS,
+		F_CONFIG_CMD,
+	 .ctx = &resize_cmd_ctx },
 
-	{"invalidate", P_invalidate, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"invalidate-remote", P_invalidate_peer, F_CONFIG_CMD, {{NULL, NULL}} },
-	{"pause-sync", P_pause_sync, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"resume-sync", P_resume_sync, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"suspend-io", P_suspend_io, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"resume-io", P_resume_io, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"outdate", P_outdate, F_CONFIG_CMD, {{ NULL, NULL }} },
-	{"verify", P_start_ov, F_CONFIG_CMD, {{ NULL,
-	 (struct drbd_option[]) {
-		 { "start",'s',T_start_sector, EN(DISK_SIZE_SECT,'s',"bytes") },
-		 CLOSE_OPTIONS }} }, },
-	{"down",            0, down_cmd, get_usage, { {NULL, NULL }} },
-	/* "state" is deprecated! please use "role".
-	 * find_cmd_by_name still understands "state", however. */
-	{"role", P_get_state, F_GET_CMD, { .gp={ role_scmd} } },
-	{"status", P_get_state, F_GET_CMD, {.gp={ status_xml_scmd } } },
-	{"sh-status", P_get_state, F_GET_CMD, {.gp={ sh_status_scmd } } },
-	{"cstate", P_get_state, F_GET_CMD, {.gp={ cstate_scmd} } },
-	{"dstate", P_get_state, F_GET_CMD, {.gp={ dstate_scmd} } },
-	{"show-gi", P_get_uuids, F_GET_CMD, {.gp={ uuids_scmd} }},
-	{"get-gi", P_get_uuids, F_GET_CMD, {.gp={ uuids_scmd} } },
-	{"show", P_get_config, F_GET_CMD, {.gp={ show_scmd} } },
-	{"check-resize", P_get_config, F_GET_CMD, {.gp={ lk_bdev_scmd} } },
-	{"events",          0, F_EVENTS_CMD, { .ep = {
-		(struct option[]) {
-			{ "unfiltered", no_argument, 0, 'u' },
-			{ "all-devices",no_argument, 0, 'a' },
-			{ 0,            0,           0,  0  } },
-		print_broadcast_events } } },
-	{"wait-connect", 0, F_EVENTS_CMD, { .ep = {
-		wait_cmds_options, w_connected_state } } },
-	{"wait-sync", 0, F_EVENTS_CMD, { .ep = {
-		wait_cmds_options, w_synced_state } } },
+	{"resource-options", CTX_RESOURCE, DRBD_ADM_RESOURCE_OPTS, DRBD_NLA_RESOURCE_OPTS,
+		F_CONFIG_CMD,
+	 .set_defaults = true,
+	 .ctx = &resource_options_cmd_ctx },
+
+	{"new-current-uuid", CTX_MINOR, DRBD_ADM_NEW_C_UUID, DRBD_NLA_NEW_C_UUID_PARMS,
+		F_CONFIG_CMD,
+	 .ctx = &new_current_uuid_cmd_ctx },
+
+	{"invalidate", CTX_MINOR, DRBD_ADM_INVALIDATE, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"invalidate-remote", CTX_MINOR, DRBD_ADM_INVAL_PEER, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"pause-sync", CTX_MINOR, DRBD_ADM_PAUSE_SYNC, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"resume-sync", CTX_MINOR, DRBD_ADM_RESUME_SYNC, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"suspend-io", CTX_MINOR, DRBD_ADM_SUSPEND_IO, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"resume-io", CTX_MINOR, DRBD_ADM_RESUME_IO, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"outdate", CTX_MINOR, DRBD_ADM_OUTDATE, NO_PAYLOAD, F_CONFIG_CMD, },
+	{"verify", CTX_MINOR, DRBD_ADM_START_OV, DRBD_NLA_START_OV_PARMS,
+		F_CONFIG_CMD,
+	 .ctx = &verify_cmd_ctx },
+	{"down", CTX_RESOURCE, DRBD_ADM_DOWN, NO_PAYLOAD, down_cmd,
+		.missing_ok = true, },
+	{"state", CTX_MINOR, F_GET_CMD(role_scmd) },
+	{"role", CTX_MINOR, F_GET_CMD(role_scmd) },
+	{"sh-status", CTX_MINOR | CTX_RESOURCE | CTX_ALL,
+		F_GET_CMD(sh_status_scmd),
+		.missing_ok = true, },
+	{"cstate", CTX_MINOR, F_GET_CMD(cstate_scmd) },
+	{"dstate", CTX_MINOR, F_GET_CMD(dstate_scmd) },
+	{"show-gi", CTX_MINOR, F_GET_CMD(uuids_scmd) },
+	{"get-gi", CTX_MINOR, F_GET_CMD(uuids_scmd) },
+	{"show", CTX_MINOR | CTX_RESOURCE | CTX_ALL, F_GET_CMD(show_scmd),
+		.options = show_cmd_options },
+	{"check-resize", CTX_MINOR, F_GET_CMD(lk_bdev_scmd) },
+	{"events", CTX_MINOR | CTX_RESOURCE | CTX_ALL, F_GET_CMD(print_broadcast_events),
+		.missing_ok = true,
+		.continuous_poll = true, },
+	{"wait-connect", CTX_MINOR, F_GET_CMD(w_connected_state),
+		.options = wait_cmds_options,
+		.continuous_poll = true,
+		.wait_for_connect_timeouts = true, },
+	{"wait-sync", CTX_MINOR, F_GET_CMD(w_synced_state),
+		.options = wait_cmds_options,
+		.continuous_poll = true,
+		.wait_for_connect_timeouts = true, },
+
+	{"new-resource", CTX_RESOURCE, DRBD_ADM_NEW_RESOURCE, DRBD_NLA_RESOURCE_OPTS, F_CONFIG_CMD,
+	 .ctx = &resource_options_cmd_ctx },
+
+	/* only payload is resource name and volume number */
+	{"new-minor", 0, DRBD_ADM_NEW_MINOR, DRBD_NLA_CFG_CONTEXT,
+		F_CONFIG_CMD,
+	 .drbd_args = (struct drbd_argument[]) {
+		 { "resource", T_ctx_resource_name, conv_resource_name },
+		 { "minor", 0, conv_minor },
+		 { "volume", T_ctx_volume, conv_volume },
+		 { } },
+	 .ctx = &new_minor_cmd_ctx },
+
+	{"del-minor", CTX_MINOR, DRBD_ADM_DEL_MINOR, NO_PAYLOAD, del_minor_cmd, },
+	{"del-resource", CTX_RESOURCE, DRBD_ADM_DEL_RESOURCE, NO_PAYLOAD, del_resource_cmd, }
 };
+
+bool show_defaults;
+bool wait_after_split_brain;
 
 #define OTHER_ERROR 900
 
@@ -451,13 +364,14 @@ static const char *error_messages[] = {
 	"(up to 2TB in case you do not have CONFIG_LBD set)\n"
 	"Contact office@linbit.com, if you need more.",
 	EM(ERR_IO_MD_DISK) = "IO error(s) occurred during initial access to meta-data.\n",
+	EM(ERR_MD_UNCLEAN) = "Unclean meta-data found.\nYou need to 'drbdadm apply-al res'\n",
 	EM(ERR_MD_INVALID) = "No valid meta-data signature found.\n\n"
 	"\t==> Use 'drbdadm create-md res' to initialize meta-data area. <==\n",
 	EM(ERR_AUTH_ALG) = "The 'cram-hmac-alg' you specified is not known in "
 	"the kernel. (Maybe you need to modprobe it, or modprobe hmac?)",
 	EM(ERR_AUTH_ALG_ND) = "The 'cram-hmac-alg' you specified is not a digest.",
 	EM(ERR_NOMEM) = "kmalloc() failed. Out of memory?",
-	EM(ERR_DISCARD) = "--discard-my-data not allowed when primary.",
+	EM(ERR_DISCARD_IMPOSSIBLE) = "--discard-my-data not allowed when primary.",
 	EM(ERR_DISK_CONFIGURED) = "Device is attached to a disk (use detach first)",
 	EM(ERR_NET_CONFIGURED) = "Device has a net-config (use disconnect first)",
 	EM(ERR_MANDATORY_TAG) = "UnknownMandatoryTag",
@@ -466,8 +380,8 @@ static const char *error_messages[] = {
 	EM(ERR_INTR) = "Interrupted by Signal",
 	EM(ERR_RESIZE_RESYNC) = "Resize not allowed during resync.",
 	EM(ERR_NO_PRIMARY) = "Need one Primary node to resize.",
-	EM(ERR_SYNC_AFTER) = "The sync-after minor number is invalid",
-	EM(ERR_SYNC_AFTER_CYCLE) = "This would cause a sync-after dependency cycle",
+	EM(ERR_RESYNC_AFTER) = "The resync-after minor number is invalid",
+	EM(ERR_RESYNC_AFTER_CYCLE) = "This would cause a resync-after dependency cycle",
 	EM(ERR_PAUSE_IS_SET) = "Sync-pause flag is already set",
 	EM(ERR_PAUSE_IS_CLEAR) = "Sync-pause flag is already cleared",
 	EM(136) = "Disk state is lower than outdated",
@@ -493,9 +407,23 @@ static const char *error_messages[] = {
 	EM(ERR_STONITH_AND_PROT_A) = "Fencing policy resource-and-stonith only with prot B or C allowed",
 	EM(ERR_CONG_NOT_PROTO_A) = "on-congestion policy pull-ahead only with prot A allowed",
 	EM(ERR_PIC_AFTER_DEP) = "Sync-pause flag is already cleared.\n"
-	"Note: Resync pause caused by a local sync-after dependency.",
+	"Note: Resync pause caused by a local resync-after dependency.",
 	EM(ERR_PIC_PEER_DEP) = "Sync-pause flag is already cleared.\n"
 	"Note: Resync pause caused by the peer node.",
+	EM(ERR_RES_NOT_KNOWN) = "Unknown resource",
+	EM(ERR_RES_IN_USE) = "Resource still in use (delete all minors first)",
+	EM(ERR_MINOR_CONFIGURED) = "Minor still configured (down it first)",
+	EM(ERR_MINOR_EXISTS) = "Minor exists already (delete it first)",
+	EM(ERR_INVALID_REQUEST) = "Invalid configuration request",
+	EM(ERR_NEED_APV_100) = "Prot version 100 required in order to change\n"
+	"these network options while connected",
+	EM(ERR_NEED_ALLOW_TWO_PRI) = "Can not clear allow_two_primaries as long as\n"
+	"there a primaries on both sides",
+	EM(ERR_MD_LAYOUT_CONNECTED) = "DRBD need to be connected for online MD layout change\n",
+	EM(ERR_MD_LAYOUT_TOO_BIG) = "Resulting AL area too big\n",
+	EM(ERR_MD_LAYOUT_TOO_SMALL) = "Resulting AL are too small\n",
+	EM(ERR_MD_LAYOUT_NO_FIT) = "Resulting AL does not fit into available meta data space\n",
+	EM(ERR_IMPLICIT_SHRINK) = "Implicit device shrinking not allowed. See kernel log.\n",
 };
 #define MAX_ERROR (sizeof(error_messages)/sizeof(*error_messages))
 const char * error_to_string(int err_no)
@@ -507,108 +435,29 @@ const char * error_to_string(int err_no)
 #undef MAX_ERROR
 
 char *cmdname = NULL; /* "drbdsetup" for reporting in usage etc. */
-char *devname = NULL; /* "/dev/drbd12" for reporting in print_config_error */
-char *resname = NULL; /* for pretty printing in "status" only,
-			 taken from environment variable DRBD_RESOURCE */
+
+/*
+ * In CTX_MINOR, CTX_RESOURCE, CTX_ALL, objname and minor refer to the object
+ * the command operates on.
+ */
+char *objname;
+unsigned minor = -1U;
+enum cfg_ctx_key context;
+
 int debug_dump_argv = 0; /* enabled by setting DRBD_DEBUG_DUMP_ARGV in the environment */
 int lock_fd;
-unsigned int cn_idx;
 
-static int dump_tag_list(unsigned short *tlc)
-{
-	enum drbd_tags tag;
-	unsigned int tag_nr;
-	int len;
-	int integer;
-	char bit;
-	uint64_t int64;
-	const char* string;
-	int found_unknown=0;
+struct genl_sock *drbd_sock = NULL;
+int try_genl = 1;
 
-	while( (tag = *tlc++ ) != TT_END) {
-		len = *tlc++;
-		if(tag == TT_REMOVED) goto skip;
+struct genl_family drbd_genl_family = {
+	.name = "drbd",
+	.version = GENL_MAGIC_VERSION,
+	.hdrsize = GENL_MAGIC_FAMILY_HDRSZ,
+};
 
-		tag_nr = tag_number(tag);
-		if(tag_nr<ARRY_SIZE(tag_descriptions)) {
-			string = tag_descriptions[tag_nr].name;
-		} else {
-			string = "unknown tag";
-			found_unknown=1;
-		}
-		printf("# (%2d) %16s = ",tag_nr,string);
-		switch(tag_type(tag)) {
-		case TT_INTEGER:
-			integer = *(int*)tlc;
-			printf("(integer) %d",integer);
-			break;
-		case TT_INT64:
-			int64 = *(uint64_t*)tlc;
-			printf("(int64) %lld",(long long)int64);
-			break;
-		case TT_BIT:
-			bit = *(char*)tlc;
-			printf("(bit) %s", bit ? "on" : "off");
-			break;
-		case TT_STRING:
-			string = (char*)tlc;
-			printf("(string)'%s'", len ? string : "");
-			break;
-		}
-		printf(" \t[len: %u]\n",len);
-	skip:
-		tlc = (unsigned short*)((char*)tlc + len);
-	}
-
-	return found_unknown;
-}
-
-static struct drbd_tag_list *create_tag_list(int size)
-{
-	struct drbd_tag_list *tl;
-
-	tl = malloc(sizeof(struct drbd_tag_list));
-	tl->nl_header  = malloc(NLMSG_SPACE( sizeof(struct cn_msg) +
-					     sizeof(struct drbd_nl_cfg_req) +
-					     size) );
-	tl->cn_header = NLMSG_DATA(tl->nl_header);
-	tl->drbd_p_header = (struct drbd_nl_cfg_req*) tl->cn_header->data;
-	tl->tag_list_start = tl->drbd_p_header->tag_list;
-	tl->tag_list_cpos = tl->tag_list_start;
-	tl->tag_size = size;
-
-	return tl;
-}
-
-static void add_tag(struct drbd_tag_list *tl, short int tag, void *data, short int data_len)
-{
-	if(data_len > tag_descriptions[tag_number(tag)].max_len) {
-		fprintf(stderr, "The value for %s may only be %d byte long."
-			" You requested %d.\n",
-			tag_descriptions[tag_number(tag)].name,
-			tag_descriptions[tag_number(tag)].max_len,
-			data_len);
-		exit(20);
-	}
-
-	if( (tl->tag_list_cpos - tl->tag_list_start) + data_len
-	    > tl->tag_size ) {
-		fprintf(stderr, "Tag list size exceeded!\n");
-		exit(20);
-	}
-	put_unaligned(tag, tl->tag_list_cpos++);
-	put_unaligned(data_len, tl->tag_list_cpos++);
-	memcpy(tl->tag_list_cpos, data, data_len);
-	tl->tag_list_cpos = (unsigned short*)((char*)tl->tag_list_cpos + data_len);
-}
-
-static void free_tag_list(struct drbd_tag_list *tl)
-{
-	free(tl->nl_header);
-	free(tl);
-}
-
-static int conv_block_dev(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg)
+static int conv_block_dev(struct drbd_argument *ad, struct msg_buff *msg,
+			  struct drbd_genlmsghdr *dhdr, char* arg)
 {
 	struct stat sb;
 	int device_fd;
@@ -631,12 +480,13 @@ static int conv_block_dev(struct drbd_argument *ad, struct drbd_tag_list *tl, ch
 
 	close(device_fd);
 
-	add_tag(tl,ad->tag,arg,strlen(arg)+1); // include the null byte.
+	nla_put_string(msg, ad->nla_type, arg);
 
 	return NO_ERROR;
 }
 
-static int conv_md_idx(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg)
+static int conv_md_idx(struct drbd_argument *ad, struct msg_buff *msg,
+		       struct drbd_genlmsghdr *dhdr, char* arg)
 {
 	int idx;
 
@@ -644,8 +494,39 @@ static int conv_md_idx(struct drbd_argument *ad, struct drbd_tag_list *tl, char*
 	else if(!strcmp(arg,"flexible")) idx = DRBD_MD_INDEX_FLEX_EXT;
 	else idx = m_strtoll(arg,1);
 
-	add_tag(tl,ad->tag,&idx,sizeof(idx));
+	nla_put_u32(msg, ad->nla_type, idx);
 
+	return NO_ERROR;
+}
+
+static int conv_resource_name(struct drbd_argument *ad, struct msg_buff *msg,
+			      struct drbd_genlmsghdr *dhdr, char* arg)
+{
+	/* additional sanity checks? */
+	nla_put_string(msg, T_ctx_resource_name, arg);
+	return NO_ERROR;
+}
+
+static int conv_volume(struct drbd_argument *ad, struct msg_buff *msg,
+		       struct drbd_genlmsghdr *dhdr, char* arg)
+{
+	unsigned vol = m_strtoll(arg,1);
+	/* sanity check on vol < 256? */
+	nla_put_u32(msg, T_ctx_volume, vol);
+	return NO_ERROR;
+}
+
+static int conv_minor(struct drbd_argument *ad, struct msg_buff *msg,
+		      struct drbd_genlmsghdr *dhdr, char* arg)
+{
+	unsigned minor = dt_minor_of_dev(arg);
+	if (minor == -1U) {
+		fprintf(stderr, "Cannot determine minor device number of "
+				"device '%s'\n",
+			arg);
+		return OTHER_ERROR;
+	}
+	dhdr->minor = minor;
 	return NO_ERROR;
 }
 
@@ -735,7 +616,7 @@ static void split_address(char* text, int *af, char** address, int* port)
 
 	*af=AF_INET;
 	*address = text;
-	for (i=0; i<ARRY_SIZE(afs); i++) {
+	for (i=0; i<ARRAY_SIZE(afs); i++) {
 		if (!strncmp(text, afs[i].text, strlen(afs[i].text))) {
 			*af = afs[i].af;
 			*address = text + strlen(afs[i].text);
@@ -762,71 +643,33 @@ static void split_address(char* text, int *af, char** address, int* port)
 		*port = m_strtoll(b+1,1);
 	} else
 		*port = 7788;
-
 }
 
-static int conv_address(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg)
+static int nla_put_address(struct msg_buff *msg, int attrtype, char* arg)
 {
-	static int mind_af_set = 0;
-	struct sockaddr_in addr;
-	struct sockaddr_in6 addr6;
 	int af, port;
-	char *address, bit=0;
+	char *address;
 
 	split_address(arg, &af, &address, &port);
-
-	/* The mind_af tag is mandatory. I.e. the module may not silently ignore it.
-	   That means that an older DRBD module must fail the operation since it does
-	   not know the mind_af tag. We set it in case we use an other AF then AF_INET,
-	   so that the alternate AF is not silently ignored by the DRBD module */
-	if (af != AF_INET && !mind_af_set) {
-		add_tag(tl,T_mind_af,&bit,sizeof(bit));
-		mind_af_set=1;
-	}
-
 	if (af == AF_INET6) {
-		memset(&addr6, 0, sizeof(struct sockaddr_in6));
+		struct sockaddr_in6 addr6;
+
+		memset(&addr6, 0, sizeof(addr6));
 		resolv6(address, &addr6);
 		addr6.sin6_port = htons(port);
-		add_tag(tl,ad->tag,&addr6,sizeof(addr6));
+		/* addr6.sin6_len = sizeof(addr6); */
+		nla_put(msg, attrtype, sizeof(addr6), &addr6);
 	} else {
 		/* AF_INET, AF_SDP, AF_SSOCKS,
 		 * all use the IPv4 addressing scheme */
+		struct sockaddr_in addr;
+
+		memset(&addr, 0, sizeof(addr));
 		addr.sin_port = htons(port);
 		addr.sin_family = af;
 		addr.sin_addr.s_addr = resolv(address);
-		add_tag(tl,ad->tag,&addr,sizeof(addr));
+		nla_put(msg, attrtype, sizeof(addr), &addr);
 	}
-
-	return NO_ERROR;
-}
-
-static int conv_protocol(struct drbd_argument *ad, struct drbd_tag_list *tl, char* arg)
-{
-	int prot;
-
-	if(!strcmp(arg,"A") || !strcmp(arg,"a")) {
-		prot=DRBD_PROT_A;
-	} else if (!strcmp(arg,"B") || !strcmp(arg,"b")) {
-		prot=DRBD_PROT_B;
-	} else if (!strcmp(arg,"C") || !strcmp(arg,"c")) {
-		prot=DRBD_PROT_C;
-	} else {
-		fprintf(stderr, "'%s' is no valid protocol.\n", arg);
-		return OTHER_ERROR;
-	}
-
-	add_tag(tl,ad->tag,&prot,sizeof(prot));
-
-	return NO_ERROR;
-}
-
-static int conv_bit(struct drbd_option *od, struct drbd_tag_list *tl, char* arg __attribute((unused)))
-{
-	char bit=1;
-
-	add_tag(tl,od->tag,&bit,sizeof(bit));
-
 	return NO_ERROR;
 }
 
@@ -876,120 +719,70 @@ static int get_af_ssocks(int warn_and_use_default)
 	return af;
 }
 
-static int conv_sndbuf(struct drbd_option *od, struct drbd_tag_list *tl, char* arg)
+static struct option *make_longoptions(struct drbd_cmd *cm)
 {
-	int err = conv_numeric(od, tl, arg);
-	long long l = m_strtoll(arg, 0);
-	char bit = 0;
+	static struct option buffer[42];
+	int i = 0;
+	int primary_force_index = -1;
+	int connect_tentative_index = -1;
 
-	if (err != NO_ERROR || l != 0)
-		return err;
-	/* this is a mandatory bit,
-	 * to avoid newer userland to configure older modules with
-	 * a sndbuf size of zero, which would lead to Oops. */
-	add_tag(tl, T_auto_sndbuf_size, &bit, sizeof(bit));
-	return NO_ERROR;
-}
+	if (cm->ctx) {
+		struct field_def *field;
 
-static int conv_numeric(struct drbd_option *od, struct drbd_tag_list *tl, char* arg)
-{
-	const long long min = od->numeric_param.min;
-	const long long max = od->numeric_param.max;
-	const unsigned char unit_prefix = od->numeric_param.unit_prefix;
-	long long l;
-	int i;
-	char unit[] = {0,0};
-
-	l = m_strtoll(arg, unit_prefix);
-
-	if (min > l || l > max) {
-		unit[0] = unit_prefix > 1 ? unit_prefix : 0;
-		fprintf(stderr,"%s %s => %llu%s out of range [%llu..%llu]%s\n",
-			od->name, arg, l, unit, min, max, unit);
-		return OTHER_ERROR;
-	}
-
-	switch(tag_type(od->tag)) {
-	case TT_INT64:
-		add_tag(tl,od->tag,&l,sizeof(l));
-		break;
-	case TT_INTEGER:
-		i=l;
-		add_tag(tl,od->tag,&i,sizeof(i));
-		break;
-	default:
-		fprintf(stderr, "internal error in conv_numeric()\n");
-	}
-	return NO_ERROR;
-}
-
-static int conv_handler(struct drbd_option *od, struct drbd_tag_list *tl, char* arg)
-{
-	const char** handler_names = od->handler_param.handler_names;
-	const int number_of_handlers = od->handler_param.number_of_handlers;
-	int i;
-
-	for(i=0;i<number_of_handlers;i++) {
-		if(handler_names[i]==NULL) continue;
-		if(strcmp(arg,handler_names[i])==0) {
-			add_tag(tl,od->tag,&i,sizeof(i));
-			return NO_ERROR;
+		/*
+		 * Make sure to keep cm->ctx->fields first: we use the index
+		 * returned by getopt_long() to access cm->ctx->fields.
+		 */
+		for (field = cm->ctx->fields; field->name; field++) {
+			assert(i < ARRAY_SIZE(buffer));
+			buffer[i].name = field->name;
+			buffer[i].has_arg = field->argument_is_optional ?
+				optional_argument : required_argument;
+			buffer[i].flag = NULL;
+			buffer[i].val = 0;
+			if (!strcmp(cm->cmd, "primary") && !strcmp(field->name, "force"))
+				primary_force_index = i;
+			if (!strcmp(cm->cmd, "connect") && !strcmp(field->name, "tentative"))
+				connect_tentative_index = i;
+			i++;
 		}
+		assert(field - cm->ctx->fields == i);
 	}
 
-	fprintf(stderr, "%s-handler '%s' not known\n", od->name, arg);
-	fprintf(stderr, "known %s-handlers:\n", od->name);
-	for (i = 0; i < number_of_handlers; i++) {
-		if (handler_names[i])
-			printf("\t%s\n", handler_names[i]);
+	if (primary_force_index != -1) {
+		/*
+		 * For backward compatibility, add --overwrite-data-of-peer as
+		 * an alias to --force.
+		 */
+		assert(i < ARRAY_SIZE(buffer));
+		buffer[i] = buffer[primary_force_index];
+		buffer[i].name = "overwrite-data-of-peer";
+		buffer[i].val = 1000 + primary_force_index;
+		i++;
 	}
-	return OTHER_ERROR;
-}
 
-static int conv_string(struct drbd_option *od, struct drbd_tag_list *tl, char* arg)
-{
-	add_tag(tl,od->tag,arg,strlen(arg)+1);
+	if (connect_tentative_index != -1) {
+		/*
+		 * For backward compatibility, add --dry-run as an alias to
+		 * --tentative.
+		 */
+		assert(i < ARRAY_SIZE(buffer));
+		buffer[i] = buffer[connect_tentative_index];
+		buffer[i].name = "dry-run";
+		buffer[i].val = 1000 + connect_tentative_index;
+		i++;
+	}
 
-	return NO_ERROR;
-}
-
-
-static struct option *	make_longoptions(struct drbd_option* od)
-{
-	/* room for up to N options,
-	 * plus set-defaults, create-device, and the terminating NULL */
-#define N 30
-	static struct option buffer[N+3];
-	int i=0;
-
-	while(od && od->name) {
-		buffer[i].name = od->name;
-		buffer[i].has_arg = tag_type(od->tag) == TT_BIT ?
-			no_argument : required_argument ;
+	if (cm->set_defaults) {
+		assert(i < ARRAY_SIZE(buffer));
+		buffer[i].name = "set-defaults";
+		buffer[i].has_arg = 0;
 		buffer[i].flag = NULL;
-		buffer[i].val = od->short_name;
-		if (i++ == N) {
-			/* we must not leave this loop with i > N */
-			fprintf(stderr,"buffer in make_longoptions to small.\n");
-			abort();
-		}
-		od++;
+		buffer[i].val = '(';
+		i++;
 	}
-#undef N
 
-	// The two omnipresent options:
-	buffer[i].name = "set-defaults";
-	buffer[i].has_arg = 0;
-	buffer[i].flag = NULL;
-	buffer[i].val = '(';
-	i++;
-
-	buffer[i].name = "create-device";
-	buffer[i].has_arg = 0;
-	buffer[i].flag = NULL;
-	buffer[i].val = ')';
-	i++;
-
+	assert(i < ARRAY_SIZE(buffer));
 	buffer[i].name = NULL;
 	buffer[i].has_arg = 0;
 	buffer[i].flag = NULL;
@@ -998,46 +791,40 @@ static struct option *	make_longoptions(struct drbd_option* od)
 	return buffer;
 }
 
-static struct drbd_option *find_opt_by_short_name(struct drbd_option *od, int c)
-{
-	if(!od) return NULL;
-	while(od->name) {
-		if(od->short_name == c) return od;
-		od++;
-	}
-
-	return NULL;
-}
-
-/* prepends global devname to output (if any) */
-static int print_config_error(int err_no)
+/* prepends global objname to output (if any) */
+static int print_config_error(int err_no, char *desc)
 {
 	int rv=0;
 
 	if (err_no == NO_ERROR || err_no == SS_SUCCESS)
 		return 0;
-	if (err_no == OTHER_ERROR)
+
+	if (err_no == OTHER_ERROR) {
+		if (desc)
+			fprintf(stderr,"%s: %s\n", objname, desc);
 		return 20;
+	}
 
 	if ( ( err_no >= AFTER_LAST_ERR_CODE || err_no <= ERR_CODE_BASE ) &&
 	     ( err_no > SS_CW_NO_NEED || err_no <= SS_AFTER_LAST_ERROR) ) {
-		fprintf(stderr,"Error code %d unknown.\n"
-			"You should update the drbd userland tools.\n",err_no);
+		fprintf(stderr,"%s: Error code %d unknown.\n"
+			"You should update the drbd userland tools.\n",
+			objname, err_no);
 		rv = 20;
 	} else {
 		if(err_no > ERR_CODE_BASE ) {
 			fprintf(stderr,"%s: Failure: (%d) %s\n",
-				devname, err_no, error_to_string(err_no));
+				objname, err_no, desc ?: error_to_string(err_no));
 			rv = 10;
 		} else if (err_no == SS_UNKNOWN_ERROR) {
 			fprintf(stderr,"%s: State change failed: (%d)"
-				"unknown error.\n", devname, err_no);
+				"unknown error.\n", objname, err_no);
 			rv = 11;
 		} else if (err_no > SS_TWO_PRIMARIES) {
 			// Ignore SS_SUCCESS, SS_NOTHING_TO_DO, SS_CW_Success...
 		} else {
 			fprintf(stderr,"%s: State change failed: (%d) %s\n",
-				devname, err_no, drbd_set_st_err_str(err_no));
+				objname, err_no, drbd_set_st_err_str(err_no));
 			if (err_no == SS_NO_UP_TO_DATE_DISK) {
 				/* all available disks are inconsistent,
 				 * or I am consistent, but cannot outdate the peer. */
@@ -1053,27 +840,22 @@ static int print_config_error(int err_no)
 			}
 		}
 	}
+	if (global_attrs[DRBD_NLA_CFG_REPLY] &&
+	    global_attrs[DRBD_NLA_CFG_REPLY]->nla_len) {
+		struct nlattr *nla;
+		int rem;
+		fprintf(stderr, "additional info from kernel:\n");
+		nla_for_each_nested(nla, global_attrs[DRBD_NLA_CFG_REPLY], rem) {
+			if (nla_type(nla) == __nla_type(T_info_text))
+				fprintf(stderr, "%s\n", (char*)nla_data(nla));
+		}
+	}
 	return rv;
-}
-
-#define RCV_SIZE NLMSG_SPACE(sizeof(struct cn_msg)+sizeof(struct drbd_nl_cfg_reply))
-
-/* cmdname and optind are global variables */
-static void warn_unrecognized_option(char **argv)
-{
-	fprintf(stderr, "%s %s: unrecognized option '%s'\n",
-		cmdname, argv[0], argv[optind - 1]);
-}
-
-static void warn_missing_required_arg(char **argv)
-{
-	fprintf(stderr, "%s %s: option '%s' requires an argument\n",
-		cmdname, argv[0], argv[optind - 1]);
 }
 
 static void warn_print_excess_args(int argc, char **argv, int i)
 {
-	fprintf(stderr, "Ignoring excess arguments:");
+	fprintf(stderr, "Excess arguments:");
 	for (; i < argc; i++)
 		fprintf(stderr, " %s", argv[i]);
 	printf("\n");
@@ -1098,343 +880,667 @@ static void dump_argv(int argc, char **argv, int first_non_option, int n_known_a
 	fprintf(stderr, "`--\n");
 }
 
-static int _generic_config_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv)
+int drbd_tla_parse(struct nlmsghdr *nlh)
 {
-	char buffer[ RCV_SIZE ];
-	struct drbd_nl_cfg_reply *reply;
-	struct drbd_argument *ad = cm->cp.args;
-	struct drbd_option *od;
-	struct option *lo;
-	struct drbd_tag_list *tl;
-	int c,i=1,rv=NO_ERROR,sk_nl;
-	int flags=0;
-	int n_args;
-
-	tl = create_tag_list(4096);
-
-	while(ad && ad->name) {
-		if(argc < i+1) {
-			fprintf(stderr,"Missing argument '%s'\n", ad->name);
-			print_command_usage(cm-commands, "",FULL);
-			rv = OTHER_ERROR;
-			goto error;
-		}
-		rv = ad->convert_function(ad,tl,argv[i++]);
-		if (rv != NO_ERROR)
-			goto error;
-		ad++;
-	}
-	n_args = i - 1;
-
-	lo = make_longoptions(cm->cp.options);
-	opterr=0;
-	while( (c=getopt_long(argc,argv,make_optstring(lo,':'),lo,0)) != -1 ) {
-		od = find_opt_by_short_name(cm->cp.options,c);
-		if (od)
-			rv = od->convert_function(od,tl,optarg);
-		else {
-			if(c=='(') flags |= DRBD_NL_SET_DEFAULTS;
-			else if(c==')') flags |= DRBD_NL_CREATE_DEVICE;
-			else {
-				if (c == ':') {
-					warn_missing_required_arg(argv);
-					rv = OTHER_ERROR;
-					goto error;
-				}
-				warn_unrecognized_option(argv);
-				rv = OTHER_ERROR;
-				goto error;
-			}
-		}
-		if (rv != NO_ERROR)
-			goto error;
-	}
-
-	/* argc should be cmd + n options + n args;
-	 * if it is more, we did not understand some */
-	if (n_args + optind < argc)
-		warn_print_excess_args(argc, argv, optind + n_args);
-
-	dump_argv(argc, argv, optind, i - 1);
-
-	add_tag(tl,TT_END,NULL,0); // close the tag list
-
-	if(rv == NO_ERROR) {
-		//dump_tag_list(tl->tag_list_start);
-		int received;
-		sk_nl = open_cn();
-		if (sk_nl < 0) {
-			rv = OTHER_ERROR;
-			goto error;
-		}
-
-		tl->drbd_p_header->packet_type = cm->packet_id;
-		tl->drbd_p_header->drbd_minor = minor;
-		tl->drbd_p_header->flags = flags;
-
-		received = call_drbd(sk_nl,tl, (struct nlmsghdr*)buffer,RCV_SIZE,NL_TIME);
-
-		close_cn(sk_nl);
-
-		if (received >= 0) {
-			reply = (struct drbd_nl_cfg_reply *)
-				((struct cn_msg *)NLMSG_DATA(buffer))->data;
-			rv = reply->ret_code;
-		}
-	}
-error:
-	free_tag_list(tl);
-
-	return rv;
-}
-
-static int generic_config_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv)
-{
-	return print_config_error(_generic_config_cmd(cm, minor, argc, argv));
+	return nla_parse(global_attrs, ARRAY_SIZE(drbd_tla_nl_policy)-1,
+		nlmsg_attrdata(nlh, GENL_HDRLEN + drbd_genl_family.hdrsize),
+		nlmsg_attrlen(nlh, GENL_HDRLEN + drbd_genl_family.hdrsize),
+		drbd_tla_nl_policy);
 }
 
 #define ASSERT(exp) if (!(exp)) \
 		fprintf(stderr,"ASSERT( " #exp " ) in %s:%d\n", __FILE__,__LINE__);
 
-static void show_numeric(struct drbd_option *od, unsigned short* tp)
+static int _generic_config_cmd(struct drbd_cmd *cm, int argc,
+			       char **argv, int quiet)
 {
-	long long val;
-	const unsigned char unit_prefix = od->numeric_param.unit_prefix;
+	struct drbd_argument *ad = cm->drbd_args;
+	struct nlattr *nla;
+	struct option *lo;
+	int c, i;
+	int n_args;
+	int rv = NO_ERROR;
+	char *desc = NULL; /* error description from kernel reply message */
 
-	switch(tag_type(get_unaligned(tp++))) {
-	case TT_INTEGER:
-		ASSERT( get_unaligned(tp++) == sizeof(int) );
-		val = get_unaligned((int*)tp);
-		break;
-	case TT_INT64:
-		ASSERT( get_unaligned(tp++) == sizeof(uint64_t) );
-		val = get_unaligned((uint64_t*)tp);
-		break;
-	default:
-		ASSERT(0);
-		val=0;
+	struct drbd_genlmsghdr *dhdr;
+	struct msg_buff *smsg;
+	struct iovec iov;
+
+	/* pre allocate request message and reply buffer */
+	iov.iov_len = DEFAULT_MSG_SIZE;
+	iov.iov_base = malloc(iov.iov_len);
+	smsg = msg_new(DEFAULT_MSG_SIZE);
+	if (!smsg || !iov.iov_base) {
+		desc = "could not allocate netlink messages";
+		rv = OTHER_ERROR;
+		goto error;
 	}
 
-	if(unit_prefix == 1) printf("\t%-16s\t%lld",od->name,val);
-	else printf("\t%-16s\t%lld%c",od->name,val,unit_prefix);
-	if(val == (long long) od->numeric_param.def) printf(" _is_default");
-	if(od->numeric_param.unit) {
-		printf("; # %s\n",od->numeric_param.unit);
-	} else {
-		printf(";\n");
+	dhdr = genlmsg_put(smsg, &drbd_genl_family, 0, cm->cmd_id);
+	dhdr->minor = -1;
+	dhdr->flags = 0;
+
+	i = 1;
+	if (context & (CTX_RESOURCE | CTX_CONNECTION)) {
+		nla = nla_nest_start(smsg, DRBD_NLA_CFG_CONTEXT);
+		if (context & CTX_RESOURCE)
+			nla_put_string(smsg, T_ctx_resource_name, argv[i++]);
+		if (context & CTX_CONNECTION) {
+			nla_put_address(smsg, T_ctx_my_addr, argv[i++]);
+			nla_put_address(smsg, T_ctx_peer_addr, argv[i++]);
+		}
+		nla_nest_end(smsg, nla);
+	} else if (context & CTX_MINOR) {
+		dhdr->minor = minor;
+		i++;
 	}
+
+	nla = NULL;
+	for (ad = cm->drbd_args; ad && ad->name; i++) {
+		if (argc < i + 1) {
+			fprintf(stderr, "Missing argument '%s'\n", ad->name);
+			print_command_usage(cm, FULL);
+			rv = OTHER_ERROR;
+			goto error;
+		}
+		if (!nla) {
+			assert (cm->tla_id != NO_PAYLOAD);
+			nla = nla_nest_start(smsg, cm->tla_id);
+		}
+		rv = ad->convert_function(ad, smsg, dhdr, argv[i]);
+		if (rv != NO_ERROR)
+			goto error;
+		ad++;
+	}
+	n_args = i - 1;  /* command name "doesn't count" here */
+
+	/* dhdr->minor may have been set by one of the convert functions. */
+	minor = dhdr->minor;
+
+	lo = make_longoptions(cm);
+	for (;;) {
+		int idx;
+
+		c = getopt_long(argc, argv, "(", lo, &idx);
+		if (c == -1)
+			break;
+		if (c >= 1000) {
+			/* This is a field alias. */
+			idx = c - 1000;
+			c = 0;
+		}
+		if (c == 0) {
+			struct field_def *field = &cm->ctx->fields[idx];
+			assert (field->name == lo[idx].name);
+			if (!nla) {
+				assert (cm->tla_id != NO_PAYLOAD);
+				nla = nla_nest_start(smsg, cm->tla_id);
+			}
+			if (!field->put(cm->ctx, field, smsg, optarg)) {
+				rv = OTHER_ERROR;
+				goto error;
+			}
+		} else if (c == '(')
+			dhdr->flags |= DRBD_GENL_F_SET_DEFAULTS;
+		else {
+			rv = OTHER_ERROR;
+			goto error;
+		}
+	}
+
+	/* argc should be cmd + n options + n args;
+	 * if it is more, we did not understand some */
+	if (n_args + optind < argc) {
+		warn_print_excess_args(argc, argv, optind + n_args);
+		rv = OTHER_ERROR;
+		goto error;
+	}
+
+	dump_argv(argc, argv, optind, i - 1);
+
+	if (rv == NO_ERROR) {
+		int received;
+
+		if (nla)
+			nla_nest_end(smsg, nla);
+		if (genl_send(drbd_sock, smsg)) {
+			desc = "error sending config command";
+			rv = OTHER_ERROR;
+			goto error;
+		}
+
+retry_recv:
+		/* reduce timeout! limit retries */
+		received = genl_recv_msgs(drbd_sock, &iov, &desc, 120000);
+		if (received > 0) {
+			struct nlmsghdr *nlh = (struct nlmsghdr*)iov.iov_base;
+			struct drbd_genlmsghdr *dh = genlmsg_data(nlmsg_data(nlh));
+			ASSERT(dh->minor == minor);
+			rv = dh->ret_code;
+			if (rv == ERR_RES_NOT_KNOWN && cm->missing_ok)
+				rv = NO_ERROR;
+			drbd_tla_parse(nlh);
+		} else {
+			if (received == -E_RCV_ERROR_REPLY && !errno)
+					goto retry_recv;
+			if (!desc)
+				desc = "error receiving config reply";
+
+			rv = OTHER_ERROR;
+		}
+	}
+error:
+	msg_free(smsg);
+
+	if (!quiet)
+		rv = print_config_error(rv, desc);
+	free(iov.iov_base);
+	return rv;
 }
 
-static void show_handler(struct drbd_option *od, unsigned short* tp)
+static int generic_config_cmd(struct drbd_cmd *cm, int argc, char **argv)
 {
-	const char** handler_names = od->handler_param.handler_names;
-	int i;
-
-	ASSERT( tag_type(get_unaligned(tp++)) == TT_INTEGER );
-	ASSERT( get_unaligned(tp++) == sizeof(int) );
-	i = get_unaligned((int*)tp);
-	printf("\t%-16s\t%s",od->name,handler_names[i]);
-	if( i == (long long)od->numeric_param.def) printf(" _is_default");
-	printf(";\n");
+	return _generic_config_cmd(cm, argc, argv, 0);
 }
 
-static void show_bit(struct drbd_option *od, unsigned short* tp)
+static int del_minor_cmd(struct drbd_cmd *cm, int argc, char **argv)
 {
-	ASSERT( tag_type(get_unaligned(tp++)) == TT_BIT );
-	ASSERT( get_unaligned(tp++) == sizeof(char) );
-	if(get_unaligned((char*)tp)) printf("\t%-16s;\n",od->name);
+	int rv;
+
+	rv = generic_config_cmd(cm, argc, argv);
+	if (!rv)
+		unregister_minor(minor);
+	return rv;
 }
 
-static void show_string(struct drbd_option *od, unsigned short* tp)
+static int del_resource_cmd(struct drbd_cmd *cm, int argc, char **argv)
 {
-	ASSERT( tag_type(get_unaligned(tp++)) == TT_STRING );
-	if( get_unaligned(tp++) > 0 && get_unaligned((char*)tp)) printf("\t%-16s\t\"%s\";\n",od->name,(char*)tp);
+	int rv;
+
+	rv = generic_config_cmd(cm, argc, argv);
+	if (!rv)
+		unregister_resource(objname);
+	return rv;
 }
 
-static unsigned short *look_for_tag(unsigned short *tlc, unsigned short tag)
+static struct drbd_cmd *find_cmd_by_name(const char *name)
 {
-	enum drbd_tags t;
-	int len;
+	unsigned int i;
 
-	while( (t = get_unaligned(tlc)) != TT_END ) {
-		if(t == tag) return tlc;
-		tlc++;
-		len = get_unaligned(tlc++);
-		tlc = (unsigned short*)((char*)tlc + len);
+	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+		if (!strcmp(name, commands[i].cmd)) {
+			return commands + i;
+		}
 	}
 	return NULL;
 }
 
-static void print_options(struct drbd_option *od, unsigned short *tlc, const char* sect_name)
+static void print_options(const char *cmd_name, const char *sect_name)
 {
-	unsigned short *tp;
+	struct drbd_cmd *cmd;
+	struct field_def *field;
 	int opened = 0;
 
-	while(od->name) {
-		tp = look_for_tag(tlc,od->tag);
-		if(tp) {
-			if(!opened) {
-				opened=1;
-				printf("%s {\n",sect_name);
-			}
-			od->show_function(od,tp);
-			put_unaligned(TT_REMOVED, tp);
+	cmd = find_cmd_by_name(cmd_name);
+	if (!cmd) {
+		fprintf(stderr, "%s internal error, no such cmd %s\n",
+				cmdname, cmd_name);
+		abort();
+	}
+	if (!global_attrs[cmd->tla_id])
+		return;
+	if (drbd_nla_parse_nested(nested_attr_tb, cmd->ctx->nla_policy_size - 1,
+			     global_attrs[cmd->tla_id], cmd->ctx->nla_policy)) {
+		fprintf(stderr, "nla_policy violation for %s payload!\n", sect_name);
+		/* still, print those that validated ok */
+	}
+
+	if (!cmd->ctx)
+		return;
+	for (field = cmd->ctx->fields; field->name; field++) {
+		struct nlattr *nlattr;
+		const char *str;
+		bool is_default;
+
+		nlattr = ntb(field->nla_type);
+		if (!nlattr)
+			continue;
+		if (!opened) {
+			opened=1;
+			printI("%s {\n",sect_name);
+			++indent;
 		}
-		od++;
+		str = field->get(cmd->ctx, field, nlattr);
+		is_default = field->is_default(field, str);
+		if (is_default && !show_defaults)
+			continue;
+		if (field->needs_double_quoting)
+			str = double_quote_string(str);
+		printI("%-16s\t%s;",field->name, str);
+		if (field->unit || is_default) {
+				printf(" # ");
+			if (field->unit)
+				printf("%s", field->unit);
+			if (field->unit && is_default)
+				printf(", ");
+			if (is_default)
+				printf("default");
+		}
+		printf("\n");
 	}
 	if(opened) {
-		printf("}\n");
+		--indent;
+		printI("}\n");
 	}
 }
 
+struct choose_timo_ctx {
+	unsigned minor;
+	struct msg_buff *smsg;
+	struct iovec *iov;
+	int timeout;
+	int wfc_timeout;
+	int degr_wfc_timeout;
+	int outdated_wfc_timeout;
+};
 
-static void consume_everything(unsigned short *tlc)
+int choose_timeout(struct choose_timo_ctx *ctx)
 {
-	enum drbd_tags t;
-	int len;
-	while( (t = get_unaligned(tlc)) != TT_END ) {
-		put_unaligned(TT_REMOVED, tlc++);
-		len = get_unaligned(tlc++);
-		tlc = (unsigned short*)((char*)tlc + len);
+	char *desc = NULL;
+	struct drbd_genlmsghdr *dhdr;
+	int rr;
+
+	if (0 < ctx->wfc_timeout &&
+	      (ctx->wfc_timeout < ctx->degr_wfc_timeout || ctx->degr_wfc_timeout == 0)) {
+		ctx->degr_wfc_timeout = ctx->wfc_timeout;
+		fprintf(stderr, "degr-wfc-timeout has to be shorter than wfc-timeout\n"
+				"degr-wfc-timeout implicitly set to wfc-timeout (%ds)\n",
+				ctx->degr_wfc_timeout);
 	}
-}
 
-static int consume_tag_blob(enum drbd_tags tag, unsigned short *tlc,
-		     char** val, unsigned int* len)
-{
-	unsigned short *tp;
-	tp = look_for_tag(tlc,tag);
-	if(tp) {
-		put_unaligned(TT_REMOVED, tp++);
-		*len = get_unaligned(tp++);
-		*val = (char*)tp;
-		return 1;
+	if (0 < ctx->degr_wfc_timeout &&
+	    (ctx->degr_wfc_timeout < ctx->outdated_wfc_timeout || ctx->outdated_wfc_timeout == 0)) {
+		ctx->outdated_wfc_timeout = ctx->wfc_timeout;
+		fprintf(stderr, "outdated-wfc-timeout has to be shorter than degr-wfc-timeout\n"
+				"outdated-wfc-timeout implicitly set to degr-wfc-timeout (%ds)\n",
+				ctx->degr_wfc_timeout);
 	}
-	return 0;
-}
+	dhdr = genlmsg_put(ctx->smsg, &drbd_genl_family, 0, DRBD_ADM_GET_TIMEOUT_TYPE);
+	dhdr->minor = ctx->minor;
+	dhdr->flags = 0;
 
-static int consume_tag_string(enum drbd_tags tag, unsigned short *tlc, char** val)
-{
-	unsigned short *tp;
-	tp = look_for_tag(tlc,tag);
-	if(tp) {
-		put_unaligned(TT_REMOVED, tp++);
-		if( get_unaligned(tp++) > 0 )
-			*val = (char*)tp;
-		else
-			*val = "";
-		return 1;
+	if (genl_send(drbd_sock, ctx->smsg)) {
+		desc = "error sending config command";
+		goto error;
 	}
-	return 0;
-}
 
-static int consume_tag_int(enum drbd_tags tag, unsigned short *tlc, int* val)
-{
-	unsigned short *tp;
-	tp = look_for_tag(tlc,tag);
-	if(tp) {
-		put_unaligned(TT_REMOVED, tp++);
-		tp++;
-		*val = get_unaligned((int *)tp);
-		return 1;
-	}
-	return 0;
-}
-
-static int consume_tag_u64(enum drbd_tags tag, unsigned short *tlc, unsigned long long* val)
-{
-	unsigned short *tp;
-	unsigned short len;
-	tp = look_for_tag(tlc, tag);
-	if(tp) {
-		put_unaligned(TT_REMOVED, tp++);
-		len = get_unaligned(tp++);
-		/* check the data size.
-		 * actually it has to be long long, but I'm paranoid */
-		if (len == sizeof(int))
-			*val = get_unaligned((unsigned int*)tp);
-		else if (len == sizeof(long))
-			*val = get_unaligned((unsigned long *)tp);
-		else if (len == sizeof(long long))
-			*val = get_unaligned((unsigned long long *)tp);
-		else {
-			fprintf(stderr, "%s: unexpected tag len: %u\n",
-					__func__ , len);
-			return 0;
+	rr = genl_recv_msgs(drbd_sock, ctx->iov, &desc, 120000);
+	if (rr > 0) {
+		struct nlmsghdr *nlh = (struct nlmsghdr*)ctx->iov->iov_base;
+		struct genl_info info = {
+			.seq = nlh->nlmsg_seq,
+			.nlhdr = nlh,
+			.genlhdr = nlmsg_data(nlh),
+			.userhdr = genlmsg_data(nlmsg_data(nlh)),
+			.attrs = global_attrs,
+		};
+		struct drbd_genlmsghdr *dh = info.userhdr;
+		struct timeout_parms parms;
+		ASSERT(dh->minor == ctx->minor);
+		rr = dh->ret_code;
+		if (rr == ERR_MINOR_INVALID) {
+			desc = "minor not available";
+			goto error;
 		}
-		return 1;
+		if (rr != NO_ERROR)
+			goto error;
+		if (drbd_tla_parse(nlh)
+		|| timeout_parms_from_attrs(&parms, &info)) {
+			desc = "reply did not validate - "
+				"do you need to upgrade your userland tools?";
+			goto error;
+		}
+		rr = parms.timeout_type;
+		ctx->timeout =
+			(rr == UT_DEGRADED) ? ctx->degr_wfc_timeout :
+			(rr == UT_PEER_OUTDATED) ? ctx->outdated_wfc_timeout :
+			ctx->wfc_timeout;
+		return 0;
 	}
-	return 0;
+error:
+	if (!desc)
+		desc = "error receiving netlink reply";
+	fprintf(stderr, "error determining which timeout to use: %s\n",
+			desc);
+	return 20;
 }
 
-static int consume_tag_bit(enum drbd_tags tag, unsigned short *tlc, int* val)
+#include <sys/utsname.h>
+static bool kernel_older_than(int version, int patchlevel, int sublevel)
 {
-	unsigned short *tp;
-	tp = look_for_tag(tlc,tag);
-	if(tp) {
-		put_unaligned(TT_REMOVED, tp++);
-		tp++;
-		*val = (int)(*(char *)tp);
-		return 1;
-	}
-	return 0;
+	struct utsname utsname;
+	char *rel;
+	int l;
+
+	if (uname(&utsname) != 0)
+		return false;
+	rel = utsname.release;
+	l = strtol(rel, &rel, 10);
+	if (l > version)
+		return false;
+	else if (l < version || *rel == 0)
+		return true;
+	l = strtol(rel + 1, &rel, 10);
+	if (l > patchlevel)
+		return false;
+	else if (l < patchlevel || *rel == 0)
+		return true;
+	l = strtol(rel + 1, &rel, 10);
+	if (l >= sublevel)
+		return false;
+	return true;
 }
 
-static int generic_get_cmd(struct drbd_cmd *cm, unsigned minor, int argc,
-		    char **argv __attribute((unused)))
+static int generic_get_cmd(struct drbd_cmd *cm, int argc, char **argv)
 {
-	char buffer[ 4096 ];
-	struct drbd_tag_list *tl;
-	struct drbd_nl_cfg_reply *reply;
-	int sk_nl,rv;
-	int ignore_minor_not_known;
-	int dummy;
+	char *desc = NULL;
+	struct drbd_genlmsghdr *dhdr;
+	struct msg_buff *smsg;
+	struct iovec iov;
+	struct choose_timo_ctx timeo_ctx = {
+		.wfc_timeout = DRBD_WFC_TIMEOUT_DEF,
+		.degr_wfc_timeout = DRBD_DEGR_WFC_TIMEOUT_DEF,
+		.outdated_wfc_timeout = DRBD_OUTDATED_WFC_TIMEOUT_DEF,
+	};
+	int timeout_ms = -1;  /* "infinite" */
+	int flags;
+	int rv = NO_ERROR;
+	int err = 0;
+	int n_args;
 
-	if (argc > 1)
-		warn_print_excess_args(argc, argv, 1);
-
-	dump_argv(argc, argv, 1, 0);
-
-	tl = create_tag_list(2);
-	add_tag(tl,TT_END,NULL,0); // close the tag list
-
-	sk_nl = open_cn();
-	if(sk_nl < 0) return 20;
-
-	tl->drbd_p_header->packet_type = cm->packet_id;
-	tl->drbd_p_header->drbd_minor = minor;
-	tl->drbd_p_header->flags = 0;
-
-	memset(buffer,0,sizeof(buffer));
-	call_drbd(sk_nl,tl, (struct nlmsghdr*)buffer,4096,NL_TIME);
-
-	close_cn(sk_nl);
-	reply = (struct drbd_nl_cfg_reply *)
-		((struct cn_msg *)NLMSG_DATA(buffer))->data;
-
-	/* if there was an error, report and abort --
-	 * unless it was "this device is not there",
-	 * and command was "status" */
-	ignore_minor_not_known =
-		cm->gp.show_function == status_xml_scmd ||
-		cm->gp.show_function == sh_status_scmd;
-	if (reply->ret_code != NO_ERROR &&
-	   !(reply->ret_code == ERR_MINOR_INVALID && ignore_minor_not_known))
-		return print_config_error(reply->ret_code);
-
-	rv = cm->gp.show_function(cm,minor,reply->tag_list);
-
-	/* in case cm->packet_id == P_get_state, and the gp.show_function did
-	 * nothing with the sync_progress info, consume it here, so it won't
-	 * confuse users because it gets dumped below. */
-	consume_tag_int(T_sync_progress, reply->tag_list, &dummy);
-
-	if(dump_tag_list(reply->tag_list)) {
-		printf("# Found unknown tags, you should update your\n"
-		       "# userland tools\n");
+	/* pre allocate request message and reply buffer */
+	iov.iov_len = 8192;
+	iov.iov_base = malloc(iov.iov_len);
+	smsg = msg_new(DEFAULT_MSG_SIZE);
+	if (!smsg || !iov.iov_base) {
+		desc = "could not allocate netlink messages";
+		rv = OTHER_ERROR;
+		goto out;
 	}
 
-	return rv;
+	struct option *options = cm->options;
+	if (!options) {
+		static struct option none[] = { { } };
+		options = none;
+	}
+	const char *opts = make_optstring(options);
+	int c;
+
+	for(;;) {
+		c = getopt_long(argc, argv, opts, options, 0);
+		if (c == -1)
+			break;
+		switch(c) {
+		default:
+		case '?':
+			return 20;
+		case 't':
+			timeo_ctx.wfc_timeout = m_strtoll(optarg, 1);
+			if(DRBD_WFC_TIMEOUT_MIN > timeo_ctx.wfc_timeout ||
+			   timeo_ctx.wfc_timeout > DRBD_WFC_TIMEOUT_MAX) {
+				fprintf(stderr, "wfc_timeout => %d"
+					" out of range [%d..%d]\n",
+					timeo_ctx.wfc_timeout,
+					DRBD_WFC_TIMEOUT_MIN,
+					DRBD_WFC_TIMEOUT_MAX);
+				return 20;
+			}
+			break;
+		case 'd':
+			timeo_ctx.degr_wfc_timeout = m_strtoll(optarg, 1);
+			if(DRBD_DEGR_WFC_TIMEOUT_MIN > timeo_ctx.degr_wfc_timeout ||
+			   timeo_ctx.degr_wfc_timeout > DRBD_DEGR_WFC_TIMEOUT_MAX) {
+				fprintf(stderr, "degr_wfc_timeout => %d"
+					" out of range [%d..%d]\n",
+					timeo_ctx.degr_wfc_timeout,
+					DRBD_DEGR_WFC_TIMEOUT_MIN,
+					DRBD_DEGR_WFC_TIMEOUT_MAX);
+				return 20;
+			}
+			break;
+		case 'o':
+			timeo_ctx.outdated_wfc_timeout = m_strtoll(optarg, 1);
+			if(DRBD_OUTDATED_WFC_TIMEOUT_MIN > timeo_ctx.outdated_wfc_timeout ||
+			   timeo_ctx.outdated_wfc_timeout > DRBD_OUTDATED_WFC_TIMEOUT_MAX) {
+				fprintf(stderr, "outdated_wfc_timeout => %d"
+					" out of range [%d..%d]\n",
+					timeo_ctx.outdated_wfc_timeout,
+					DRBD_OUTDATED_WFC_TIMEOUT_MIN,
+					DRBD_OUTDATED_WFC_TIMEOUT_MAX);
+				return 20;
+			}
+			break;
+
+		case 'w':
+			if (!optarg || !strcmp(optarg, "yes"))
+				wait_after_split_brain = true;
+			break;
+
+		case 'D':
+			show_defaults = true;
+		}
+	}
+	n_args = 1;
+	if (n_args + optind < argc) {
+		warn_print_excess_args(argc, argv, optind + n_args);
+		return 20;
+	}
+
+	dump_argv(argc, argv, optind, 0);
+
+	/* otherwise we need to change handling/parsing
+	 * of expected replies */
+	ASSERT(cm->cmd_id == DRBD_ADM_GET_STATUS);
+
+	if (cm->wait_for_connect_timeouts) {
+		/* wait-connect, wait-sync */
+		int rr;
+
+		timeo_ctx.minor = minor;
+		timeo_ctx.smsg = smsg;
+		timeo_ctx.iov = &iov;
+		rr = choose_timeout(&timeo_ctx);
+		if (rr)
+			return rr;
+		if (timeo_ctx.timeout)
+			timeout_ms = timeo_ctx.timeout * 1000;
+
+		/* rewind send message buffer */
+		smsg->tail = smsg->data;
+	} else if (!cm->continuous_poll)
+		/* normal "get" request, or "show" */
+		timeout_ms = 120000;
+	/* else: events command, defaults to "infinity" */
+
+	if (cm->continuous_poll) {
+		if (genl_join_mc_group(drbd_sock, "events") &&
+		    !kernel_older_than(2, 6, 23)) {
+			fprintf(stderr, "unable to join drbd events multicast group\n");
+			return 20;
+		}
+	}
+
+	flags = 0;
+	if (minor == -1U)
+		flags |= NLM_F_DUMP;
+	dhdr = genlmsg_put(smsg, &drbd_genl_family, flags, cm->cmd_id);
+	dhdr->minor = minor;
+	dhdr->flags = 0;
+	if (minor == -1U && strcmp(objname, "all")) {
+		/* Restrict the dump to a single resource. */
+		struct nlattr *nla;
+		nla = nla_nest_start(smsg, DRBD_NLA_CFG_CONTEXT);
+		nla_put_string(smsg, T_ctx_resource_name, objname);
+		nla_nest_end(smsg, nla);
+	}
+
+	if (genl_send(drbd_sock, smsg)) {
+		desc = "error sending config command";
+		rv = OTHER_ERROR;
+		goto out2;
+	}
+
+	/* disable sequence number check in genl_recv_msgs */
+	drbd_sock->s_seq_expect = 0;
+
+	for (;;) {
+		int received, rem;
+		struct nlmsghdr *nlh = (struct nlmsghdr *)iov.iov_base;
+		struct timeval before;
+
+		if (timeout_ms != -1)
+			gettimeofday(&before, NULL);
+
+		received = genl_recv_msgs(drbd_sock, &iov, &desc, timeout_ms);
+		if (received < 0) {
+			switch(received) {
+			case E_RCV_TIMEDOUT:
+				err = 5;
+				goto out2;
+			case -E_RCV_FAILED:
+				err = 20;
+				goto out2;
+			case -E_RCV_NO_SOURCE_ADDR:
+				continue; /* ignore invalid message */
+			case -E_RCV_SEQ_MISMATCH:
+				/* we disabled it, so it should not happen */
+				err = 20;
+				goto out2;
+			case -E_RCV_MSG_TRUNC:
+				continue;
+			case -E_RCV_UNEXPECTED_TYPE:
+				continue;
+			case -E_RCV_NLMSG_DONE:
+				if (cm->continuous_poll)
+					continue;
+				err = cm->show_function(cm, NULL);
+				if (err)
+					goto out2;
+				err = -*(int*)nlmsg_data(nlh);
+				if (err &&
+				    (err != ENODEV || !cm->missing_ok)) {
+					fprintf(stderr, "received netlink error reply: %s\n",
+						strerror(err));
+					err = 20;
+				}
+				goto out2;
+			case -E_RCV_ERROR_REPLY:
+				if (!errno) /* positive ACK message */
+					continue;
+				if (!desc)
+					desc = strerror(errno);
+				fprintf(stderr, "received netlink error reply: %s\n",
+					       desc);
+				err = 20;
+				goto out2;
+			default:
+				if (!desc)
+					desc = "error receiving config reply";
+				err = 20;
+				goto out2;
+			}
+		}
+
+		if (timeout_ms != -1) {
+			struct timeval after;
+
+			gettimeofday(&after, NULL);
+			timeout_ms -= (after.tv_sec - before.tv_sec) * 1000 +
+				      (after.tv_usec - before.tv_usec) / 1000;
+			if (timeout_ms <= 0) {
+				err = 5;
+				goto out2;
+			}
+		}
+
+		/* There may be multiple messages in one datagram (for dump replies). */
+		nlmsg_for_each_msg(nlh, nlh, received, rem) {
+			struct drbd_genlmsghdr *dh = genlmsg_data(nlmsg_data(nlh));
+			struct genl_info info = (struct genl_info){
+				.seq = nlh->nlmsg_seq,
+				.nlhdr = nlh,
+				.genlhdr = nlmsg_data(nlh),
+				.userhdr = genlmsg_data(nlmsg_data(nlh)),
+				.attrs = global_attrs,
+			};
+
+			/* parse early, otherwise drbd_cfg_context_from_attrs
+			 * can not work */
+			if (drbd_tla_parse(nlh)) {
+				/* FIXME
+				 * should continuous_poll continue?
+				 */
+				desc = "reply did not validate - "
+					"do you need to upgrade your userland tools?";
+				rv = OTHER_ERROR;
+				goto out2;
+			}
+			if (cm->continuous_poll) {
+				/*
+				 * We will receive all events and have to
+				 * filter for what we want ourself.
+				 */
+				/* FIXME
+				 * Do we want to ignore broadcasts until the
+				 * initial get/dump requests is done? */
+				if (minor != -1U) {
+					/* Assert that, for an unicast reply,
+					 * reply minor matches request minor.
+					 * "unsolicited" kernel broadcasts are "pid=0" (netlink "port id")
+					 * (and expected to be genlmsghdr.cmd == DRBD_EVENT) */
+					if (minor != dh->minor) {
+						if (info.nlhdr->nlmsg_pid != 0)
+							dbg(1, "received netlink packet for minor %u, while expecting %u\n",
+								dh->minor, minor);
+						continue;
+					}
+				} else if (strcmp(objname, "all")) {
+					struct drbd_cfg_context ctx =
+						{ .ctx_volume = -1U };
+
+					drbd_cfg_context_from_attrs(&ctx, &info);
+					if (ctx.ctx_volume == -1U ||
+					    strcmp(objname, ctx.ctx_resource_name))
+						continue;
+				}
+			}
+			rv = dh->ret_code;
+			if (rv == ERR_MINOR_INVALID && cm->missing_ok)
+				rv = NO_ERROR;
+			if (rv != NO_ERROR)
+				goto out2;
+			err = cm->show_function(cm, &info);
+			if (err) {
+				if (err < 0)
+					err = 0;
+				goto out2;
+			}
+		}
+		if (!cm->continuous_poll && !(flags & NLM_F_DUMP)) {
+			/* There will be no more reply packets.  */
+			err = cm->show_function(cm, NULL);
+			goto out2;
+		}
+	}
+
+out2:
+	msg_free(smsg);
+
+out:
+	if (rv != NO_ERROR)
+		err = print_config_error(rv, desc);
+	free(iov.iov_base);
+	return err;
 }
 
 static char *af_to_str(int af)
@@ -1469,109 +1575,198 @@ static void show_address(void* address, int addr_len)
 	if (a.addr.sa_family == AF_INET
 	|| a.addr.sa_family == get_af_ssocks(0)
 	|| a.addr.sa_family == AF_INET_SDP) {
-		printf("\taddress\t\t\t%s %s:%d;\n",
+		printI("address\t\t\t%s %s:%d;\n",
 		       af_to_str(a.addr4.sin_family),
 		       inet_ntoa(a.addr4.sin_addr),
 		       ntohs(a.addr4.sin_port));
 	} else if (a.addr.sa_family == AF_INET6) {
-		printf("\taddress\t\t\t%s [%s]:%d;\n",
+		printI("address\t\t\t%s [%s]:%d;\n",
 		       af_to_str(a.addr6.sin6_family),
 		       inet_ntop(a.addr6.sin6_family, &a.addr6.sin6_addr, buffer, INET6_ADDRSTRLEN),
 		       ntohs(a.addr6.sin6_port));
 	} else {
-		printf("\taddress\t\t\t[unknown af=%d, len=%d]\n", a.addr.sa_family, addr_len);
+		printI("address\t\t\t[unknown af=%d, len=%d]\n", a.addr.sa_family, addr_len);
 	}
 }
 
-static int show_scmd(struct drbd_cmd *cm, unsigned minor, unsigned short *rtl)
+struct minors_list {
+	struct minors_list *next;
+	unsigned minor;
+};
+struct minors_list *__remembered_minors;
+
+static int remember_minor(struct drbd_cmd *cmd, struct genl_info *info)
 {
-	int idx = idx;
-	char *str = NULL, *backing_dev, *address;
-	unsigned int addr_len = 0;
+	struct drbd_cfg_context cfg = { .ctx_volume = -1U };
 
-	// find all commands that have options and print those...
-	for ( cm = commands ; cm < commands + ARRY_SIZE(commands) ; cm++ ) {
-		if(cm->function == generic_config_cmd && cm->cp.options )
-			print_options(cm->cp.options, rtl, cm->cmd);
+	if (!info)
+		return 0;
+
+	drbd_cfg_context_from_attrs(&cfg, info);
+	if (cfg.ctx_volume != -1U) {
+		unsigned minor = ((struct drbd_genlmsghdr*)(info->userhdr))->minor;
+		struct minors_list *m = malloc(sizeof(*m));
+		m->next = __remembered_minors;
+		m->minor = minor;
+		__remembered_minors = m;
 	}
+	return 0;
+}
 
-	// start of spaghetti code...
-	if(consume_tag_int(T_wire_protocol,rtl,&idx))
-		printf("protocol %c;\n",'A'+idx-1);
-	backing_dev = address = NULL;
-	consume_tag_string(T_backing_dev,rtl,&backing_dev);
-	consume_tag_blob(T_my_addr, rtl, &address, &addr_len);
-	if(backing_dev || address) {
-		printf("_this_host {\n");
-		printf("\tdevice\t\t\tminor %d;\n",minor);
-		if(backing_dev) {
-			printf("\tdisk\t\t\t\"%s\";\n",backing_dev);
-			consume_tag_int(T_meta_dev_idx,rtl,&idx);
-			consume_tag_string(T_meta_dev,rtl,&str);
-			switch(idx) {
-			case DRBD_MD_INDEX_INTERNAL:
-			case DRBD_MD_INDEX_FLEX_INT:
-				printf("\tmeta-disk\t\tinternal;\n");
-				break;
-			case DRBD_MD_INDEX_FLEX_EXT:
-				printf("\tflexible-meta-disk\t\"%s\";\n",str);
-				break;
-			default:
-				printf("\tmeta-disk\t\t\"%s\" [ %d ];\n",str,
-				       idx);
-			 }
+static void free_minors(struct minors_list *minors)
+{
+	while (minors) {
+		struct minors_list *m = minors;
+		minors = minors->next;
+		free(m);
+	}
+}
+
+/*
+ * Expects objname to be set to the resource name or "all".
+ */
+static struct minors_list *enumerate_minors(void)
+{
+	struct drbd_cmd cmd = {
+		.cmd_id = DRBD_ADM_GET_STATUS,
+		.show_function = remember_minor,
+		.missing_ok = true,
+	};
+	struct minors_list *m;
+	int err;
+
+	err = generic_get_cmd(&cmd, 0, NULL);
+	m = __remembered_minors;
+	__remembered_minors = NULL;
+	if (err) {
+		free_minors(m);
+		m = NULL;
+	}
+	return m;
+}
+
+/* may be called for a "show" of a single minor device.
+ * prints all available configuration information in that case.
+ *
+ * may also be called iteratively for a "show-all", which should try to not
+ * print redundant configuration information for the same resource (tconn).
+ */
+static int show_scmd(struct drbd_cmd *cm, struct genl_info *info)
+{
+	/* FIXME need some define for max len here */
+	static char last_ctx_resource_name[128];
+	static int call_count;
+
+	struct drbd_cfg_context cfg = { .ctx_volume = -1U };
+	struct disk_conf dc = { .disk_size = 0, };
+	struct net_conf nc = { .timeout = 0, };;
+
+	if (!info) {
+		if (call_count) {
+			--indent;
+			printI("}\n"); /* close _this_host */
+			--indent;
+			printI("}\n"); /* close resource */
 		}
-		if(address)
-			show_address(address, addr_len);
-		printf("}\n");
+		fflush(stdout);
+		return 0;
+	}
+	call_count++;
+
+	/* FIXME: Is the folowing check needed? */
+	if (!global_attrs[DRBD_NLA_CFG_CONTEXT])
+		dbg(1, "unexpected packet, configuration context missing!\n");
+
+	drbd_cfg_context_from_attrs(&cfg, info);
+	disk_conf_from_attrs(&dc, info);
+	net_conf_from_attrs(&nc, info);
+
+	if (strncmp(last_ctx_resource_name, cfg.ctx_resource_name, sizeof(last_ctx_resource_name))) {
+		if (strncmp(last_ctx_resource_name, "", sizeof(last_ctx_resource_name))) {
+			--indent;
+			printI("}\n"); /* close _this_host */
+			--indent;
+			printI("}\n\n");
+		}
+		strncpy(last_ctx_resource_name, cfg.ctx_resource_name, sizeof(last_ctx_resource_name));
+
+		printI("resource %s {\n", cfg.ctx_resource_name);
+		++indent;
+		print_options("resource-options", "options");
+		print_options("net-options", "net");
+
+		if (cfg.ctx_peer_addr_len) {
+			printI("_remote_host {\n");
+			++indent;
+			show_address(cfg.ctx_peer_addr, cfg.ctx_peer_addr_len);
+			--indent;
+			printI("}\n");
+		}
+		printI("_this_host {\n");
+		++indent;
+		if (cfg.ctx_my_addr_len)
+			show_address(cfg.ctx_my_addr, cfg.ctx_my_addr_len);
 	}
 
-	if(consume_tag_blob(T_peer_addr, rtl, &address, &addr_len)) {
-		printf("_remote_host {\n");
-		show_address(address, addr_len);
-		printf("}\n");
+	if (cfg.ctx_volume != -1U) {
+		unsigned minor = ((struct drbd_genlmsghdr*)(info->userhdr))->minor;
+		printI("volume %d {\n", cfg.ctx_volume);
+		++indent;
+		printI("device\t\t\tminor %d;\n", minor);
+		if (global_attrs[DRBD_NLA_DISK_CONF]) {
+			if (dc.backing_dev[0]) {
+				printI("disk\t\t\t\"%s\";\n", dc.backing_dev);
+				printI("meta-disk\t\t\t");
+				switch(dc.meta_dev_idx) {
+				case DRBD_MD_INDEX_INTERNAL:
+				case DRBD_MD_INDEX_FLEX_INT:
+					printf("internal;\n");
+					break;
+				case DRBD_MD_INDEX_FLEX_EXT:
+					printf("%s;\n",
+					       double_quote_string(dc.meta_dev));
+					break;
+				default:
+					printf("%s [ %d ];\n",
+					       double_quote_string(dc.meta_dev),
+					       dc.meta_dev_idx);
+				 }
+			}
+		}
+		print_options("attach", "disk");
+		--indent;
+		printI("}\n"); /* close volume */
 	}
-	consume_tag_bit(T_mind_af, rtl, &idx); /* consume it, its value has no relevance */
-	consume_tag_bit(T_auto_sndbuf_size, rtl, &idx); /* consume it, its value has no relevance */
 
 	return 0;
 }
 
-static int lk_bdev_scmd(struct drbd_cmd *cm, unsigned minor,
-			unsigned short *rtl)
+static int lk_bdev_scmd(struct drbd_cmd *cm, struct genl_info *info)
 {
+	unsigned minor;
+	struct disk_conf dc = { .disk_size = 0, };
 	struct bdev_info bd = { 0, };
-	char *backing_dev = NULL;
 	uint64_t bd_size;
 	int fd;
-	int idx = idx;
-	int index_valid = 0;
 
-	consume_tag_string(T_backing_dev, rtl, &backing_dev);
-	index_valid = consume_tag_int(T_meta_dev_idx, rtl, &idx);
+	if (!info)
+		return 0;
 
-	/* consume everything */
-	consume_everything(rtl);
-
-	if (!backing_dev) {
+	minor = ((struct drbd_genlmsghdr*)(info->userhdr))->minor;
+	disk_conf_from_attrs(&dc, info);
+	if (!dc.backing_dev) {
 		fprintf(stderr, "Has no disk config, try with drbdmeta.\n");
 		return 1;
 	}
 
-	if (!index_valid) {
-		/* cannot happen, right? ;-) */
-		fprintf(stderr, "No meta data index!?\n");
-		return 1;
-	}
-
-	if (idx >= 0 || idx == DRBD_MD_INDEX_FLEX_EXT) {
+	if (dc.meta_dev_idx >= 0 || dc.meta_dev_idx == DRBD_MD_INDEX_FLEX_EXT) {
 		lk_bdev_delete(minor);
 		return 0;
 	}
 
-	fd = open(backing_dev, O_RDONLY);
+	fd = open(dc.backing_dev, O_RDONLY);
 	if (fd == -1) {
-		fprintf(stderr, "Could not open %s: %m.\n", backing_dev);
+		fprintf(stderr, "Could not open %s: %m.\n", dc.backing_dev);
 		return 1;
 	}
 	bd_size = bdev_size(fd);
@@ -1579,82 +1774,42 @@ static int lk_bdev_scmd(struct drbd_cmd *cm, unsigned minor,
 
 	if (lk_bdev_load(minor, &bd) == 0 &&
 	    bd.bd_size == bd_size &&
-	    bd.bd_name && !strcmp(bd.bd_name, backing_dev))
+	    bd.bd_name && !strcmp(bd.bd_name, dc.backing_dev))
 		return 0;	/* nothing changed. */
 
 	bd.bd_size = bd_size;
-	bd.bd_name = backing_dev;
+	bd.bd_name = dc.backing_dev;
 	lk_bdev_save(minor, &bd);
 
 	return 0;
 }
 
-static int status_xml_scmd(struct drbd_cmd *cm __attribute((unused)),
-		unsigned minor, unsigned short *rtl)
-{
-	union drbd_state state = { .i = 0 };
-	int synced = 0;
-
-	if (!consume_tag_int(T_state_i,rtl,(int*)&state.i)) {
-		printf( "<!-- resource minor=\"%u\"", minor);
-		if (resname)
-			printf(" name=\"%s\"", resname);
-		printf(" not available or not yet created -->\n");
-		return 0;
-	}
-	printf("<resource minor=\"%u\"", minor);
-	if (resname)
-		printf(" name=\"%s\"", resname);
-
-	if (state.conn == C_STANDALONE && state.disk == D_DISKLESS) {
-		printf(" cs=\"Unconfigured\" />\n");
-		return 0;
-	}
-
-	printf( /* connection state */
-		" cs=\"%s\""
-		/* role */
-		" ro1=\"%s\" ro2=\"%s\""
-		/* disk state */
-		" ds1=\"%s\" ds2=\"%s\"",
-	       drbd_conn_str(state.conn),
-	       drbd_role_str(state.role),
-	       drbd_role_str(state.peer),
-	       drbd_disk_str(state.disk),
-	       drbd_disk_str(state.pdsk));
-
-	/* io suspended ? */
-	if (state.susp)
-		printf(" suspended");
-	/* reason why sync is paused */
-	if (state.aftr_isp)
-		printf(" aftr_isp");
-	if (state.peer_isp)
-		printf(" peer_isp");
-	if (state.user_isp)
-		printf(" user_isp");
-
-	if (consume_tag_int(T_sync_progress, rtl, &synced))
-		printf(" resynced_percent=\"%i.%i\"", synced / 10, synced % 10);
-
-	printf(" />\n");
-	return 0;
-}
-
 static int sh_status_scmd(struct drbd_cmd *cm __attribute((unused)),
-		unsigned minor, unsigned short *rtl)
+		struct genl_info *info)
 {
+	unsigned minor;
+	struct drbd_cfg_context cfg = { .ctx_volume = -1U };
+	struct state_info si = { .current_state = 0, };
+	union drbd_state state;
+	int available = 0;
+
+	if (!info)
+		return 0;
+
+	minor = ((struct drbd_genlmsghdr*)(info->userhdr))->minor;
 /* variable prefix; maybe rather make that a command line parameter?
  * or use "drbd_sh_status"? */
 #define _P ""
-	union drbd_state state = { .i = 0 };
-	int available = 0;
-	int synced = 0;
-
 	printf("%s_minor=%u\n", _P, minor);
-	printf("%s_res_name=%s\n", _P, shell_escape(resname ?: "UNKNOWN"));
 
-	available = consume_tag_int(T_state_i,rtl,(int*)&state.i);
+	drbd_cfg_context_from_attrs(&cfg, info);
+	if (cfg.ctx_resource_name)
+		printf("%s_res_name=%s\n", _P, shell_escape(cfg.ctx_resource_name));
+	printf("%s_volume=%d\n", _P, cfg.ctx_volume);
+
+	if (state_info_from_attrs(&si, info) == 0)
+		available = 1;
+	state.i = si.current_state;
 
 	if (state.conn == C_STANDALONE && state.disk == D_DISKLESS) {
 		printf("%s_known=%s\n\n", _P,
@@ -1696,9 +1851,16 @@ static int sh_status_scmd(struct drbd_cmd *cm __attribute((unused)),
 
 		printf("%s_resynced_percent=", _P);
 
-		if (consume_tag_int(T_sync_progress, rtl, &synced))
+		if (ntb(T_bits_rs_total)) {
+			uint32_t shift = si.bits_rs_total >= (1ULL << 32) ? 16 : 10;
+			uint64_t left = (si.bits_oos - si.bits_rs_failed) >> shift;
+			uint64_t total = 1UL + (si.bits_rs_total >> shift);
+			uint64_t tmp = 1000UL - left * 1000UL/total;
+
+			unsigned synced = tmp;
 			printf("%i.%i\n", synced / 10, synced % 10);
-		else
+			/* what else? everything available! */
+		} else
 			printf("\n");
 	}
 	printf("\n%s_sh_status_process\n\n\n", _P);
@@ -1709,13 +1871,28 @@ static int sh_status_scmd(struct drbd_cmd *cm __attribute((unused)),
 }
 
 static int role_scmd(struct drbd_cmd *cm __attribute((unused)),
-	       unsigned minor __attribute((unused)),
-	       unsigned short *rtl)
+		struct genl_info *info)
 {
 	union drbd_state state = { .i = 0 };
-	consume_tag_int(T_state_i,rtl,(int*)&state.i);
-	if ( state.conn == C_STANDALONE &&
-	     state.disk == D_DISKLESS) {
+
+	if (!strcmp(cm->cmd, "state")) {
+		fprintf(stderr, "'%s ... state' is deprecated, use '%s ... role' instead.\n",
+			cmdname, cmdname);
+	}
+
+	if (!info)
+		return 0;
+
+	if (global_attrs[DRBD_NLA_STATE_INFO]) {
+		drbd_nla_parse_nested(nested_attr_tb,
+				      ARRAY_SIZE(state_info_nl_policy) - 1,
+				      global_attrs[DRBD_NLA_STATE_INFO],
+				      state_info_nl_policy);
+		if (ntb(T_current_state))
+			state.i = nla_get_u32(ntb(T_current_state));
+	}
+	if (state.conn == C_STANDALONE &&
+	    state.disk == D_DISKLESS) {
 		printf("Unconfigured\n");
 	} else {
 		printf("%s/%s\n",drbd_role_str(state.role),drbd_role_str(state.peer));
@@ -1724,13 +1901,23 @@ static int role_scmd(struct drbd_cmd *cm __attribute((unused)),
 }
 
 static int cstate_scmd(struct drbd_cmd *cm __attribute((unused)),
-		unsigned minor __attribute((unused)),
-		unsigned short *rtl)
+		struct genl_info *info)
 {
 	union drbd_state state = { .i = 0 };
-	consume_tag_int(T_state_i,rtl,(int*)&state.i);
-	if ( state.conn == C_STANDALONE &&
-	     state.disk == D_DISKLESS) {
+
+	if (!info)
+		return 0;
+
+	if (global_attrs[DRBD_NLA_STATE_INFO]) {
+		drbd_nla_parse_nested(nested_attr_tb,
+				      ARRAY_SIZE(state_info_nl_policy) - 1,
+				      global_attrs[DRBD_NLA_STATE_INFO],
+				      state_info_nl_policy);
+		if (ntb(T_current_state))
+			state.i = nla_get_u32(ntb(T_current_state));
+	}
+	if (state.conn == C_STANDALONE &&
+	    state.disk == D_DISKLESS) {
 		printf("Unconfigured\n");
 	} else {
 		printf("%s\n",drbd_conn_str(state.conn));
@@ -1739,11 +1926,21 @@ static int cstate_scmd(struct drbd_cmd *cm __attribute((unused)),
 }
 
 static int dstate_scmd(struct drbd_cmd *cm __attribute((unused)),
-		unsigned minor __attribute((unused)),
-		unsigned short *rtl)
+		struct genl_info *info)
 {
 	union drbd_state state = { .i = 0 };
-	consume_tag_int(T_state_i,rtl,(int*)&state.i);
+
+	if (!info)
+		return 0;
+
+	if (global_attrs[DRBD_NLA_STATE_INFO]) {
+		drbd_nla_parse_nested(nested_attr_tb,
+				      ARRAY_SIZE(state_info_nl_policy)-1,
+				      global_attrs[DRBD_NLA_STATE_INFO],
+				      state_info_nl_policy);
+		if (ntb(T_current_state))
+			state.i = nla_get_u32(ntb(T_current_state));
+	}
 	if ( state.conn == C_STANDALONE &&
 	     state.disk == D_DISKLESS) {
 		printf("Unconfigured\n");
@@ -1754,23 +1951,43 @@ static int dstate_scmd(struct drbd_cmd *cm __attribute((unused)),
 }
 
 static int uuids_scmd(struct drbd_cmd *cm,
-	       unsigned minor __attribute((unused)),
-	       unsigned short *rtl)
+		struct genl_info *info)
 {
-	uint64_t uuids[UI_SIZE];
-	char *tl_uuids;
+	union drbd_state state = { .i = 0 };
+	uint64_t ed_uuid;
+	uint64_t *uuids = NULL;
 	int flags = flags;
-	unsigned int len;
 
-	if (!consume_tag_blob(T_uuids, rtl, &tl_uuids, &len)) {
-		fprintf(stderr,"Reply payload did not carry an uuid-tag,\n"
-			"Probably the device has no disk!\n");
+	if (!info)
+		return 0;
+
+	if (global_attrs[DRBD_NLA_STATE_INFO]) {
+		drbd_nla_parse_nested(nested_attr_tb,
+				      ARRAY_SIZE(state_info_nl_policy)-1,
+				      global_attrs[DRBD_NLA_STATE_INFO],
+				      state_info_nl_policy);
+		if (ntb(T_current_state))
+			state.i = nla_get_u32(ntb(T_current_state));
+		if (ntb(T_uuids))
+			uuids = nla_data(ntb(T_uuids));
+		if (ntb(T_disk_flags))
+			flags = nla_get_u32(ntb(T_disk_flags));
+		if (ntb(T_ed_uuid))
+			ed_uuid = nla_get_u64(ntb(T_ed_uuid));
+	}
+	if (state.conn == C_STANDALONE &&
+	    state.disk == D_DISKLESS) {
+		fprintf(stderr, "Device is unconfigured\n");
 		return 1;
 	}
-
-	consume_tag_int(T_uuids_flags,rtl,&flags);
-	if( len == UI_SIZE * sizeof(uint64_t)) {
-		memcpy(uuids, tl_uuids, len);
+	if (state.disk == D_DISKLESS) {
+		/* XXX we could print the ed_uuid anyways: */
+		if (0)
+			printf(X64(016)"\n", ed_uuid);
+		fprintf(stderr, "Device has no disk\n");
+		return 1;
+	}
+	if (uuids) {
 		if(!strcmp(cm->cmd,"show-gi")) {
 			dt_pretty_print_uuids(uuids,flags);
 		} else if(!strcmp(cm->cmd,"get-gi")) {
@@ -1779,719 +1996,381 @@ static int uuids_scmd(struct drbd_cmd *cm,
 			ASSERT( 0 );
 		}
 	} else {
-		fprintf(stderr, "Unexpected length of T_uuids tag. "
-			"You should upgrade your userland tools\n");
+		fprintf(stderr, "No uuids found in reply!\n"
+			"Maybe you need to upgrade your userland tools?\n");
 	}
 	return 0;
 }
 
-static struct drbd_cmd *find_cmd_by_name(char *name)
+static int down_cmd(struct drbd_cmd *cm, int argc, char **argv)
 {
-	unsigned int i;
-
-	if (!strcmp(name, "state")) {
-		fprintf(stderr, "'%s ... state' is deprecated, use '%s ... role' instead.\n",
-			cmdname, cmdname);
-		name = "role";
-	}
-
-	for (i = 0; i < ARRY_SIZE(commands); i++) {
-		if (!strcmp(name, commands[i].cmd)) {
-			return commands + i;
-		}
-	}
-	return NULL;
-}
-
-static int down_cmd(struct drbd_cmd *cm, unsigned minor, int argc, char **argv)
-{
+	struct minors_list *minors, *m;
 	int rv;
 	int success;
 
-	if(argc > 1) {
-		fprintf(stderr,"Ignoring excess arguments\n");
+	if(argc > 2) {
+		warn_print_excess_args(argc, argv, 2);
+		return OTHER_ERROR;
 	}
 
-	cm = find_cmd_by_name("secondary");
-	rv = _generic_config_cmd(cm, minor, argc, argv); // No error messages
-	if (rv == ERR_MINOR_INVALID)
-		return 0;
+	minors = enumerate_minors();
+	rv = _generic_config_cmd(cm, argc, argv, 1);
 	success = (rv >= SS_SUCCESS && rv < ERR_CODE_BASE) || rv == NO_ERROR;
-	if (!success)
-		return print_config_error(rv);
-	cm = find_cmd_by_name("disconnect");
-	cm->function(cm,minor,argc,argv);
-	cm = find_cmd_by_name("detach");
-	return cm->function(cm,minor,argc,argv);
+	if (success) {
+		for (m = minors; m; m = m->next)
+			unregister_minor(m->minor);
+		free_minors(minors);
+		unregister_resource(objname);
+	} else {
+		free_minors(minors);
+		return print_config_error(rv, NULL);
+	}
+	return 0;
 }
 
-
-static void print_digest(const char* label, const int len, const unsigned char *hash)
+/* printf format for minor, resource name, volume */
+#define MNV_FMT	"%d,%s[%d]"
+static void print_state(char *tag, unsigned seq, unsigned minor,
+		const char *resource_name, unsigned vnr, __u32 state_i)
 {
-	int i;
-	printf("\t%s: ", label);
-	for (i = 0; i < len; i++)
-		printf("%02x",hash[i]);
-	printf("\n");
+	union drbd_state s = { .i = state_i };
+	printf("%u %s " MNV_FMT " { cs:%s ro:%s/%s ds:%s/%s %c%c%c%c }\n",
+	       seq,
+	       tag,
+	       minor, resource_name, vnr,
+	       drbd_conn_str(s.conn),
+	       drbd_role_str(s.role),
+	       drbd_role_str(s.peer),
+	       drbd_disk_str(s.disk),
+	       drbd_disk_str(s.pdsk),
+	       s.susp ? 's' : 'r',
+	       s.aftr_isp ? 'a' : '-',
+	       s.peer_isp ? 'p' : '-',
+	       s.user_isp ? 'u' : '-' );
 }
 
-static char printable_or_dot(char c)
+static int print_broadcast_events(struct drbd_cmd *cm, struct genl_info *info)
 {
-	return (' ' < c && c <= '~') ? c : '.';
-}
+	struct drbd_cfg_context cfg = { .ctx_volume = -1U };
+	struct state_info si = { .current_state = 0 };
+	struct disk_conf dc = { .disk_size = 0, };
+	struct net_conf nc = { .timeout = 0, };
+	struct drbd_genlmsghdr *dh;
 
-static void print_hex_line(int offset, unsigned char *data)
-{
+	/* End of initial dump. Ignore. Maybe: print some marker? */
+	if (!info)
+		return 0;
 
-	printf(	" %04x:"
-		" %02x %02x %02x %02x %02x %02x %02x %02x "
-		" %02x %02x %02x %02x %02x %02x %02x %02x"
-		"  %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n",
-		offset,
-		data[0], data[1], data[2], data[3],
-		data[4], data[5], data[6], data[7],
-		data[8], data[9], data[10], data[11],
-		data[12], data[13], data[14], data[15],
-		printable_or_dot(data[0]), printable_or_dot(data[1]),
-		printable_or_dot(data[2]), printable_or_dot(data[3]),
-		printable_or_dot(data[4]), printable_or_dot(data[5]),
-		printable_or_dot(data[6]), printable_or_dot(data[7]),
-		printable_or_dot(data[8]), printable_or_dot(data[9]),
-		printable_or_dot(data[10]), printable_or_dot(data[11]),
-		printable_or_dot(data[12]), printable_or_dot(data[13]),
-		printable_or_dot(data[14]), printable_or_dot(data[15]));
-}
+	dh = info->userhdr;
+	if (dh->ret_code == ERR_MINOR_INVALID && cm->missing_ok)
+		return 0;
 
-/* successive identical lines are collapsed into just printing one star */
-static void print_hex_dump(int len, void *data)
-{
-	int i;
-	int star = 0;
-	for (i = 0; i < len-15; i += 16) {
-		if (i == 0 || memcmp(data + i, data + i - 16, 16)) {
-			print_hex_line(i, data + i);
-			star = 0;
-		} else if (!star)  {
-			printf(" *\n");
-			star = 1;
+	if (drbd_cfg_context_from_attrs(&cfg, info)) {
+		dbg(1, "unexpected packet, configuration context missing!\n");
+		/* keep running anyways. */
+		struct nlattr *nla = NULL;
+		if (info->attrs[DRBD_NLA_CFG_REPLY])
+			nla = drbd_nla_find_nested(ARRAY_SIZE(drbd_cfg_reply_nl_policy) - 1,
+						   info->attrs[DRBD_NLA_CFG_REPLY], T_info_text);
+		if (nla) {
+			char *txt = nla_data(nla);
+			char *c;
+			for (c = txt; *c; c++)
+				if (*c == '\n')
+					*c = '_';
+			printf("%u # %s\n", info->seq, txt);
 		}
+		goto out;
 	}
-	/* yes, I ignore remainders of len not modulo 16 here.
-	 * so what, usage is currently to dump bios, which are
-	 * multiple of 512. */
-	/* for good measure, print the total size as offset now,
-	 * last line may have been a '*' */
-	printf(" %04x.\n", len);
-}
 
-static void print_dump_ee(struct drbd_nl_cfg_reply *reply)
-{
-	unsigned long long sector = -1ULL;
-	unsigned long long block_id = 0;
-	char *reason = "UNKNOWN REASON";
-	char *dig_in = NULL;
-	char *dig_vv = NULL;
-	unsigned int dgs_in = 0, dgs_vv = 0;
-	unsigned int size = 0;
-	char *data = NULL;
-
-	if (!consume_tag_string(T_dump_ee_reason, reply->tag_list, &reason))
-		printf("\tno reason?\n");
-	if (!consume_tag_blob(T_seen_digest, reply->tag_list, &dig_in, &dgs_in))
-		printf("\tno digest in?\n");
-	if (!consume_tag_blob(T_calc_digest, reply->tag_list, &dig_vv, &dgs_vv))
-		printf("\tno digest out?\n");
-	if (!consume_tag_u64(T_ee_sector, reply->tag_list, &sector))
-		printf("\tno sector?\n");
-	if (!consume_tag_u64(T_ee_block_id, reply->tag_list, &block_id))
-		printf("\tno block_id?\n");
-	if (!consume_tag_blob(T_ee_data, reply->tag_list, &data, &size))
-		printf("\tno data?\n");
-
-	printf("\tdumping ee, reason: %s\n", reason);
-	printf("\tsector: %llu block_id: 0x%llx size: %u\n",
-			sector, block_id, size);
-	
-	/* "input sanitation". Did I mention yet that I'm paranoid? */
-	if (!data) size = 0;
-	if (!dig_in) dgs_in = 0;
-	if (!dig_vv) dgs_vv = 0;
-	if (dgs_in > SHARED_SECRET_MAX) dgs_in = SHARED_SECRET_MAX;
-	if (dgs_vv > SHARED_SECRET_MAX) dgs_vv = SHARED_SECRET_MAX;
-
-	print_digest("received digest", dgs_in, (unsigned char*)dig_in);
-	print_digest("verified digest", dgs_vv, (unsigned char*)dig_vv);
-
-	/* dump at most 32 K */
-	if (size > 0x8000) {
-		size = 0x8000;
-		printf("\tWARNING truncating data to %u!\n", 0x8000);
+	if (state_info_from_attrs(&si, info)) {
+		/* this is a DRBD_ADM_GET_STATUS reply
+		 * with information about a resource without any volumes */
+		printf("%u R - %s\n", info->seq, cfg.ctx_resource_name);
+		goto out;
 	}
-	print_hex_dump(size,data);
-}
 
-/* this is not pretty; but it's api... ;-( */
-const char *pretty_print_return_code(int e)
-{
-	return
-		e == NO_ERROR ? "No error" :
-		e > ERR_CODE_BASE ?
-			error_to_string(e) :
-		e > SS_AFTER_LAST_ERROR && e <= SS_TWO_PRIMARIES ?
-			drbd_set_st_err_str(e) :
-		e == SS_CW_NO_NEED ? "Cluster wide state change: nothing to do" :
-		e == SS_CW_SUCCESS ? "Cluster wide state change successful" :
-		e == SS_NOTHING_TO_DO ? "State change: nothing to do" :
-		e == SS_SUCCESS ? "State change successful" :
-		e == SS_UNKNOWN_ERROR ? "Unspecified error" :
-		"Unknown return code";
-}
+	disk_conf_from_attrs(&dc, info);
+	net_conf_from_attrs(&nc, info);
 
-static int print_broadcast_events(unsigned int seq, int u __attribute((unused)),
-			   struct drbd_nl_cfg_reply *reply)
-{
-	union drbd_state state;
-	char* str;
-	int synced = 0;
+	switch (si.sib_reason) {
+	case SIB_STATE_CHANGE:
+		print_state("ST-prev", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.prev_state);
+		print_state("ST-new", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.new_state);
+		/* fall through */
+	case SIB_GET_STATUS_REPLY:
+		print_state("ST", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.current_state);
+		break;
+	case SIB_HELPER_PRE:
+		printf("%u UH " MNV_FMT " %s\n", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.helper);
+		break;
+	case SIB_HELPER_POST:
+		printf("%u UH-post " MNV_FMT " %s 0x%04x\n", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.helper, si.helper_exit_code);
+		break;
+	case SIB_SYNC_PROGRESS:
+		{
+		uint32_t shift = si.bits_rs_total >= (1ULL << 32) ? 16 : 10;
+		uint64_t left = (si.bits_oos - si.bits_rs_failed) >> shift;
+		uint64_t total = 1UL + (si.bits_rs_total >> shift);
+		uint64_t tmp = 1000UL - left * 1000UL/total;
 
-	switch (reply->packet_type) {
-	case 0: /* used to be this way in drbd_nl.c for some responses :-( */
-	case P_return_code_only: /* used by drbd_nl.c for most "empty" responses */
-		printf("%u ZZ %d ret_code: %d %s\n", seq, reply->minor,
-			reply->ret_code,
-			pretty_print_return_code(reply->ret_code));
-		break;
-	case P_get_state:
-		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
-			printf("%u ST %d { cs:%s ro:%s/%s ds:%s/%s %c%c%c%c }\n",
-			       seq,
-			       reply->minor,
-			       drbd_conn_str(state.conn),
-			       drbd_role_str(state.role),
-			       drbd_role_str(state.peer),
-			       drbd_disk_str(state.disk),
-			       drbd_disk_str(state.pdsk),
-			       state.susp ? 's' : 'r',
-			       state.aftr_isp ? 'a' : '-',
-			       state.peer_isp ? 'p' : '-',
-			       state.user_isp ? 'u' : '-' );
-		} else fprintf(stderr,"Missing tag !?\n");
-		break;
-	case P_call_helper:
-		if(consume_tag_string(T_helper,reply->tag_list,&str)) {
-			printf("%u UH %d %s\n", seq, reply->minor, str);
-		} else fprintf(stderr,"Missing tag !?\n");
-		break;
-	case P_sync_progress:
-		if (consume_tag_int(T_sync_progress, reply->tag_list, &synced)) {
-			printf("%u SP %d %i.%i\n",
-				seq,
-				reply->minor,
-				synced / 10,
-				synced % 10);
-		} else fprintf(stderr,"Missing tag !?\n");
-		break;
-	case P_dump_ee:
-		printf("%u DE %d\n", seq, reply->minor);
-		print_dump_ee(reply);
+		unsigned synced = tmp;
+		printf("%u SP " MNV_FMT " %i.%i\n", info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				synced / 10, synced % 10);
+		}
 		break;
 	default:
-		printf("%u ?? %d <other message %d>\n",seq, reply->minor, reply->packet_type);
+		/* we could add the si.reason */
+		printf("%u ?? " MNV_FMT " <other message, state info broadcast reason:%u>\n",
+				info->seq,
+				dh->minor, cfg.ctx_resource_name, cfg.ctx_volume,
+				si.sib_reason);
 		break;
 	}
-
+out:
 	fflush(stdout);
 
-	return 1;
+	return 0;
 }
 
-void print_failure_code(int ret_code)
+static int w_connected_state(struct drbd_cmd *cm, struct genl_info *info)
 {
-	if (ret_code > ERR_CODE_BASE)
-		fprintf(stderr,"%s: Failure: (%d) %s\n",
-			devname, ret_code, error_to_string(ret_code));
-	else
-		fprintf(stderr,"%s: Failure: (ret_code=%d)\n",
-			devname, ret_code);
-}
-
-static int w_connected_state(unsigned int seq __attribute((unused)),
-		      int wait_after_sb,
-		      struct drbd_nl_cfg_reply *reply)
-{
+	struct state_info si = { .current_state = 0 };
 	union drbd_state state;
 
-	if (reply->ret_code != NO_ERROR) {
-		print_failure_code(reply->ret_code);
+	if (!info)
+		return 0;
+
+	if (!global_attrs[DRBD_NLA_STATE_INFO])
+		return 0;
+
+	if (state_info_from_attrs(&si, info)) {
+		fprintf(stderr,"nla_policy violation!?\n");
 		return 0;
 	}
 
-	if(reply->packet_type == P_get_state) {
-		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
-			if(state.conn >= C_CONNECTED) return 0;
-			if(!wait_after_sb && state.conn < C_UNCONNECTED) return 0;
-		} else fprintf(stderr,"Missing tag !?\n");
+	if (si.sib_reason != SIB_STATE_CHANGE &&
+	    si.sib_reason != SIB_GET_STATUS_REPLY)
+		return 0;
+
+	state.i = si.current_state;
+	if (state.conn >= C_CONNECTED)
+		return -1;  /* done waiting */
+	if (state.conn < C_UNCONNECTED) {
+		struct drbd_genlmsghdr *dhdr = info->userhdr;
+		struct drbd_cfg_context cfg = { .ctx_volume = -1U };
+
+		if (!wait_after_split_brain)
+			return -1;  /* done waiting */
+		drbd_cfg_context_from_attrs(&cfg, info);
+
+		fprintf(stderr, "\ndrbd%u (%s[%u]) is %s, "
+			       "but I'm configured to wait anways (--wait-after-sb)\n",
+			       dhdr->minor,
+			       cfg.ctx_resource_name, cfg.ctx_volume,
+			       drbd_conn_str(state.conn));
 	}
 
-	return 1;
+	return 0;
 }
 
-static int w_synced_state(unsigned int seq __attribute((unused)),
-		   int wait_after_sb,
-		   struct drbd_nl_cfg_reply *reply)
+static int w_synced_state(struct drbd_cmd *cm, struct genl_info *info)
 {
+	struct state_info si = { .current_state = 0 };
 	union drbd_state state;
 
-	if (reply->ret_code != NO_ERROR) {
-		print_failure_code(reply->ret_code);
+	if (!info)
+		return 0;
+
+	if (!global_attrs[DRBD_NLA_STATE_INFO])
+		return 0;
+
+	if (state_info_from_attrs(&si, info)) {
+		fprintf(stderr,"nla_policy violation!?\n");
 		return 0;
 	}
 
-	if(reply->packet_type == P_get_state) {
-		if(consume_tag_int(T_state_i,reply->tag_list,(int*)&state.i)) {
-			if(state.conn == C_CONNECTED) return 0;
-			if(!wait_after_sb && state.conn < C_UNCONNECTED) return 0;
-		} else fprintf(stderr,"Missing tag !?\n");
-	}
-	return 1;
+	if (si.sib_reason != SIB_STATE_CHANGE &&
+	    si.sib_reason != SIB_GET_STATUS_REPLY)
+		return 0;
+
+	state.i = si.current_state;
+
+	if (state.conn == C_CONNECTED)
+		return -1;  /* done waiting */
+
+	if (!wait_after_split_brain && state.conn < C_UNCONNECTED)
+		return -1;  /* done waiting */
+
+	return 0;
 }
 
-static int events_cmd(struct drbd_cmd *cm, unsigned minor, int argc ,char **argv)
+/*
+ * Check if an integer is a power of two.
+ */
+static bool power_of_two(int i)
 {
-	void *buffer;
-	struct cn_msg *cn_reply;
-	struct drbd_nl_cfg_reply *reply;
-	struct drbd_tag_list *tl;
-	struct option *lo;
-	unsigned int b_seq=0, r_seq=0;
-	int sk_nl,c,cont=1,rr = rr,i,last;
-	int unfiltered=0, all_devices=0, timeout_ms=0;
-	int wfc_timeout=DRBD_WFC_TIMEOUT_DEF;
-	int degr_wfc_timeout=DRBD_DEGR_WFC_TIMEOUT_DEF;
-	int outdated_wfc_timeout=DRBD_OUTDATED_WFC_TIMEOUT_DEF;
-	struct timeval before,after;
-	int wasb=0;
-
-	lo = cm->ep.options;
-
-	while( (c=getopt_long(argc,argv,make_optstring(lo,':'),lo,0)) != -1 ) {
-		switch(c) {
-		default:
-		case '?':
-			warn_unrecognized_option(argv);
-			return 20;
-		case ':':
-			warn_missing_required_arg(argv);
-			return 20;
-		case 'u': unfiltered=1; break;
-		case 'a': all_devices=1; break;
-		case 't':
-			wfc_timeout=m_strtoll(optarg,1);
-			if(DRBD_WFC_TIMEOUT_MIN > wfc_timeout ||
-			   wfc_timeout > DRBD_WFC_TIMEOUT_MAX) {
-				fprintf(stderr, "wfc_timeout => %d"
-					" out of range [%d..%d]\n",
-					wfc_timeout, DRBD_WFC_TIMEOUT_MIN,
-					DRBD_WFC_TIMEOUT_MAX);
-				return 20;
-			}
-			break;
-		case 'd':
-			degr_wfc_timeout=m_strtoll(optarg,1);
-			if(DRBD_DEGR_WFC_TIMEOUT_MIN > degr_wfc_timeout ||
-			   degr_wfc_timeout > DRBD_DEGR_WFC_TIMEOUT_MAX) {
-				fprintf(stderr, "degr_wfc_timeout => %d"
-					" out of range [%d..%d]\n",
-					degr_wfc_timeout, DRBD_DEGR_WFC_TIMEOUT_MIN,
-					DRBD_DEGR_WFC_TIMEOUT_MAX);
-				return 20;
-			}
-			break;
-		case 'o':
-			outdated_wfc_timeout=m_strtoll(optarg,1);
-			if(DRBD_OUTDATED_WFC_TIMEOUT_MIN > degr_wfc_timeout ||
-			   degr_wfc_timeout > DRBD_OUTDATED_WFC_TIMEOUT_MAX) {
-				fprintf(stderr, "degr_wfc_timeout => %d"
-					" out of range [%d..%d]\n",
-					outdated_wfc_timeout, DRBD_OUTDATED_WFC_TIMEOUT_MIN,
-					DRBD_OUTDATED_WFC_TIMEOUT_MAX);
-				return 20;
-			}
-			break;
-
-		case 'w':
-			wasb=1;
-			break;
-		}
-	}
-
-	if (optind < argc)
-		warn_print_excess_args(argc, argv, optind);
-
-	dump_argv(argc, argv, optind, 0);
-
-	tl = create_tag_list(2);
-	add_tag(tl,TT_END,NULL,0); // close the tag list
-
-	sk_nl = open_cn();
-	if(sk_nl < 0) return 20;
-
-	/* allocate 64k to be on the safe side. */
-#define NL_BUFFER_SIZE (64 << 10)
-	buffer = malloc(NL_BUFFER_SIZE);
-	if (!buffer) {
-		fprintf(stderr, "could not allocate buffer of %u bytes\n", NL_BUFFER_SIZE);
-		exit(20);
-	}
-
-	/* drbdsetup events should not ask for timeout "type",
-	 * this is only useful with wait-sync and wait-connected callbacks.
-	 */
-	if (cm->ep.proc_event != print_broadcast_events) {
-		// Find out which timeout value to use.
-		tl->drbd_p_header->packet_type = P_get_timeout_flag;
-		tl->drbd_p_header->drbd_minor = minor;
-		tl->drbd_p_header->flags = 0;
-
-		if (0 >= call_drbd(sk_nl,tl, buffer, NL_BUFFER_SIZE, NL_TIME))
-			exit(20);
-
-		cn_reply = (struct cn_msg *)NLMSG_DATA(buffer);
-		reply = (struct drbd_nl_cfg_reply *)cn_reply->data;
-
-		if (reply->ret_code != NO_ERROR)
-			return print_config_error(reply->ret_code);
-
-		consume_tag_bit(T_use_degraded,reply->tag_list,&rr);
-		if (rr != UT_DEFAULT) {
-			if (0 < wfc_timeout &&
-			      (wfc_timeout < degr_wfc_timeout || degr_wfc_timeout == 0)) {
-				degr_wfc_timeout = wfc_timeout;
-				fprintf(stderr, "degr-wfc-timeout has to be shorter than wfc-timeout\n"
-						"degr-wfc-timeout implicitly set to wfc-timeout (%ds)\n",
-						degr_wfc_timeout);
-			}
-
-			if (0 < degr_wfc_timeout &&
-			    (degr_wfc_timeout < outdated_wfc_timeout || outdated_wfc_timeout == 0)) {
-				outdated_wfc_timeout = wfc_timeout;
-				fprintf(stderr, "outdated-wfc-timeout has to be shorter than degr-wfc-timeout\n"
-						"outdated-wfc-timeout implicitly set to degr-wfc-timeout (%ds)\n",
-						degr_wfc_timeout);
-			}
-
-		}
-
-		switch (rr) {
-		case UT_DEFAULT:
-			timeout_ms = wfc_timeout;
-			break;
-		case UT_DEGRADED:
-			timeout_ms = degr_wfc_timeout;
-			break;
-		case UT_PEER_OUTDATED:
-			timeout_ms = outdated_wfc_timeout;
-			break;
-		}
-	}
-
-	timeout_ms = timeout_ms * 1000 - 1; /* 0 -> -1 "infinite", 1000 -> 999, nobody cares...  */
-
-	// ask for the current state before waiting for state updates...
-	if (all_devices) {
-		i = 0;
-		last = 255;
-	}
-	else {
-		i = last = minor;
-	}
-
-	while (i <= last) {
-		tl->drbd_p_header->packet_type = P_get_state;
-		tl->drbd_p_header->drbd_minor = i;
-		tl->drbd_p_header->flags = 0;
-		send_cn(sk_nl,tl->nl_header,(char*)tl->tag_list_cpos-(char*)tl->nl_header);
-		i++;
-	}
-
-	dt_unlock_drbd(lock_fd);
-	lock_fd=-1;
-
-	do {
-		gettimeofday(&before,NULL);
-		rr = receive_cn(sk_nl, buffer, NL_BUFFER_SIZE, timeout_ms);
-		gettimeofday(&after,NULL);
-		if(rr == -2) break; // timeout expired.
-
-		if(timeout_ms > 0 ) {
-			timeout_ms -= ( (after.tv_sec - before.tv_sec) * 1000 +
-					(after.tv_usec - before.tv_usec) / 1000 );
-		}
-
-		cn_reply = (struct cn_msg *)NLMSG_DATA(buffer);
-		reply = (struct drbd_nl_cfg_reply *)cn_reply->data;
-
-		// dump_tag_list(reply->tag_list);
-
-		/* There are two value spaces for sequence numbers. The first
-		   is the one created by this drbdsetup instance, the kernel's
-		   reply packets simply echo those sequence numbers.
-		   The second is created by the kernel's broadcast packets. */
-		if (!unfiltered) {
-			if (cn_reply->ack == 0) { // broadcasts
-				/* Careful, potential wrap around!
-				 * Will skip a lot of packets if you
-				 * unload/reload the module in between,
-				 * but keep this drbdsetup events running.
-				 * So don't do that.
-				 */
-				if ((int)(cn_reply->seq - b_seq) <= 0)
-					continue;
-				b_seq = cn_reply->seq;
-			} else if ((all_devices || minor == reply->minor)
-					&& cn_reply->ack == (uint32_t)getpid() + 1) {
-				// replies to drbdsetup packets and for this device.
-				if ((int)(cn_reply->seq - r_seq) <= 0)
-					continue;
-				r_seq = cn_reply->seq;
-			} else {
-				/* or reply to configuration request of other drbdsetup */
-				continue;
-			}
-		}
-
-		if( all_devices || minor == reply->minor ) {
-			cont=cm->ep.proc_event(cn_reply->seq, wasb, reply);
-		}
-	} while(cont);
-
-	free(buffer);
-
-	close_cn(sk_nl);
-
-	/* return code becomes exit code.
-	 * timeout? => exit 5
-	 * else     => exit 0 */
-	return (rr == -2) ? 5 : 0;
+	return i && !(i & (i - 1));
 }
 
-static int numeric_opt_usage(struct drbd_option *option, char* str, int strlen)
-{
-	return snprintf(str,strlen," [{--%s|-%c} %lld ... %lld]",
-			option->name, option->short_name,
-			option->numeric_param.min,
-			option->numeric_param.max);
-}
-
-static int handler_opt_usage(struct drbd_option *option, char* str, int strlen)
-{
-	const char** handlers;
-	int i, chars=0,first=1;
-
-	chars += snprintf(str,strlen," [{--%s|-%c} {",
-			  option->name, option->short_name);
-	handlers = option->handler_param.handler_names;
-	for(i=0;i<option->handler_param.number_of_handlers;i++) {
-		if(handlers[i]) {
-			if(!first) chars += snprintf(str+chars,strlen,"|");
-			first=0;
-			chars += snprintf(str+chars,strlen,
-					  "%s",handlers[i]);
-		}
-	}
-	chars += snprintf(str+chars,strlen,"}]");
-	return chars;
-}
-
-static int bit_opt_usage(struct drbd_option *option, char* str, int strlen)
-{
-	return snprintf(str,strlen," [{--%s|-%c}]",
-			option->name, option->short_name);
-}
-
-static int string_opt_usage(struct drbd_option *option, char* str, int strlen)
-{
-	return snprintf(str,strlen," [{--%s|-%c} <str>]",
-			option->name, option->short_name);
-}
-
-static void numeric_opt_xml(struct drbd_option *option)
-{
-	printf("\t<option name=\"%s\" type=\"numeric\">\n",option->name);
-	printf("\t\t<min>%lld</min>\n",option->numeric_param.min);
-	printf("\t\t<max>%lld</max>\n",option->numeric_param.max);
-	printf("\t\t<default>%lld</default>\n",option->numeric_param.def);
-	if(option->numeric_param.unit_prefix==1) {
-		printf("\t\t<unit_prefix>1</unit_prefix>\n");
-	} else {
-		printf("\t\t<unit_prefix>%c</unit_prefix>\n",
-		       option->numeric_param.unit_prefix);
-	}
-	if(option->numeric_param.unit) {
-		printf("\t\t<unit>%s</unit>\n",option->numeric_param.unit);
-	}
-	printf("\t</option>\n");
-}
-
-static void handler_opt_xml(struct drbd_option *option)
-{
-	const char** handlers;
-	int i;
-
-	printf("\t<option name=\"%s\" type=\"handler\">\n",option->name);
-	handlers = option->handler_param.handler_names;
-	for(i=0;i<option->handler_param.number_of_handlers;i++) {
-		if(handlers[i]) {
-			printf("\t\t<handler>%s</handler>\n",handlers[i]);
-		}
-	}
-	printf("\t</option>\n");
-}
-
-static void bit_opt_xml(struct drbd_option *option)
-{
-	printf("\t<option name=\"%s\" type=\"boolean\">\n",option->name);
-	printf("\t</option>\n");
-}
-
-static void string_opt_xml(struct drbd_option *option)
-{
-	printf("\t<option name=\"%s\" type=\"string\">\n",option->name);
-	printf("\t</option>\n");
-}
-
-
-static void config_usage(struct drbd_cmd *cm, enum usage_type ut)
+static void print_command_usage(struct drbd_cmd *cm, enum usage_type ut)
 {
 	struct drbd_argument *args;
-	struct drbd_option *options;
-	static char line[300];
-	int maxcol,col,prevcol,startcol,toolong;
-	char *colstr;
 
 	if(ut == XML) {
-		printf("<command name=\"%s\">\n",cm->cmd);
-		if( (args = cm->cp.args) ) {
-			while (args->name) {
+		enum cfg_ctx_key ctx = cm->ctx_key;
+
+		printf("<command name=\"%s\">\n", cm->cmd);
+		if (ctx & CTX_RESOURCE_AND_CONNECTION)
+			ctx = CTX_RESOURCE | CTX_CONNECTION;
+		if (ctx & (CTX_RESOURCE | CTX_MINOR | CTX_ALL)) {
+			bool more_than_one_choice =
+				!power_of_two(ctx & (CTX_RESOURCE | CTX_MINOR | CTX_ALL));
+			const char *indent = "\t\t" + !more_than_one_choice;
+			if (more_than_one_choice)
+				printf("\t<group>\n");
+			if (ctx & CTX_RESOURCE)
+				printf("%s<argument>resource</argument>\n", indent);
+			if (ctx & CTX_MINOR)
+				printf("%s<argument>minor</argument>\n", indent);
+			if (ctx & CTX_ALL)
+				printf("%s<argument>all</argument>\n", indent);
+			if (more_than_one_choice)
+				printf("\t</group>\n");
+		}
+		if (ctx & CTX_CONNECTION) {
+			printf("\t<argument>local_addr</argument>\n");
+			printf("\t<argument>remote_addr</argument>\n");
+		}
+
+		if(cm->drbd_args) {
+			for (args = cm->drbd_args; args->name; args++) {
 				printf("\t<argument>%s</argument>\n",
 				       args->name);
-				args++;
 			}
 		}
 
-		options = cm->cp.options;
-		while (options && options->name) {
-			options->xml_function(options);
-			options++;
+		if (cm->options) {
+			struct option *option;
+
+			for (option = cm->options; option->name; option++) {
+				/*
+				 * The "string" options here really are
+				 * timeouts, but we can't describe them
+				 * in a resonable way here.
+				 */
+				printf("\t<option name=\"%s\" type=\"%s\">\n"
+				       "\t</option>\n",
+				       option->name,
+				       option->has_arg == no_argument ?
+					 "flag" : "string");
+			}
+		}
+
+		if (cm->set_defaults)
+			printf("\t<option name=\"set-defaults\" type=\"flag\">\n"
+			       "\t</option>\n");
+
+		if (cm->ctx) {
+			struct field_def *field;
+
+			for (field = cm->ctx->fields; field->name; field++)
+				field->describe_xml(field);
 		}
 		printf("</command>\n");
 		return;
 	}
 
-	prevcol=col=0;
-	maxcol=100;
+	if (ut == BRIEF)
+		wrap_printf(4, "%-18s  ", cm->cmd);
+	else {
+		wrap_printf(0, "USAGE:\n");
 
-	if((colstr=getenv("COLUMNS"))) maxcol=atoi(colstr)-1;
+		wrap_printf(1, "%s %s", progname, cm->cmd);
+		if (cm->ctx_key && ut != BRIEF) {
+			enum cfg_ctx_key ctx = cm->ctx_key;
 
-	col += snprintf(line+col, maxcol-col, " %s", cm->cmd);
+			if (ctx & CTX_RESOURCE_AND_CONNECTION)
+				ctx = CTX_RESOURCE | CTX_CONNECTION;
+			if (ctx & (CTX_RESOURCE | CTX_MINOR | CTX_ALL)) {
+				bool first = true;
 
-	if( (args = cm->cp.args) ) {
-		if(ut == BRIEF) {
-			col += snprintf(line+col, maxcol-col, " [args...]");
-		} else {
-			while (args->name) {
-				col += snprintf(line+col, maxcol-col, " %s",
-						args->name);
-				args++;
+				wrap_printf(4, " {");
+				if (ctx & CTX_RESOURCE) {
+					wrap_printf(4, "|resource" + first);
+					first = false;
+				}
+				if (ctx & CTX_MINOR) {
+					wrap_printf(4, "|minor" + first);
+					first = false;
+				}
+				if (ctx & CTX_ALL) {
+					wrap_printf(4, "|all" + first);
+					first = false;
+				}
+				wrap_printf(4, "}");
+			}
+			if (ctx & CTX_CONNECTION) {
+				wrap_printf(4, " [{af}:]{local_addr}[:{port}]");
+				wrap_printf(4, " [{af}:]{remote_addr}[:{port}]");
 			}
 		}
-	}
 
-	if (col > maxcol) {
-		printf("%s\n",line);
-		col=0;
-	}
-	startcol=prevcol=col;
-
-	options = cm->cp.options;
-	if(ut == BRIEF) {
-		if(options)
-			col += snprintf(line+col, maxcol-col, " [opts...]");
-		printf("%-40s",line);
-		return;
-	}
-
-	while (options && options->name) {
-		col += options->usage_function(options, line+col, maxcol-col);
-		if (col >= maxcol) {
-			toolong = (prevcol == startcol);
-			if( !toolong ) line[prevcol]=0;
-			printf("%s\n",line);
-			startcol=prevcol=col = sprintf(line,"    ");
-			if( toolong) options++;
-		} else {
-			prevcol=col;
-			options++;
+		if (cm->drbd_args) {
+			for (args = cm->drbd_args; args->name; args++)
+				wrap_printf(4, " {%s}", args->name);
 		}
-	}
-	line[col]=0;
 
-	printf("%s\n",line);
-}
+		if (cm->options) {
+			struct option *option;
 
-static void get_usage(struct drbd_cmd *cm, enum usage_type ut)
-{
-	if(ut == BRIEF) {
-		printf(" %-39s", cm->cmd);
-	} else {
-		printf(" %s\n", cm->cmd);
-	}
-}
-
-static void events_usage(struct drbd_cmd *cm, enum usage_type ut)
-{
-	struct option *lo;
-	char line[41];
-
-	if(ut == BRIEF) {
-		sprintf(line,"%s [opts...]", cm->cmd);
-		printf(" %-39s",line);
-	} else {
-		printf(" %s", cm->cmd);
-		lo = cm->ep.options;
-		while(lo && lo->name) {
-			printf(" [{--%s|-%c}]",lo->name,lo->val);
-			lo++;
+			for (option = cm->options; option->name; option++)
+				wrap_printf(4, " [--%s%s]",
+					    option->name,
+					    option->has_arg == no_argument ?
+					        "" : "=...");
 		}
-		printf("\n");
+
+		if (cm->set_defaults)
+			wrap_printf(4, " [--set-defaults]");
+
+		if (cm->ctx) {
+			struct field_def *field;
+
+			for (field = cm->ctx->fields; field->name; field++) {
+				char buffer[300];
+				int n;
+				n = field->usage(field, buffer, sizeof(buffer));
+				assert(n < sizeof(buffer));
+				wrap_printf(4, " %s", buffer);
+			}
+		}
+		wrap_printf(4, "\n");
 	}
 }
 
-static void print_command_usage(int i, const char *addinfo, enum usage_type ut)
-{
-	if(ut != XML) printf("USAGE:\n");
-	commands[i].usage(commands+i,ut);
-
-	if (addinfo) {
-		printf("%s\n",addinfo);
-		exit(20);
-	}
-}
-
-static void print_usage(const char* addinfo)
+static void print_usage_and_exit(const char* addinfo)
 {
 	size_t i;
 
-	printf("\nUSAGE: %s device command arguments options\n\n"
+	printf("\nUSAGE: %s command device arguments options\n\n"
 	       "Device is usually /dev/drbdX or /dev/drbd/X.\n"
-	       "General options: --create-device, --set-defaults\n"
 	       "\nCommands are:\n",cmdname);
 
 
-	for (i = 0; i < ARRY_SIZE(commands); i++) {
-		commands[i].usage(commands+i,BRIEF);
-		if(i%2==1) printf("\n");
-	}
+	for (i = 0; i < ARRAY_SIZE(commands); i++)
+		print_command_usage(&commands[i], BRIEF);
 
 	printf("\n\n"
 	       "To get more details about a command issue "
@@ -2507,180 +2386,72 @@ static void print_usage(const char* addinfo)
 	exit(20);
 }
 
-static int open_cn()
-{
-	int sk_nl;
-	int err;
-	struct sockaddr_nl my_nla;
-
-	sk_nl = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_CONNECTOR);
-	if (sk_nl == -1) {
-		perror("socket() failed");
-		return -1;
-	}
-
-	my_nla.nl_family = AF_NETLINK;
-	my_nla.nl_groups = -1; //cn_idx
-	my_nla.nl_pid = getpid();
-
-	err = bind(sk_nl, (struct sockaddr *)&my_nla, sizeof(my_nla));
-	if (err == -1) {
-		err = errno;
-		perror("bind() failed");
-		switch(err) {
-		case ENOENT:
-			fprintf(stderr,"Connector module not loaded? Try 'modprobe cn'.\n");
-			break;
-		case EPERM:
-			fprintf(stderr,"Missing privileges? You should run this as root.\n");
-			break;
-		}
-		return -1;
-	}
-
-	return sk_nl;
-}
-
-
-static void prepare_nl_header(struct nlmsghdr* nl_hdr, int size)
-{
-	static uint32_t cn_seq = 1;
-	struct cn_msg *cn_hdr;
-	cn_hdr = (struct cn_msg *)NLMSG_DATA(nl_hdr);
-
-	/* fill the netlink header */
-	nl_hdr->nlmsg_len = NLMSG_LENGTH(size - sizeof(struct nlmsghdr));
-	nl_hdr->nlmsg_type = NLMSG_DONE;
-	nl_hdr->nlmsg_flags = 0;
-	nl_hdr->nlmsg_seq = cn_seq;
-	nl_hdr->nlmsg_pid = getpid();
-	/* fill the connector header */
-	cn_hdr->id.val = CN_VAL_DRBD;
-	cn_hdr->id.idx = cn_idx;
-	cn_hdr->seq = cn_seq++;
-	cn_hdr->ack = getpid();
-	cn_hdr->len = size - sizeof(struct nlmsghdr) - sizeof(struct cn_msg);
-}
-
-
-static int send_cn(int sk_nl, struct nlmsghdr* nl_hdr, int size)
-{
-	int rr;
-
-	prepare_nl_header(nl_hdr,size);
-
-	rr = send(sk_nl,nl_hdr,nl_hdr->nlmsg_len,0);
-	if( rr != (ssize_t)nl_hdr->nlmsg_len) {
-		perror("send() failed");
-		return -1;
-	}
-	return rr;
-}
-
-static int receive_cn(int sk_nl, struct nlmsghdr* nl_hdr, int size, int timeout_ms)
-{
-	struct pollfd pfd;
-	int rr;
-
-	pfd.fd = sk_nl;
-	pfd.events = POLLIN;
-
-	rr = poll(&pfd,1,timeout_ms);
-	if(rr == 0) return -2; // timeout expired.
-
-	rr = recv(sk_nl,nl_hdr,size,0);
-
-	if( rr < 0 ) {
-		perror("recv() failed");
-		return -1;
-	}
-	return rr;
-}
-
-int receive_reply_cn(int sk_nl, struct drbd_tag_list *tl, struct nlmsghdr* nl_hdr,
-		     int size, int timeout_ms)
-{
-	struct cn_msg *request_cn_hdr;
-	struct cn_msg *reply_cn_hdr;
-	int rr;
-
-	request_cn_hdr = (struct cn_msg *)NLMSG_DATA(tl->nl_header);
-	reply_cn_hdr = (struct cn_msg *)NLMSG_DATA(nl_hdr);
-
-	while(1) {
-		rr = receive_cn(sk_nl,nl_hdr,size,timeout_ms);
-		if( rr < 0 ) return rr;
-		if(reply_cn_hdr->seq == request_cn_hdr->seq &&
-		   reply_cn_hdr->ack == request_cn_hdr->ack+1 ) return rr;
-		/* printf("INFO: got other message \n"
-		   "got seq: %d ; ack %d \n"
-		   "exp seq: %d ; ack %d \n",
-		   reply_cn_hdr->seq,reply_cn_hdr->ack,
-		   request_cn_hdr->seq,request_cn_hdr->ack); */
-	}
-
-	return rr;
-}
-
-static int call_drbd(int sk_nl, struct drbd_tag_list *tl, struct nlmsghdr* nl_hdr,
-		     int size, int timeout_ms)
-{
-	int rr;
-	prepare_nl_header(tl->nl_header, (char*)tl->tag_list_cpos -
-			  (char*)tl->nl_header);
-
-	rr = send(sk_nl,tl->nl_header,tl->nl_header->nlmsg_len,0);
-	if( rr != (ssize_t)tl->nl_header->nlmsg_len) {
-		perror("send() failed");
-		return -1;
-	}
-
-	rr = receive_reply_cn(sk_nl,tl,nl_hdr,size,timeout_ms);
-
-	if( rr == -2) {
-		fprintf(stderr,"No response from the DRBD driver!"
-			" Is the module loaded?\n");
-	}
-	return rr;
-}
-
-static void close_cn(int sk_nl)
-{
-	close(sk_nl);
-}
-
-static int is_drbd_driver_missing(void)
+static int modprobe_drbd(void)
 {
 	struct stat sb;
-	FILE *cn_idx_file;
-	int err;
+	int ret, retries = 10;
 
-	cn_idx = CN_IDX_DRBD;
-	cn_idx_file = fopen("/sys/module/drbd/parameters/cn_idx", "r");
-	if (cn_idx_file) {
-		unsigned int idx; /* gcc is picky */
-		if (fscanf(cn_idx_file, "%u", &idx))
-			cn_idx = idx;
-		fclose(cn_idx_file);
+	ret = stat("/proc/drbd", &sb);
+	if (ret && errno == ENOENT) {
+		system("/sbin/modprobe drbd");
+		for(;;) {
+			struct timespec ts = {
+				.tv_nsec = 1000000,
+			};
+
+			ret = stat("/proc/drbd", &sb);
+			if (!ret || retries-- == 0)
+				break;
+			nanosleep(&ts, NULL);
+		}
 	}
-
-	err = stat("/proc/drbd", &sb);
-	if (!err)
-		return 0;
-
-	if (err == ENOENT)
-		fprintf(stderr, "DRBD driver appears to be missing\n");
-	else
-		fprintf(stderr, "Could not stat(\"/proc/drbd\"): %m\n");
-
-	return 1;
+	if (ret) {
+		fprintf(stderr, "Could not stat /proc/drbd: %m\n");
+		fprintf(stderr, "Make sure that the DRBD kernel module is installed "
+				"and can be loaded!\n");
+	}
+	return ret == 0;
 }
 
-int main(int argc, char** argv)
+void exec_legacy_drbdsetup(char **argv)
 {
-	unsigned minor;
+#ifdef DRBD_LEGACY_83
+	static const char * const legacy_drbdsetup = "drbdsetup-83";
+	char *progname, *drbdsetup;
+
+	/* in case drbdsetup is called with an absolute or relative pathname
+	 * look for the legacy drbdsetup binary in the same location,
+	 * otherwise, just let execvp sort it out... */
+	if ((progname = strrchr(argv[0], '/')) == 0) {
+		drbdsetup = strdup(legacy_drbdsetup);
+	} else {
+		size_t len_dir, l;
+
+		++progname;
+		len_dir = progname - argv[0];
+
+		l = len_dir + strlen(legacy_drbdsetup) + 1;
+		drbdsetup = malloc(l);
+		if (!drbdsetup) {
+			fprintf(stderr, "Malloc() failed\n");
+			exit(20);
+		}
+		strncpy(drbdsetup, argv[0], len_dir);
+		strcpy(drbdsetup + len_dir, legacy_drbdsetup);
+	}
+	execvp(drbdsetup, argv);
+#else
+	fprintf(stderr, "This drbdsetup was not built with support for legacy drbd-8.3\n"
+		"Eventually rebuild with ./configure --with-legacy-connector\n");
+#endif
+}
+
+int main(int argc, char **argv)
+{
 	struct drbd_cmd *cmd;
 	int rv=0;
+
+	progname = basename(argv[0]);
 
 	if (chdir("/")) {
 		/* highly unlikely, but gcc is picky */
@@ -2694,58 +2465,127 @@ int main(int argc, char** argv)
 	else
 		cmdname = argv[0];
 
-	/* == '-' catches -h, --help, and similar */
-	if (argc > 1 && (!strcmp(argv[1],"help") || argv[1][0] == '-')) {
-		if(argc >= 3) {
-			cmd=find_cmd_by_name(argv[2]);
-			if(cmd) print_command_usage(cmd-commands,NULL,FULL);
-			else print_usage("unknown command");
-			exit(0);
-		}
+	if (argc > 2 && (!strcmp(argv[2], "--help")  || !strcmp(argv[2], "-h"))) {
+		char *swap = argv[1];
+		argv[1] = argv[2];
+		argv[2] = swap;
+	}
+
+	if (argc > 1 && (!strcmp(argv[1], "help") || !strcmp(argv[1], "xml-help")  ||
+			 !strcmp(argv[1], "--help")  || !strcmp(argv[1], "-h"))) {
+		enum usage_type usage_type = !strcmp(argv[1], "xml-help") ? XML : FULL;
+		if(argc > 2) {
+			cmd = find_cmd_by_name(argv[2]);
+			if(cmd) {
+				print_command_usage(cmd, usage_type);
+				exit(0);
+			} else
+				print_usage_and_exit("unknown command");
+		} else
+			print_usage_and_exit(0);
+	}
+
+	/*
+	 * drbdsetup previously took the object to operate on as its first argument,
+	 * followed by the command.  For backwards compatibility, still support his.
+	 */
+	if (argc >= 3 && !find_cmd_by_name(argv[1]) && find_cmd_by_name(argv[2])) {
+		char *swap = argv[1];
+		argv[1] = argv[2];
+		argv[2] = swap;
 	}
 
 	/* it is enough to set it, value is ignored */
 	if (getenv("DRBD_DEBUG_DUMP_ARGV"))
 		debug_dump_argv = 1;
-	resname = getenv("DRBD_RESOURCE");
 
-	if (argc > 1 && (!strcmp(argv[1],"xml"))) {
-		if(argc >= 3) {
-			cmd=find_cmd_by_name(argv[2]);
-			if(cmd) print_command_usage(cmd-commands,NULL,XML);
-			else print_usage("unknown command");
-			exit(0);
-		}
-	}
+	if (argc < 2)
+		print_usage_and_exit(0);
 
-	if (argc < 3) print_usage(argc==1 ? 0 : " Insufficient arguments");
+	cmd = find_cmd_by_name(argv[1]);
+	if (!cmd)
+		print_usage_and_exit("invalid command");
 
-	cmd=find_cmd_by_name(argv[2]);
-
-	if (is_drbd_driver_missing()) {
-		if (!strcmp(argv[2], "down") ||
-		    !strcmp(argv[2], "secondary") ||
-		    !strcmp(argv[2], "disconnect") ||
-		    !strcmp(argv[2], "detach"))
+	if (!modprobe_drbd()) {
+		if (!strcmp(argv[1], "down") ||
+		    !strcmp(argv[1], "secondary") ||
+		    !strcmp(argv[1], "disconnect") ||
+		    !strcmp(argv[1], "detach"))
 			return 0; /* "down" succeeds even if drbd is missing */
-
-		fprintf(stderr, "do you need to load the module?\n"
-				"try: modprobe drbd\n");
 		return 20;
 	}
 
-	if(cmd) {
-		lock_fd = dt_lock_drbd(argv[1]);
-		minor=dt_minor_of_dev(argv[1]);
-		/* maybe rather canonicalize, using asprintf? */
-		devname = argv[1];
-		// by passing argc-2, argv+2 the function has the command name
-		// in argv[0], e.g. "syncer"
-		rv = cmd->function(cmd,minor,argc-2,argv+2);
-		dt_unlock_drbd(lock_fd);
-	} else {
-		print_usage("invalid command");
+	if (try_genl) {
+		if (cmd->continuous_poll)
+			drbd_genl_family.nl_groups = -1;
+		drbd_sock = genl_connect_to_family(&drbd_genl_family);
+		if (!drbd_sock) {
+			try_genl = 0;
+			exec_legacy_drbdsetup(argv);
+			/* Only reached in case exec() failed... */
+			fprintf(stderr, "Could not connect to 'drbd' generic netlink family\n");
+			return 20;
+		}
+		if (drbd_genl_family.version != API_VERSION ||
+		    drbd_genl_family.hdrsize != sizeof(struct drbd_genlmsghdr)) {
+			fprintf(stderr, "API mismatch!\n\t"
+				"API version drbdsetup: %u kernel: %u\n\t"
+				"header size drbdsetup: %u kernel: %u\n",
+				API_VERSION, drbd_genl_family.version,
+				(unsigned)sizeof(struct drbd_genlmsghdr),
+				drbd_genl_family.hdrsize);
+			return 20;
+		}
 	}
 
+	context = 0;
+	if (cmd->ctx_key & (CTX_MINOR | CTX_RESOURCE | CTX_ALL | CTX_RESOURCE_AND_CONNECTION)) {
+		if (argc < 3) {
+			fprintf(stderr, "Missing first argument\n");
+			print_command_usage(cmd, FULL);
+			exit(20);
+		}
+		objname = argv[2];
+		if (!strcmp(objname, "all")) {
+			if (!(cmd->ctx_key & CTX_ALL))
+				print_usage_and_exit("command does not accept argument 'all'");
+			context = CTX_ALL;
+		} else if (cmd->ctx_key & CTX_MINOR) {
+			minor = dt_minor_of_dev(objname);
+			if (minor == -1U && !(cmd->ctx_key &
+					(CTX_RESOURCE | CTX_RESOURCE_AND_CONNECTION))) {
+				fprintf(stderr, "Cannot determine minor device number of "
+						"device '%s'\n",
+					objname);
+				exit(20);
+			}
+			if (cmd->cmd_id != DRBD_ADM_GET_STATUS)
+				lock_fd = dt_lock_drbd(minor);
+			context = CTX_MINOR;
+		} else
+			context = CTX_RESOURCE;
+	}
+	if (cmd->ctx_key & (CTX_CONNECTION | CTX_RESOURCE_AND_CONNECTION)) {
+		if (argc < 4 + !!context) {
+			fprintf(stderr, "Missing connection endpoint argument\n");
+			print_command_usage(cmd, FULL);
+			exit(20);
+		}
+		context |= CTX_CONNECTION;
+	}
+	if (objname == NULL && (cmd->ctx_key & CTX_CONNECTION)) {
+		objname = getenv("DRBD_RESOURCE");
+		if (objname == NULL)
+			m_asprintf(&objname, "connection %s %s", argv[2], argv[3]);
+	}
+	if (objname == NULL && cmd->ctx == &new_minor_cmd_ctx)
+		objname = argv[2];
+	if (objname == NULL)
+		objname = "??";
+
+	/* Make it so that argv[0] is the command name. */
+	rv = cmd->function(cmd, argc - 1, argv + 1);
+	dt_unlock_drbd(lock_fd);
 	return rv;
 }
+#endif

@@ -1,12 +1,22 @@
 #ifndef _DRBD_WRAPPERS_H
 #define _DRBD_WRAPPERS_H
 
+#include "compat.h"
 #include <linux/ctype.h>
 #include <linux/net.h>
-
 #include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0)
-# error "use a 2.6 kernel, please"
+#include <linux/crypto.h>
+#include <linux/netlink.h>
+#include <linux/idr.h>
+#include <linux/fs.h>
+#include <linux/bio.h>
+#include <linux/slab.h>
+#include <linux/completion.h>
+#include <linux/proc_fs.h>
+#include <linux/blkdev.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
+# error "At least kernel version 2.6.18 (with patches) required"
 #endif
 
 /* The history of blkdev_issue_flush()
@@ -17,7 +27,6 @@
    It had 4 arguments before dd3932eddf428571762596e17b65f5dc92ca361b,
    after it got 3 arguments. (With that commit came BLKDEV_DISCARD_SECURE
    and BLKDEV_IFL_WAIT disappeared again.) */
-#include <linux/blkdev.h>
 #ifndef BLKDEV_IFL_WAIT
 #ifndef BLKDEV_DISCARD_SECURE
 /* before fbd9b09a177 */
@@ -28,34 +37,6 @@
 /* between fbd9b09a177 and dd3932eddf4 */
 #define blkdev_issue_flush(b, gfpf, s)	blkdev_issue_flush(b, gfpf, s, BLKDEV_IFL_WAIT)
 #endif
-
-#include <linux/fs.h>
-#include <linux/bio.h>
-#include <linux/slab.h>
-#include <linux/completion.h>
-
-/* for the proc_create wrapper */
-#include <linux/proc_fs.h>
-
-/* struct page has a union in 2.6.15 ...
- * an anonymous union and struct since 2.6.16
- * or in fc5 "2.6.15" */
-#include <linux/mm.h>
-#ifndef page_private
-# define page_private(page)		((page)->private)
-# define set_page_private(page, v)	((page)->private = (v))
-#endif
-
-/* mutex was not available before 2.6.16.
- * various vendors provide various degrees of backports.
- * we provide the missing parts ourselves, if neccessary.
- * this one is for RHEL/Centos 4 */
-#if defined(mutex_lock) && !defined(mutex_is_locked)
-#define mutex_is_locked(m) (atomic_read(&(m)->count) != 1)
-#endif
-
-/* see get_sb_bdev and bd_claim */
-extern char *drbd_sec_holder;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)
 static inline unsigned short queue_logical_block_size(struct request_queue *q)
@@ -73,14 +54,7 @@ static inline sector_t bdev_logical_block_size(struct block_device *bdev)
 
 static inline unsigned int queue_max_hw_sectors(struct request_queue *q)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-	/* before upstream commit ba066f3a0469dfc6d8fbdf70fabfd8c069fbf306,
-	 * there is no max_hw_sectors. Simply use max_sectors here,
-	 * it should be good enough. Affected: sles9. */
-	return q->max_sectors;
-#else
 	return q->max_hw_sectors;
-#endif
 }
 
 static inline unsigned int queue_max_sectors(struct request_queue *q)
@@ -94,13 +68,6 @@ static inline void blk_queue_logical_block_size(struct request_queue *q, unsigne
 }
 #endif
 
-/* Returns the number of 512 byte sectors of the device */
-static inline sector_t drbd_get_capacity(struct block_device *bdev)
-{
-	/* return bdev ? get_capacity(bdev->bd_disk) : 0; */
-	return bdev ? i_size_read(bdev->bd_inode) >> 9 : 0;
-}
-
 #ifdef COMPAT_HAVE_VOID_MAKE_REQUEST
 /* in Commit 5a7bbad27a410350e64a2d7f5ec18fc73836c14f (between Linux-3.1 and 3.2)
    make_request() becomes type void. Before it had type int. */
@@ -111,17 +78,8 @@ static inline sector_t drbd_get_capacity(struct block_device *bdev)
 #define MAKE_REQUEST_RETURN return 0
 #endif
 
-/* sets the number of 512 byte sectors of our virtual device */
-static inline void drbd_set_my_capacity(struct drbd_conf *mdev,
-					sector_t size)
-{
-	/* set_capacity(mdev->this_bdev->bd_disk, size); */
-	set_capacity(mdev->vdisk, size);
-	mdev->this_bdev->bd_inode->i_size = (loff_t)size << 9;
-}
-
 #ifndef COMPAT_HAVE_FMODE_T
-typedef unsigned fmode_t;
+typedef unsigned __bitwise__ fmode_t;
 #endif
 
 #ifndef COMPAT_HAVE_BLKDEV_GET_BY_PATH
@@ -190,8 +148,8 @@ static inline int drbd_blkdev_put(struct block_device *bdev, fmode_t mode)
 
 /* bi_end_io handlers */
 extern BIO_ENDIO_TYPE drbd_md_io_complete BIO_ENDIO_ARGS(struct bio *bio, int error);
-extern BIO_ENDIO_TYPE drbd_endio_sec BIO_ENDIO_ARGS(struct bio *bio, int error);
-extern BIO_ENDIO_TYPE drbd_endio_pri BIO_ENDIO_ARGS(struct bio *bio, int error);
+extern BIO_ENDIO_TYPE drbd_peer_request_endio BIO_ENDIO_ARGS(struct bio *bio, int error);
+extern BIO_ENDIO_TYPE drbd_request_endio BIO_ENDIO_ARGS(struct bio *bio, int error);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 #define part_inc_in_flight(A, B) part_inc_in_flight(A)
@@ -220,14 +178,6 @@ static inline void sg_set_page(struct scatterlist *sg, struct page *page,
 
 #define sg_init_table(S,N) ({})
 
-#ifdef NEED_SG_SET_BUF
-static inline void sg_set_buf(struct scatterlist *sg, const void *buf,
-			      unsigned int buflen)
-{
-	sg_set_page(sg, virt_to_page(buf), buflen, offset_in_page(buf));
-}
-#endif
-
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28)
@@ -248,77 +198,10 @@ static inline void sg_set_buf(struct scatterlist *sg, const void *buf,
 # endif
 # define disk_to_kobj(disk) (&disk_to_dev(disk)->kobj)
 #endif
-static inline void drbd_kobject_uevent(struct drbd_conf *mdev)
+
+static inline int drbd_backing_bdev_events(struct gendisk *disk)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10)
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,15)
-	kobject_uevent(disk_to_kobj(mdev->vdisk), KOBJ_CHANGE, NULL);
-#else
-	kobject_uevent(disk_to_kobj(mdev->vdisk), KOBJ_CHANGE);
-	/* rhel4 / sles9 and older don't have this at all,
-	 * which means user space (udev) won't get events about possible changes of
-	 * corresponding resource + disk names after the initial drbd minor creation.
-	 */
-#endif
-#endif
-}
-
-
-/*
- * used to submit our private bio
- */
-static inline void drbd_generic_make_request(struct drbd_conf *mdev,
-					     int fault_type, struct bio *bio)
-{
-	__release(local);
-	if (!bio->bi_bdev) {
-		printk(KERN_ERR "drbd%d: drbd_generic_make_request: "
-				"bio->bi_bdev == NULL\n",
-		       mdev_to_minor(mdev));
-		dump_stack();
-		bio_endio(bio, -ENODEV);
-		return;
-	}
-
-	if (drbd_insert_fault(mdev, fault_type))
-		bio_endio(bio, -EIO);
-	else
-		generic_make_request(bio);
-}
-
-/* see 7eaceac block: remove per-queue plugging */
-#ifdef blk_queue_plugged
-static inline void drbd_plug_device(struct drbd_conf *mdev)
-{
-	struct request_queue *q;
-	q = bdev_get_queue(mdev->this_bdev);
-
-	spin_lock_irq(q->queue_lock);
-
-/* XXX the check on !blk_queue_plugged is redundant,
- * implicitly checked in blk_plug_device */
-
-	if (!blk_queue_plugged(q)) {
-		blk_plug_device(q);
-		del_timer(&q->unplug_timer);
-		/* unplugging should not happen automatically... */
-	}
-	spin_unlock_irq(q->queue_lock);
-}
-#else
-static inline void drbd_plug_device(struct drbd_conf *mdev)
-{
-}
-#endif
-
-static inline int drbd_backing_bdev_events(struct drbd_conf *mdev)
-{
-	struct gendisk *disk = mdev->ldev->backing_bdev->bd_contains->bd_disk;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,15)
-	/* very old kernel */
-	return (int)disk_stat_read(disk, read_sectors)
-	     + (int)disk_stat_read(disk, write_sectors);
-#elif defined(__disk_stat_inc)
+#if defined(__disk_stat_inc)
 	/* older kernel */
 	return (int)disk_stat_read(disk, sectors[0])
 	     + (int)disk_stat_read(disk, sectors[1]);
@@ -329,15 +212,8 @@ static inline int drbd_backing_bdev_events(struct drbd_conf *mdev)
 #endif
 }
 
-#ifdef DEFINE_SOCK_CREATE_KERN
-#define sock_create_kern sock_create
-#endif
-
-#ifdef USE_KMEM_CACHE_S
-#define kmem_cache kmem_cache_s
-#endif
-
-#ifdef DEFINE_KERNEL_SOCK_SHUTDOWN
+#ifndef COMPAT_HAVE_SOCK_SHUTDOWN
+#define COMPAT_HAVE_SOCK_SHUTDOWN 1
 enum sock_shutdown_cmd {
 	SHUT_RD = 0,
 	SHUT_WR = 1,
@@ -358,72 +234,6 @@ static inline void drbd_unregister_blkdev(unsigned int major, const char *name)
 }
 #else
 #define drbd_unregister_blkdev unregister_blkdev
-#endif
-
-#ifdef NEED_BACKPORT_OF_ATOMIC_ADD
-
-#if defined(__x86_64__)
-
-static __inline__ int atomic_add_return(int i, atomic_t *v)
-{
-	int __i = i;
-	__asm__ __volatile__(
-		LOCK_PREFIX "xaddl %0, %1;"
-		:"=r"(i)
-		:"m"(v->counter), "0"(i));
-	return i + __i;
-}
-
-static __inline__ int atomic_sub_return(int i, atomic_t *v)
-{
-	return atomic_add_return(-i, v);
-}
-
-#define atomic_inc_return(v)  (atomic_add_return(1,v))
-#define atomic_dec_return(v)  (atomic_sub_return(1,v))
-
-#elif defined(__i386__) || defined(__arch_um__)
-
-static __inline__ int atomic_add_return(int i, atomic_t *v)
-{
-	int __i;
-#ifdef CONFIG_M386
-	unsigned long flags;
-	if(unlikely(boot_cpu_data.x86==3))
-		goto no_xadd;
-#endif
-	/* Modern 486+ processor */
-	__i = i;
-	__asm__ __volatile__(
-		LOCK_PREFIX "xaddl %0, %1;"
-		:"=r"(i)
-		:"m"(v->counter), "0"(i));
-	return i + __i;
-
-#ifdef CONFIG_M386
-no_xadd: /* Legacy 386 processor */
-	local_irq_save(flags);
-	__i = atomic_read(v);
-	atomic_set(v, i + __i);
-	local_irq_restore(flags);
-	return i + __i;
-#endif
-}
-
-static __inline__ int atomic_sub_return(int i, atomic_t *v)
-{
-	return atomic_add_return(-i, v);
-}
-
-#define atomic_inc_return(v)  (atomic_add_return(1,v))
-#define atomic_dec_return(v)  (atomic_sub_return(1,v))
-
-#else
-# error "You need to copy/past atomic_inc_return()/atomic_dec_return() here"
-# error "for your architecture. (Hint: Kernels after 2.6.10 have those"
-# error "by default! Using a later kernel might be less effort!)"
-#endif
-
 #endif
 
 #if !defined(CRYPTO_ALG_ASYNC)
@@ -546,22 +356,10 @@ static inline int crypto_hash_final(struct hash_desc *desc, u8 *out)
 
 #endif
 
-static inline int drbd_crypto_is_hash(struct crypto_tfm *tfm)
+#ifndef COMPAT_HAVE_VZALLOC
+static inline void *vzalloc(unsigned long size)
 {
-#ifdef CRYPTO_ALG_TYPE_HASH_MASK
-	/* see include/linux/crypto.h */
-	return !((crypto_tfm_alg_type(tfm) ^ CRYPTO_ALG_TYPE_HASH)
-		& CRYPTO_ALG_TYPE_HASH_MASK);
-#else
-	return crypto_tfm_alg_type(tfm) == CRYPTO_ALG_TYPE_HASH;
-#endif
-}
-
-
-#ifdef NEED_BACKPORT_OF_KZALLOC
-static inline void *kzalloc(size_t size, int flags)
-{
-	void *rv = kmalloc(size, flags);
+	void *rv = vmalloc(size);
 	if (rv)
 		memset(rv, 0, size);
 
@@ -569,10 +367,19 @@ static inline void *kzalloc(size_t size, int flags)
 }
 #endif
 
+#ifndef COMPAT_HAVE_UMH_WAIT_PROC
+/* On Jul 17 2007 with commit 86313c4 usermodehelper: Tidy up waiting,
+ * UMH_WAIT_PROC was added as an enum value of 1.
+ * On Mar 23 2012 with commit 9d944ef3 that got changed to a define of 2. */
+#define UMH_WAIT_PROC 1
+#endif
+
 /* see upstream commit 2d3854a37e8b767a51aba38ed6d22817b0631e33 */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30)
 #ifndef cpumask_bits
+#ifndef COMPAT_HAVE_NR_CPU_IDS
 #define nr_cpu_ids NR_CPUS
+#endif
 #define nr_cpumask_bits nr_cpu_ids
 
 typedef cpumask_t cpumask_var_t[1];
@@ -638,8 +445,8 @@ static inline int zalloc_cpumask_var(cpumask_var_t *mask, gfp_t flags)
 
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-#define __bitmap_parse(BUF, BUFLEN, ISUSR, MASKP, NMASK) \
-	backport_bitmap_parse(BUF, BUFLEN, ISUSR, MASKP, NMASK)
+#define bitmap_parse(BUF, BUFLEN, MASKP, NMASK) \
+	backport_bitmap_parse(BUF, BUFLEN, 0, MASKP, NMASK)
 
 #define CHUNKSZ                         32
 #define nbits_to_hold_value(val)        fls(val)
@@ -715,24 +522,6 @@ static inline int backport_bitmap_parse(const char *buf, unsigned int buflen,
 }
 #endif
 
-#ifndef __CHECKER__
-# undef __cond_lock
-# define __cond_lock(x,c) (c)
-#endif
-
-#ifndef KERNEL_HAS_GFP_T
-#define KERNEL_HAS_GFP_T
-typedef unsigned gfp_t;
-#endif
-
-
-/* struct kvec didn't exist before 2.6.8, this is an ugly
- * #define to work around it ... - jt */
-
-#ifndef KERNEL_HAS_KVEC
-#define kvec iovec
-#endif
-
 #ifndef net_random
 #define random32 net_random
 #endif
@@ -748,7 +537,7 @@ typedef unsigned gfp_t;
  * this "backport" does not close the race that lead to the API change,
  * but only provides an equivalent function call.
  */
-#ifndef KERNEL_HAS_PROC_CREATE_DATA
+#ifndef COMPAT_HAVE_PROC_CREATE_DATA
 static inline struct proc_dir_entry *proc_create_data(const char *name,
 	mode_t mode, struct proc_dir_entry *parent,
 	struct file_operations *proc_fops, void *data)
@@ -763,37 +552,12 @@ static inline struct proc_dir_entry *proc_create_data(const char *name,
 
 #endif
 
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30)
-#define TP_PROTO(args...)	args
-#define TP_ARGS(args...)		args
-
-#undef DECLARE_TRACE
-#define DECLARE_TRACE(name, proto, args)				\
-	static inline void _do_trace_##name(struct tracepoint *tp, proto) \
-	{ }								\
-	static inline void trace_##name(proto)				\
-	{ }								\
-	static inline int register_trace_##name(void (*probe)(proto))	\
-	{								\
-		return -ENOSYS;						\
-	}								\
-	static inline int unregister_trace_##name(void (*probe)(proto))	\
-	{								\
-		return -ENOSYS;						\
-	}
-
-#undef DEFINE_TRACE
-#define DEFINE_TRACE(name)
-
-#endif
-
-#ifdef NEED_BLK_QUEUE_MAX_HW_SECTORS
+#ifndef COMPAT_HAVE_BLK_QUEUE_MAX_HW_SECTORS
 static inline void blk_queue_max_hw_sectors(struct request_queue *q, unsigned int max)
 {
 	blk_queue_max_sectors(q, max);
 }
-#elif defined(USE_BLK_QUEUE_MAX_SECTORS_ANYWAYS)
+#elif defined(COMPAT_USE_BLK_QUEUE_MAX_SECTORS_ANYWAYS)
 	/* For kernel versions 2.6.31 to 2.6.33 inclusive, even though
 	 * blk_queue_max_hw_sectors is present, we actually need to use
 	 * blk_queue_max_sectors to set max_hw_sectors. :-(
@@ -803,60 +567,13 @@ static inline void blk_queue_max_hw_sectors(struct request_queue *q, unsigned in
 #define blk_queue_max_hw_sectors(q, max)	blk_queue_max_sectors(q, max)
 #endif
 
-#ifdef NEED_BLK_QUEUE_MAX_SEGMENTS
+#ifndef COMPAT_HAVE_BLK_QUEUE_MAX_SEGMENTS
 static inline void blk_queue_max_segments(struct request_queue *q, unsigned short max_segments)
 {
 	blk_queue_max_phys_segments(q, max_segments);
 	blk_queue_max_hw_segments(q, max_segments);
 #define BLK_MAX_SEGMENTS MAX_HW_SEGMENTS /* or max MAX_PHYS_SEGMENTS. Probably does not matter */
 }
-#endif
-
-#ifdef NEED_ATOMIC_ADD_UNLESS
-#ifndef atomic_xchg
-static inline int atomic_xchg(atomic_t *v, int new)
-{
-	return xchg(&v->counter, new);
-}
-#endif
-#ifndef atomic_cmpxchg
-static inline int atomic_cmpxchg(atomic_t *v, int old, int new)
-{
-	return cmpxchg(&v->counter, old, new);
-}
-#endif
-
-/**
- * atomic_add_unless - add unless the number is already a given value
- * @v: pointer of type atomic_t
- * @a: the amount to add to v...
- * @u: ...unless v is equal to u.
- *
- * Atomically adds @a to @v, so long as @v was not already @u.
- * Returns non-zero if @v was not @u, and zero otherwise.
- */
-static inline int atomic_add_unless(atomic_t *v, int a, int u)
-{
-	int c, old;
-	c = atomic_read(v);
-	for (;;) {
-		if (unlikely(c == (u)))
-			break;
-		old = atomic_cmpxchg((v), c, c + (a));
-		if (likely(old == c))
-			break;
-		c = old;
-	}
-	return c != (u);
-}
-#endif
-
-#ifdef NEED_BOOL_TYPE
-typedef _Bool                   bool;
-enum {
-	false = 0,
-	true = 1
-};
 #endif
 
 /* REQ_* and BIO_RW_* flags have been moved around in the tree,
@@ -990,25 +707,6 @@ NOTE: DISCARDs likely need some work still.  We should actually never see
 DISCARD requests, as our queue does not announce QUEUE_FLAG_DISCARD yet.
 */
 
-#ifndef COMPLETION_INITIALIZER_ONSTACK
-#define COMPLETION_INITIALIZER_ONSTACK(work) \
-	({ init_completion(&work); work; })
-#endif
-
-#ifdef NEED_SCHEDULE_TIMEOUT_INTERR
-static inline signed long schedule_timeout_interruptible(signed long timeout)
-{
-	__set_current_state(TASK_INTERRUPTIBLE);
-        return schedule_timeout(timeout);
-}
-
-static inline signed long schedule_timeout_uninterruptible(signed long timeout)
-{
-        __set_current_state(TASK_UNINTERRUPTIBLE);
-        return schedule_timeout(timeout);
-}
-#endif
-
 #ifndef CONFIG_DYNAMIC_DEBUG
 /* At least in 2.6.34 the function macro dynamic_dev_dbg() is broken when compiling
    without CONFIG_DYNAMIC_DEBUG. It has 'format' in the argument list, it references
@@ -1041,54 +739,103 @@ static inline signed long schedule_timeout_uninterruptible(signed long timeout)
 	 time_before_eq(a,c))
 #endif
 
-#ifdef COMPAT_HAVE_BIOSET_CREATE
-#ifndef COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD
-/*
- * upstream commit (included in 2.6.29)
- * commit bb799ca0202a360fa74d5f17039b9100caebdde7
- * Author: Jens Axboe <jens.axboe@oracle.com>
- * Date:   Wed Dec 10 15:35:05 2008 +0100
- *
- *     bio: allow individual slabs in the bio_set
- *
- * does
- * -struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size)
- * +struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
- *
- * Note that up until 2.6.21 inclusive, it was
- * struct bio_set *bioset_create(int bio_pool_size, int bvec_pool_size, int scale)
- * so if we want to support old kernels (RHEL5), we will need an additional compat check.
- *
- * This also means that we must not use the front_pad trick as long as we want
- * to keep compatibility with < 2.6.29.
- */
-#ifdef COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS
-#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size, 1)
-#else
-#define bioset_create(pool_size, front_pad)    bioset_create(pool_size, pool_size)
+#ifdef COMPAT_BIO_SPLIT_HAS_BIO_SPLIT_POOL_PARAMETER
+#define bio_split(bi, first_sectors) bio_split(bi, bio_split_pool, first_sectors)
 #endif
-#endif /* COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD */
-#else /* COMPAT_HAVE_BIOSET_CREATE */
-/* Old kernel, no bioset_create at all!
- * Just do plain alloc_bio, and forget about the dedicated bioset */
-static inline struct bio_set *bioset_create(unsigned int pool_size, unsigned int front_pad)
+
+#ifndef COMPAT_HAVE_BIOSET_CREATE_FRONT_PAD
+/* see comments in compat/tests/have_bioset_create_front_pad.c */
+#ifdef COMPAT_BIOSET_CREATE_HAS_THREE_PARAMETERS
+#define bioset_create(pool_size, front_pad)	bioset_create(pool_size, pool_size, 1)
+#else
+#define bioset_create(pool_size, front_pad)	bioset_create(pool_size, 1)
+#endif
+#endif
+
+
+#if !(defined(COMPAT_HAVE_RB_AUGMENT_FUNCTIONS) && \
+      defined(AUGMENTED_RBTREE_SYMBOLS_EXPORTED))
+
+/*
+ * Make sure the replacements for the augmented rbtree helper functions do not
+ * clash with functions the kernel implements but does not export.
+ */
+#define rb_augment_f drbd_rb_augment_f
+#define rb_augment_path drbd_rb_augment_path
+#define rb_augment_insert drbd_rb_augment_insert
+#define rb_augment_erase_begin drbd_rb_augment_erase_begin
+#define rb_augment_erase_end drbd_rb_augment_erase_end
+
+typedef void (*rb_augment_f)(struct rb_node *node, void *data);
+
+static inline void rb_augment_path(struct rb_node *node, rb_augment_f func, void *data)
 {
-	return NULL;
+	struct rb_node *parent;
+
+up:
+	func(node, data);
+	parent = rb_parent(node);
+	if (!parent)
+		return;
+
+	if (node == parent->rb_left && parent->rb_right)
+		func(parent->rb_right, data);
+	else if (parent->rb_left)
+		func(parent->rb_left, data);
+
+	node = parent;
+	goto up;
 }
-static inline void bioset_free(struct bio_set *bs)
+
+/*
+ * after inserting @node into the tree, update the tree to account for
+ * both the new entry and any damage done by rebalance
+ */
+static inline void rb_augment_insert(struct rb_node *node, rb_augment_f func, void *data)
 {
-	BUG();
+	if (node->rb_left)
+		node = node->rb_left;
+	else if (node->rb_right)
+		node = node->rb_right;
+
+	rb_augment_path(node, func, data);
 }
-static inline void bio_free(struct bio *bio, struct bio_set *bs)
+
+/*
+ * before removing the node, find the deepest node on the rebalance path
+ * that will still be there after @node gets removed
+ */
+static inline struct rb_node *rb_augment_erase_begin(struct rb_node *node)
 {
-	BUG();
+	struct rb_node *deepest;
+
+	if (!node->rb_right && !node->rb_left)
+		deepest = rb_parent(node);
+	else if (!node->rb_right)
+		deepest = node->rb_left;
+	else if (!node->rb_left)
+		deepest = node->rb_right;
+	else {
+		deepest = rb_next(node);
+		if (deepest->rb_right)
+			deepest = deepest->rb_right;
+		else if (rb_parent(deepest) != node)
+			deepest = rb_parent(deepest);
+	}
+
+	return deepest;
 }
-static inline struct bio *bio_alloc_bioset(gfp_t gfp_mask, int nr_iovecs, struct bio_set *bs)
+
+/*
+ * after removal, update the tree to account for the removed entry
+ * and any rebalance damage.
+ */
+static inline void rb_augment_erase_end(struct rb_node *node, rb_augment_f func, void *data)
 {
-	BUG();
-	return NULL;
+	if (node)
+		rb_augment_path(node, func, data);
 }
-#endif /* COMPAT_HAVE_BIOSET_CREATE */
+#endif
 
 /*
  * In commit c4945b9e (v2.6.39-rc1), the little-endian bit operations have been
@@ -1107,8 +854,431 @@ static inline struct bio *bio_alloc_bioset(gfp_t gfp_mask, int nr_iovecs, struct
 	generic___test_and_clear_le_bit(nr, addr)
 #endif
 
-#ifdef COMPAT_KREF_PUT_HAS_SINGLE_ARG
-#define kref_put(KREF, RELEASE)	({ (KREF)->release=RELEASE; kref_put(KREF); })
+#ifndef IDR_GET_NEXT_EXPORTED
+/* Body in compat/idr.c */
+extern void *idr_get_next(struct idr *idp, int *nextidp);
+#endif
+
+/* #ifndef COMPAT_HAVE_LIST_ENTRY_RCU */
+#ifndef list_entry_rcu
+#ifndef rcu_dereference_raw
+/* see c26d34a rcu: Add lockdep-enabled variants of rcu_dereference() */
+#define rcu_dereference_raw(p) rcu_dereference(p)
+#endif
+#define list_entry_rcu(ptr, type, member) \
+	({typeof (*ptr) *__ptr = (typeof (*ptr) __force *)ptr; \
+	 container_of((typeof(ptr))rcu_dereference_raw(__ptr), type, member); \
+	})
+#endif
+
+/*
+ * Introduced in 930631ed (v2.6.19-rc1).
+ */
+#ifndef DIV_ROUND_UP
+#define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
+#endif
+
+/*
+ * IS_ALIGNED() was added to <linux/kernel.h> in mainline commit 0c0e6195 (and
+ * improved in f10db627); 2.6.24-rc1.
+ */
+#ifndef IS_ALIGNED
+#define IS_ALIGNED(x, a) (((x) & ((typeof(x))(a) - 1)) == 0)
+#endif
+
+/*
+ * NLA_TYPE_MASK and nla_type() were added to <linux/netlink.h> in mainline
+ * commit 8f4c1f9b; v2.6.24-rc1.  Before that, none of the nlattr->nla_type
+ * flags had a special meaning.
+ */
+
+#ifndef NLA_TYPE_MASK
+#define NLA_TYPE_MASK ~0
+
+static inline int nla_type(const struct nlattr *nla)
+{
+	return nla->nla_type & NLA_TYPE_MASK;
+}
+
+#endif
+
+/*
+ * nlmsg_hdr was added to <linux/netlink.h> in mainline commit b529ccf2
+ * (v2.6.22-rc1).
+ */
+
+#ifndef COMPAT_HAVE_NLMSG_HDR
+static inline struct nlmsghdr *nlmsg_hdr(const struct sk_buff *skb)
+{
+	return (struct nlmsghdr *)skb->data;
+}
+#endif
+
+/*
+ * genlmsg_reply() was added to <net/genetlink.h> in mainline commit 81878d27
+ * (v2.6.20-rc2).
+ */
+
+#ifndef COMPAT_HAVE_GENLMSG_REPLY
+#include <net/genetlink.h>
+
+static inline int genlmsg_reply(struct sk_buff *skb, struct genl_info *info)
+{
+	return genlmsg_unicast(skb, info->snd_pid);
+}
+#endif
+
+/*
+ * genlmsg_msg_size() and genlmsg_total_size() were added to <net/genetlink.h>
+ * in mainline commit 17db952c (v2.6.19-rc1).
+ */
+
+#ifndef COMPAT_HAVE_GENLMSG_MSG_SIZE
+#include <linux/netlink.h>
+#include <linux/genetlink.h>
+
+static inline int genlmsg_msg_size(int payload)
+{
+	return GENL_HDRLEN + payload;
+}
+
+static inline int genlmsg_total_size(int payload)
+{
+	return NLMSG_ALIGN(genlmsg_msg_size(payload));
+}
+#endif
+
+/*
+ * genlmsg_new() was added to <net/genetlink.h> in mainline commit 3dabc715
+ * (v2.6.20-rc2).
+ */
+
+#ifndef COMPAT_HAVE_GENLMSG_NEW
+#include <net/genetlink.h>
+
+static inline struct sk_buff *genlmsg_new(size_t payload, gfp_t flags)
+{
+	return nlmsg_new(genlmsg_total_size(payload), flags);
+}
+#endif
+
+/*
+ * genlmsg_put() was introduced in mainline commit 482a8524 (v2.6.15-rc1) and
+ * changed in 17c157c8 (v2.6.20-rc2).  genlmsg_put_reply() was introduced in
+ * 17c157c8.  We replace the compat_genlmsg_put() from 482a8524.
+ */
+
+#ifndef COMPAT_HAVE_GENLMSG_PUT_REPLY
+#include <net/genetlink.h>
+
+static inline void *compat_genlmsg_put(struct sk_buff *skb, u32 pid, u32 seq,
+				       struct genl_family *family, int flags,
+				       u8 cmd)
+{
+	struct nlmsghdr *nlh;
+	struct genlmsghdr *hdr;
+
+	nlh = nlmsg_put(skb, pid, seq, family->id, GENL_HDRLEN +
+			family->hdrsize, flags);
+	if (nlh == NULL)
+		return NULL;
+
+	hdr = nlmsg_data(nlh);
+	hdr->cmd = cmd;
+	hdr->version = family->version;
+	hdr->reserved = 0;
+
+	return (char *) hdr + GENL_HDRLEN;
+}
+
+#define genlmsg_put compat_genlmsg_put
+
+static inline void *genlmsg_put_reply(struct sk_buff *skb,
+                                      struct genl_info *info,
+                                      struct genl_family *family,
+                                      int flags, u8 cmd)
+{
+	return genlmsg_put(skb, info->snd_pid, info->snd_seq, family,
+			   flags, cmd);
+}
+#endif
+
+/*
+ * compat_genlmsg_multicast() got a gfp_t parameter in mainline commit d387f6ad
+ * (v2.6.19-rc1).
+ */
+
+#ifdef COMPAT_NEED_GENLMSG_MULTICAST_WRAPPER
+#include <net/genetlink.h>
+
+static inline int compat_genlmsg_multicast(struct sk_buff *skb, u32 pid,
+					   unsigned int group, gfp_t flags)
+{
+	return genlmsg_multicast(skb, pid, group);
+}
+
+#define genlmsg_multicast compat_genlmsg_multicast
+
+#endif
+
+/*
+ * Dynamic generic netlink multicast groups were introduced in mainline commit
+ * 2dbba6f7 (v2.6.23-rc1).  Before that, netlink had a fixed number of 32
+ * multicast groups.  Use an arbitrary hard-coded group number for that case.
+ */
+
+#ifndef COMPAT_HAVE_CTRL_ATTR_MCAST_GROUPS
+
+struct genl_multicast_group {
+	struct genl_family	*family;	/* private */
+        struct list_head	list;		/* private */
+        char			name[GENL_NAMSIZ];
+	u32			id;
+};
+
+static inline int genl_register_mc_group(struct genl_family *family,
+					 struct genl_multicast_group *grp)
+{
+	grp->id = 1;
+	return 0;
+}
+
+static inline void genl_unregister_mc_group(struct genl_family *family,
+					    struct genl_multicast_group *grp)
+{
+}
+
+#endif
+
+/* pr_warning was introduced with 2.6.37 (commit 968ab183)
+ */
+#ifndef pr_fmt
+#define pr_fmt(fmt) fmt
+#endif
+
+#ifndef pr_warning
+#define pr_warning(fmt, ...) \
+        printk(KERN_WARNING pr_fmt(fmt), ##__VA_ARGS__)
+#endif
+
+#ifndef COMPAT_HAVE_IS_ERR_OR_NULL
+static inline long __must_check IS_ERR_OR_NULL(const void *ptr)
+{
+	return !ptr || IS_ERR_VALUE((unsigned long)ptr);
+}
+#endif
+
+#ifndef disk_to_dev
+/* disk_to_dev was introduced with 2.6.27. Before that the kobj was directly in gendisk */
+static inline struct kobject *drbd_kobj_of_disk(struct gendisk *disk)
+{
+	return &disk->kobj;
+}
+#else
+static inline struct kobject *drbd_kobj_of_disk(struct gendisk *disk)
+{
+	return &disk_to_dev(disk)->kobj;
+}
+#endif
+
+#ifndef ULLONG_MAX
+/* introduced in 2.6.18 */
+#define ULLONG_MAX (~0ULL)
+#endif
+
+#ifndef SK_CAN_REUSE
+/* This constant was introduced by Pavel Emelyanov <xemul@parallels.com> on
+   Thu Apr 19 03:39:36 2012 +0000. Before the release of linux-3.5
+   commit 4a17fd52 sock: Introduce named constants for sk_reuse */
+#define SK_CAN_REUSE   1
+#endif
+
+#ifndef COMPAT_HAVE_KREF_SUB
+static inline int kref_sub(struct kref *kref, unsigned int count,
+	     void (*release)(struct kref *kref))
+{
+	WARN_ON(release == NULL);
+
+	if (atomic_sub_and_test((int) count, &kref->refcount)) {
+		release(kref);
+		return 1;
+	}
+	return 0;
+}
+#endif
+
+#ifndef KOBJECT_CREATE_AND_ADD_EXPORTED
+struct kobject *kobject_create_and_add(const char *name, struct kobject *parent);
+int kobject_init_and_add(struct kobject *kobj, struct kobj_type *ktype,
+			 struct kobject *parent, const char *name);
+#endif
+
+#ifdef COMPAT_KMAP_ATOMIC_PAGE_ONLY
+/* see 980c19e3
+ * highmem: mark k[un]map_atomic() with two arguments as deprecated */
+#define drbd_kmap_atomic(page, km)	kmap_atomic(page)
+#define drbd_kunmap_atomic(addr, km)	kunmap_atomic(addr)
+#else
+#define drbd_kmap_atomic(page, km)	kmap_atomic(page, km)
+#define drbd_kunmap_atomic(addr, km)	kunmap_atomic(addr, km)
+#endif
+
+#ifdef COMPAT_HAVE_NETLINK_SKB_PARMS_PORTID
+#define NETLINK_CB_PORTID(skb) NETLINK_CB(skb).portid
+#else
+#define NETLINK_CB_PORTID(skb) NETLINK_CB(skb).pid
+#endif
+
+
+#ifndef COMPAT_HAVE_LIST_SPLICE_TAIL_INIT
+static inline void __backported_list_splice(const struct list_head *list,
+					    struct list_head *prev,
+					    struct list_head *next)
+{
+        struct list_head *first = list->next;
+        struct list_head *last = list->prev;
+
+        first->prev = prev;
+        prev->next = first;
+
+        last->next = next;
+        next->prev = last;
+}
+
+static inline void list_splice_tail_init(struct list_head *list,
+                                         struct list_head *head)
+{
+        if (!list_empty(list)) {
+		__backported_list_splice(list, head->prev, head);
+                INIT_LIST_HEAD(list);
+        }
+}
+#endif
+
+#ifndef COMPAT_HAVE_IDR_ALLOC
+static inline int idr_alloc(struct idr *idr, void *ptr, int start, int end, gfp_t gfp_mask)
+{
+	int rv, got;
+
+	if (!idr_pre_get(idr, gfp_mask))
+		return -ENOMEM;
+	rv = idr_get_new_above(idr, ptr, start, &got);
+	if (rv < 0)
+		return rv;
+
+	if (got >= end) {
+		idr_remove(idr, got);
+		return -ENOSPC;
+	}
+
+	return got;
+}
+#endif
+
+#ifndef COMPAT_HAVE_IDR_FOR_EACH_ENTRY
+/**
+ * idr_for_each_entry - iterate over an idr's elements of a given type
+ * @idp:     idr handle
+ * @entry:   the type * to use as cursor
+ * @id:      id entry's key
+ *
+ * @entry and @id do not need to be initialized before the loop, and
+ * after normal terminatinon @entry is left with the value NULL.  This
+ * is convenient for a "not found" value.
+  */
+#define idr_for_each_entry(idp, entry, id)                     \
+       for (id = 0; ((entry) = idr_get_next(idp, &(id))) != NULL; ++id)
+#endif
+
+#ifndef COMPAT_HAVE_PRANDOM_U32
+static inline u32 prandom_u32(void)
+{
+	return random32();
+}
+#endif
+
+#ifndef COMPAT_HAVE_PROC_PDE_DATA
+#define PDE_DATA(inode) PDE(inode)->data
+#endif
+
+#ifndef COMPAT_HAVE_TASK_PID_NR
+#include <linux/sched.h>
+
+static inline pid_t task_pid_nr(struct task_struct *tsk)
+{
+	return tsk->pid;
+}
+#endif
+
+#ifndef for_each_cpu
+# define for_each_cpu(cpu, mask) for_each_cpu_mask(cpu, mask)
+#endif
+
+#ifndef COMPAT_HAVE_CPUMASK_EMPTY
+#include <linux/cpumask.h>
+#define cpumask_empty(mask) cpus_empty(mask)
+#endif
+
+
+#if !defined(QUEUE_FLAG_DISCARD) || !defined(QUEUE_FLAG_SECDISCARD)
+# define queue_flag_set_unlocked(F, Q)				\
+	({							\
+		if ((F) != -1)					\
+			queue_flag_set_unlocked(F, Q);		\
+	})
+
+# define queue_flag_clear_unlocked(F, Q)			\
+	({							\
+		if ((F) != -1)					\
+			queue_flag_clear_unlocked(F, Q);	\
+	})
+
+# ifndef blk_queue_discard
+#  define blk_queue_discard(q)   (0)
+#  define QUEUE_FLAG_DISCARD    (-1)
+# endif
+
+# ifndef blk_queue_secdiscard
+#  define blk_queue_secdiscard(q)   (0)
+#  define QUEUE_FLAG_SECDISCARD    (-1)
+# endif
+#endif
+
+
+#ifndef BLKDEV_ISSUE_ZEROOUT_EXPORTED
+/* Was introduced with 2.6.34 */
+extern int blkdev_issue_zeroout(struct block_device *bdev, sector_t sector,
+				sector_t nr_sects, gfp_t gfp_mask);
+#else
+#ifdef COMPAT_BLKDEV_ISSUE_ZEROOUT_HAS_5_PARAMTERS
+/* ... but in 2.6.34 and 2.6.35 it had 5 parameters. Later only 4 */
+#define blkdev_issue_zeroout(BDEV, SS, NS, GFP) \
+	blkdev_issue_zeroout(BDEV, SS, NS, GFP, BLKDEV_IFL_WAIT)
+
+#endif
+#endif
+
+
+#ifndef COMPAT_HAVE_GENL_LOCK
+static inline void genl_lock(void)  { }
+static inline void genl_unlock(void)  { }
+#endif
+
+#ifdef COMPAT_HAVE_STRUCT_QUEUE_LIMITS
+#define DRBD_QUEUE_LIMITS(q) (&(q)->limits)
+#define LIMIT_TYPE struct queue_limits
+#else
+#define DRBD_QUEUE_LIMITS(q) (q)
+#define LIMIT_TYPE struct request_queue
+#endif
+
+#ifndef COMPAT_HAVE_BLK_SET_STACKING_LIMITS
+static inline void blk_set_stacking_limits(LIMIT_TYPE *lim)
+{
+# ifdef COMPAT_QUEUE_LIMITS_HAS_DISCARD_ZEROES_DATA
+	lim->discard_zeroes_data = 1;
+# endif
+}
 #endif
 
 #endif

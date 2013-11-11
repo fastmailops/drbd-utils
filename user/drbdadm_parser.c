@@ -25,6 +25,8 @@
  */
 
 #define _GNU_SOURCE
+#define _XOPEN_SOURCE 600
+#define _FILE_OFFSET_BITS 64
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -33,6 +35,7 @@
 #include <search.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "drbdadm.h"
 #include "linux/drbd_limits.h"
@@ -44,6 +47,7 @@ YYSTYPE yylval;
 /////////////////////
 
 static int c_section_start;
+static int parse_proxy_options(struct d_option **, struct d_option **);
 void my_parse(void);
 
 struct d_name *names_from_str(char* str)
@@ -61,8 +65,10 @@ char *_names_to_str_c(char* buffer, struct d_name *names, char c)
 {
 	int n = 0;
 
-	if (!names)
+	if (!names) {
+		snprintf(buffer, NAMES_STR_SIZE, "UNKNOWN");
 		return buffer;
+	}
 
 	while (1) {
 		n += snprintf(buffer + n, NAMES_STR_SIZE - n, "%s", names->name);
@@ -132,7 +138,7 @@ void m_strtoll_range(const char *s, char def_unit,
 		     unsigned long long min, unsigned long long max)
 {
 	unsigned long long r = m_strtoll(s, def_unit);
-	char unit[] = { def_unit > '1' ? def_unit : 0, 0 };
+	char unit[] = { def_unit != '1' ? def_unit : 0, 0 };
 	if (min > r || r > max) {
 		fprintf(stderr,
 			"%s:%d: %s %s => %llu%s out of range [%llu..%llu]%s.\n",
@@ -150,8 +156,20 @@ void m_strtoll_range(const char *s, char def_unit,
 }
 
 void range_check(const enum range_checks what, const char *name,
-		 const char *value)
+		 char *value)
 {
+	char proto = 0;
+
+	/*
+	 * FIXME: Handle signed/unsigned values correctly by checking the
+	 * F_field_name_IS_SIGNED defines.
+	 */
+
+#define M_STRTOLL_RANGE(x) \
+		m_strtoll_range(value, DRBD_ ## x ## _SCALE, name, \
+				DRBD_ ## x ## _MIN, \
+				DRBD_ ## x ## _MAX)
+
 	switch (what) {
 	case R_NO_CHECK:
 		break;
@@ -160,127 +178,111 @@ void range_check(const enum range_checks what, const char *name,
 			config_file, fline, name, value);
 		break;
 	case R_MINOR_COUNT:
-		m_strtoll_range(value, 1, name,
-				DRBD_MINOR_COUNT_MIN, DRBD_MINOR_COUNT_MAX);
+		M_STRTOLL_RANGE(MINOR_COUNT);
 		break;
 	case R_DIALOG_REFRESH:
-		m_strtoll_range(value, 1, name,
-				DRBD_DIALOG_REFRESH_MIN,
-				DRBD_DIALOG_REFRESH_MAX);
+		M_STRTOLL_RANGE(DIALOG_REFRESH);
 		break;
 	case R_DISK_SIZE:
-		m_strtoll_range(value, 's', name,
-				DRBD_DISK_SIZE_SECT_MIN,
-				DRBD_DISK_SIZE_SECT_MAX);
+		M_STRTOLL_RANGE(DISK_SIZE);
 		break;
 	case R_TIMEOUT:
-		m_strtoll_range(value, 1, name, DRBD_TIMEOUT_MIN,
-				DRBD_TIMEOUT_MAX);
+		M_STRTOLL_RANGE(TIMEOUT);
 		break;
 	case R_CONNECT_INT:
-		m_strtoll_range(value, 1, name, DRBD_CONNECT_INT_MIN,
-				DRBD_CONNECT_INT_MAX);
+		M_STRTOLL_RANGE(CONNECT_INT);
 		break;
 	case R_PING_INT:
-		m_strtoll_range(value, 1, name, DRBD_PING_INT_MIN,
-				DRBD_PING_INT_MAX);
+		M_STRTOLL_RANGE(PING_INT);
 		break;
 	case R_MAX_BUFFERS:
-		m_strtoll_range(value, 1, name, DRBD_MAX_BUFFERS_MIN,
-				DRBD_MAX_BUFFERS_MAX);
+		M_STRTOLL_RANGE(MAX_BUFFERS);
 		break;
 	case R_MAX_EPOCH_SIZE:
-		m_strtoll_range(value, 1, name, DRBD_MAX_EPOCH_SIZE_MIN,
-				DRBD_MAX_EPOCH_SIZE_MAX);
+		M_STRTOLL_RANGE(MAX_EPOCH_SIZE);
 		break;
 	case R_SNDBUF_SIZE:
-		m_strtoll_range(value, 1, name, DRBD_SNDBUF_SIZE_MIN,
-				DRBD_SNDBUF_SIZE_MAX);
+		M_STRTOLL_RANGE(SNDBUF_SIZE);
 		break;
 	case R_RCVBUF_SIZE:
-		m_strtoll_range(value, 1, name, DRBD_RCVBUF_SIZE_MIN,
-				DRBD_RCVBUF_SIZE_MAX);
+		M_STRTOLL_RANGE(RCVBUF_SIZE);
 		break;
 	case R_KO_COUNT:
-		m_strtoll_range(value, 1, name, DRBD_KO_COUNT_MIN,
-				DRBD_KO_COUNT_MAX);
+		M_STRTOLL_RANGE(KO_COUNT);
 		break;
 	case R_RATE:
-		m_strtoll_range(value, 'K', name, DRBD_RATE_MIN, DRBD_RATE_MAX);
+		M_STRTOLL_RANGE(RESYNC_RATE);
 		break;
 	case R_AL_EXTENTS:
-		m_strtoll_range(value, 1, name, DRBD_AL_EXTENTS_MIN,
-				DRBD_AL_EXTENTS_MAX);
+		M_STRTOLL_RANGE(AL_EXTENTS);
 		break;
 	case R_PORT:
-		m_strtoll_range(value, 1, name, DRBD_PORT_MIN, DRBD_PORT_MAX);
+		M_STRTOLL_RANGE(PORT);
 		break;
-		/* FIXME not yet implemented!
-		   case R_META_IDX:
-		   m_strtoll_range(value, 1, name, DRBD_META_IDX_MIN, DRBD_META_IDX_MAX);
-		   break;
-		 */
+	/* FIXME not yet implemented!
+	case R_META_IDX:
+		M_STRTOLL_RANGE(META_IDX);
+		break;
+	*/
 	case R_WFC_TIMEOUT:
-		m_strtoll_range(value, 1, name, DRBD_WFC_TIMEOUT_MIN,
-				DRBD_WFC_TIMEOUT_MAX);
+		M_STRTOLL_RANGE(WFC_TIMEOUT);
 		break;
 	case R_DEGR_WFC_TIMEOUT:
-		m_strtoll_range(value, 1, name, DRBD_DEGR_WFC_TIMEOUT_MIN,
-				DRBD_DEGR_WFC_TIMEOUT_MAX);
+		M_STRTOLL_RANGE(DEGR_WFC_TIMEOUT);
 		break;
 	case R_OUTDATED_WFC_TIMEOUT:
-		m_strtoll_range(value, 1, name, DRBD_OUTDATED_WFC_TIMEOUT_MIN,
-				DRBD_OUTDATED_WFC_TIMEOUT_MAX);
+		M_STRTOLL_RANGE(OUTDATED_WFC_TIMEOUT);
 		break;
 
 	case R_C_PLAN_AHEAD:
-		m_strtoll_range(value, 1, name, DRBD_C_PLAN_AHEAD_MIN,
-				DRBD_C_PLAN_AHEAD_MAX);
+		M_STRTOLL_RANGE(C_PLAN_AHEAD);
 		break;
 
 	case R_C_DELAY_TARGET:
-		m_strtoll_range(value, 1, name, DRBD_C_DELAY_TARGET_MIN,
-				DRBD_C_DELAY_TARGET_MAX);
+		M_STRTOLL_RANGE(C_DELAY_TARGET);
 		break;
 
 	case R_C_FILL_TARGET:
-		m_strtoll_range(value, 's', name, DRBD_C_FILL_TARGET_MIN,
-				DRBD_C_FILL_TARGET_MAX);
+		M_STRTOLL_RANGE(C_FILL_TARGET);
 		break;
 
 	case R_C_MAX_RATE:
-		m_strtoll_range(value, 'k', name, DRBD_C_MAX_RATE_MIN,
-				DRBD_C_MAX_RATE_MAX);
+		M_STRTOLL_RANGE(C_MAX_RATE);
 		break;
 
 	case R_C_MIN_RATE:
-		m_strtoll_range(value, 'k', name, DRBD_C_MIN_RATE_MIN,
-				DRBD_C_MIN_RATE_MAX);
+		M_STRTOLL_RANGE(C_MIN_RATE);
 		break;
 
 	case R_CONG_FILL:
-		m_strtoll_range(value, 's', name, DRBD_CONG_FILL_MIN,
-				DRBD_CONG_FILL_MAX);
+		M_STRTOLL_RANGE(CONG_FILL);
 		break;
 
 	case R_CONG_EXTENTS:
-		m_strtoll_range(value, 1, name, DRBD_CONG_EXTENTS_MIN,
-				DRBD_CONG_EXTENTS_MAX);
+		M_STRTOLL_RANGE(CONG_EXTENTS);
 		break;
-
+	case R_PROTOCOL:
+		if (value && value[0] && value[1] == 0) {
+			proto = value[0] & ~0x20; /* toupper */
+			if (proto == 'A' || proto == 'B' || proto == 'C')
+				value[0] = proto;
+			else
+				proto = 0;
+		}
+		if (!proto && config_valid <= 1) {
+			config_valid = 0;
+			fprintf(stderr, "unknown protocol '%s', should be one of A,B,C\n", value);
+		}
 	}
 }
 
 struct d_option *new_opt(char *name, char *value)
 {
-	struct d_option *cn = malloc(sizeof(struct d_option));
+	struct d_option *cn = calloc(1, sizeof(struct d_option));
 
 	/* fprintf(stderr,"%s:%d: %s = %s\n",config_file,line,name,value); */
 	cn->name = name;
 	cn->value = value;
-	cn->mentioned = 0;
-	cn->is_default = 0;
-	cn->is_escaped = 0;
 
 	return cn;
 }
@@ -446,30 +448,18 @@ int check_upr(const char *what, const char *fmt, ...)
 	return rv;
 }
 
-void check_meta_disk(struct d_host_info *host)
+void check_meta_disk(struct d_volume *vol, struct d_host_info *host)
 {
 	struct d_name *h;
-	if (strcmp(host->meta_disk, "internal") != 0) {
-		/* external */
-		if (host->meta_index == NULL) {
-			fprintf(stderr,
-				"%s:%d: expected 'meta-disk = %s [index]'.\n",
-				config_file, fline, host->meta_disk);
-		}
+	/* when parsing "drbdsetup show[-all]" output,
+	 * a detached volume will only have device/minor,
+	 * but no disk or meta disk. */
+	if (vol->meta_disk == NULL)
+		return;
+	if (strcmp(vol->meta_disk, "internal") != 0) {
 		/* index either some number, or "flexible" */
 		for_each_host(h, host->on_hosts)
-			check_uniq("meta-disk", "%s:%s[%s]", h->name, host->meta_disk, host->meta_index);
-	} else if (host->meta_index) {
-		/* internal */
-		if (strcmp(host->meta_index, "flexible") != 0) {
-			/* internal, not flexible, but index given: no sir! */
-			fprintf(stderr,
-				"%s:%d: no index allowed with 'meta-disk = internal'.\n",
-				config_file, fline);
-		}		/* else internal, flexible: fine */
-	} else {
-		/* internal, not flexible */
-		host->meta_index = strdup("internal");
+			check_uniq("meta-disk", "%s:%s[%s]", h->name, vol->meta_disk, vol->meta_index);
 	}
 }
 
@@ -598,18 +588,113 @@ static void parse_global(void)
 	}
 }
 
-static void check_and_change_deprecated_alias(char **name, int token_option)
+static void check_and_change_deprecated_alias(char **name, int token)
 {
-	if (token_option == TK_HANDLER_OPTION) {
-		if (!strcmp(*name, "outdate-peer")) {
-			/* fprintf(stder, "config file:line: name is deprecated ...\n") */
+	int i;
+	static struct {
+		enum yytokentype token;
+		char *old_name, *new_name;
+	} table[] = {
+		{ TK_HANDLER_OPTION, "outdate-peer", "fence-peer" },
+		{ TK_DISK_OPTION, "rate", "resync-rate" },
+		{ TK_DISK_OPTION, "after", "resync-after" },
+	};
+
+	for (i = 0; i < ARRAY_SIZE(table); i++) {
+		if (table[i].token == token &&
+		    !strcmp(table[i].old_name, *name)) {
 			free(*name);
-			*name = strdup("fence-peer");
+			*name = strdup(table[i].new_name);
 		}
 	}
 }
 
-static struct d_option *parse_options_d(int token_switch, int token_option,
+/* The syncer section is deprecated. Distribute the options to the disk or net options. */
+void parse_options_syncer(struct d_resource *res)
+{
+	char *opt_name;
+	int token;
+	enum range_checks rc;
+
+	struct d_option **options = NULL, *current_option = NULL;
+	c_section_start = line;
+	fline = line;
+
+	while (1) {
+		token = yylex();
+		fline = line;
+		if (token >= TK_GLOBAL && !(token & TK_SYNCER_OLD_OPT))
+			pe_expected("a syncer option keyword");
+		token &= ~TK_SYNCER_OLD_OPT;
+		switch (token) {
+		case TK_NET_FLAG:
+		case TK_NET_NO_FLAG:
+		case TK_NET_OPTION:
+			options = &res->net_options;
+			break;
+		case TK_DISK_FLAG:
+		case TK_DISK_NO_FLAG:
+		case TK_DISK_OPTION:
+			options = &res->disk_options;
+			break;
+		case TK_RES_OPTION:
+			options = &res->res_options;
+			break;
+		case '}':
+			return;
+		default:
+			pe_expected("a syncer option keyword");
+		}
+		opt_name = yylval.txt;
+		switch (token) {
+		case TK_NET_FLAG:
+		case TK_DISK_FLAG:
+			token = yylex();
+			switch(token) {
+			case TK_NO:
+				current_option = new_opt(opt_name, strdup("no"));
+				*options = APPEND(*options, current_option);
+				token = yylex();
+				break;
+			default:
+				current_option = new_opt(opt_name, strdup("yes"));
+				*options = APPEND(*options, current_option);
+				if (token == TK_YES)
+					token = yylex();
+				break;
+			}
+			break;
+		case TK_NET_NO_FLAG:
+		case TK_DISK_NO_FLAG:
+			/* Backward compatibility with the old config file syntax. */
+			assert(!strncmp(opt_name, "no-", 3));
+			current_option = new_opt(strdup(opt_name + 3), strdup("no"));
+			*options = APPEND(*options, current_option);
+			free(opt_name);
+			token = yylex();
+			break;
+		case TK_NET_OPTION:
+		case TK_DISK_OPTION:
+		case TK_RES_OPTION:
+			check_and_change_deprecated_alias(&opt_name, token);
+			rc = yylval.rc;
+			expect_STRING_or_INT();
+			range_check(rc, opt_name, yylval.txt);
+			current_option = new_opt(opt_name, yylval.txt);
+			*options = APPEND(*options, current_option);
+			token = yylex();
+			break;
+		}
+		switch (token) {
+		case ';':
+			break;
+		default:
+			pe_expected(";");
+		}
+	}
+}
+
+static struct d_option *parse_options_d(int token_flag, int token_no_flag, int token_option,
 					int token_delegate, void (*delegate)(void*),
 					void *ctx)
 {
@@ -617,7 +702,7 @@ static struct d_option *parse_options_d(int token_switch, int token_option,
 	int token, token_group;
 	enum range_checks rc;
 
-	struct d_option *options = NULL, *ro = NULL;
+	struct d_option *options = NULL, *current_option = NULL;
 	c_section_start = line;
 	fline = line;
 
@@ -626,18 +711,38 @@ static struct d_option *parse_options_d(int token_switch, int token_option,
 		/* Keep the higher bits in token_option, remove them from token. */
 		token = REMOVE_GROUP_FROM_TOKEN(token_group);
 		fline = line;
-
-		if (token == token_switch) {
-			options = APPEND(options, new_opt(yylval.txt, NULL));
+		opt_name = yylval.txt;
+		if (token == token_flag) {
+			switch(yylex()) {
+			case TK_YES:
+				current_option = new_opt(opt_name, strdup("yes"));
+				options = APPEND(options, current_option);
+				break;
+			case TK_NO:
+				current_option = new_opt(opt_name, strdup("no"));
+				options = APPEND(options, current_option);
+				break;
+			case ';':
+				/* Flag value missing; assume yes.  */
+				options = APPEND(options, new_opt(opt_name, strdup("yes")));
+				continue;
+			default:
+				pe_expected("yes | no | ;");
+			}
+		} else if (token == token_no_flag) {
+			/* Backward compatibility with the old config file syntax. */
+			assert(!strncmp(opt_name, "no-", 3));
+			current_option = new_opt(strdup(opt_name + 3), strdup("no"));
+			options = APPEND(options, current_option);
+			free(opt_name);
 		} else if (token == token_option ||
 				GET_TOKEN_GROUP(token_option & token_group)) {
-			opt_name = yylval.txt;
 			check_and_change_deprecated_alias(&opt_name, token_option);
 			rc = yylval.rc;
 			expect_STRING_or_INT();
 			range_check(rc, opt_name, yylval.txt);
-			ro = new_opt(opt_name, yylval.txt);
-			options = APPEND(options, ro);
+			current_option = new_opt(opt_name, yylval.txt);
+			options = APPEND(options, current_option);
 		} else if (token == token_delegate ||
 				GET_TOKEN_GROUP(token_delegate & token_group)) {
 			delegate(ctx);
@@ -650,22 +755,13 @@ static struct d_option *parse_options_d(int token_switch, int token_option,
 		} else {
 			pe_expected("an option keyword");
 		}
-		switch (yylex()) {
-		case TK__IS_DEFAULT:
-			ro->is_default = 1;
-			EXP(';');
-			break;
-		case ';':
-			break;
-		default:
-			pe_expected("_is_default | ;");
-		}
+		EXP(';');
 	}
 }
 
-static struct d_option *parse_options(int token_switch, int token_option)
+static struct d_option *parse_options(int token_flag, int token_no_flag, int token_option)
 {
-	return parse_options_d(token_switch, token_option, 0, NULL, NULL);
+	return parse_options_d(token_flag, token_no_flag, token_option, 0, NULL, NULL);
 }
 
 static void __parse_address(char** addr, char** port, char** af)
@@ -772,6 +868,9 @@ static void parse_proxy_section(struct d_host_info *host)
 		case TK_OUTSIDE:
 			parse_address(proxy->on_hosts, &proxy->outside_addr, &proxy->outside_port, &proxy->outside_af);
 			break;
+		case TK_OPTIONS:
+			parse_proxy_options(&proxy->options, &proxy->plugins);
+			break;
 		case '}':
 			goto break_loop;
 		default:
@@ -790,18 +889,30 @@ static void parse_proxy_section(struct d_host_info *host)
 	return;
 }
 
-static void parse_meta_disk(char **disk, char** index)
+void parse_meta_disk(struct d_volume *vol)
 {
 	EXP(TK_STRING);
-	*disk = yylval.txt;
-	if (strcmp("internal", yylval.txt)) {
-		EXP('[');
-		EXP(TK_INTEGER);
-		*index = yylval.txt;
-		EXP(']');
+	vol->meta_disk = yylval.txt;
+	if (strcmp("internal", yylval.txt) == 0) {
+		/* internal, flexible size */
+		vol->meta_index = strdup("internal");
 		EXP(';');
 	} else {
-		EXP(';');
+		switch(yylex()) {
+		case '[':
+			EXP(TK_INTEGER);
+			/* external, static size */
+			vol->meta_index = yylval.txt;
+			EXP(']');
+			EXP(';');
+			break;
+		case ';':
+			/* external, flexible size */
+			vol->meta_index = strdup("flexible");
+			break;
+		default:
+			pe_expected("[ | ;");
+		}
 	}
 }
 
@@ -836,7 +947,7 @@ static void check_minor_nonsense(const char *devname, const int explicit_minor)
 	return;
 }
 
-static void parse_device(struct d_name* on_hosts, unsigned *minor, char **device)
+static void parse_device(struct d_name* on_hosts, struct d_volume *vol)
 {
 	struct d_name *h;
 	int m;
@@ -844,12 +955,12 @@ static void parse_device(struct d_name* on_hosts, unsigned *minor, char **device
 	switch (yylex()) {
 	case TK_STRING:
 		if (!strncmp("drbd", yylval.txt, 4)) {
-			m_asprintf(device, "/dev/%s", yylval.txt);
+			m_asprintf(&vol->device, "/dev/%s", yylval.txt);
 			free(yylval.txt);
 		} else
-			*device = yylval.txt;
+			vol->device = yylval.txt;
 
-		if (strncmp("/dev/drbd", *device, 9)) {
+		if (strncmp("/dev/drbd", vol->device, 9)) {
 			fprintf(stderr,
 				"%s:%d: device name must start with /dev/drbd\n"
 				"\t(/dev/ is optional, but drbd is required)\n",
@@ -863,55 +974,298 @@ static void parse_device(struct d_name* on_hosts, unsigned *minor, char **device
 			pe_expected("minor | ;");
 			/* fall through */
 		case ';':
-			m = dt_minor_of_dev(*device);
+			m = dt_minor_of_dev(vol->device);
 			if (m < 0) {
 				fprintf(stderr,
 					"%s:%d: no minor given nor device name contains a minor number\n",
 					config_file, fline);
 				config_valid = 0;
 			}
-			*minor = m;
+			vol->device_minor = m;
 			goto out;
 		case TK_MINOR:
 			; /* double fall through */
 		}
 	case TK_MINOR:
 		EXP(TK_INTEGER);
-		*minor = atoi(yylval.txt);
+		vol->device_minor = atoi(yylval.txt);
 		EXP(';');
 
 		/* if both device name and minor number are explicitly given,
 		 * force /dev/drbd<minor-number> or /dev/drbd_<arbitrary> */
-		check_minor_nonsense(*device, *minor);
+		check_minor_nonsense(vol->device, vol->device_minor);
 	}
 out:
 	for_each_host(h, on_hosts) {
-		check_uniq("device-minor", "device-minor:%s:%u", h->name, *minor);
-		if (*device)
-			check_uniq("device", "device:%s:%s", h->name, *device);
+		check_uniq("device-minor", "device-minor:%s:%u", h->name, vol->device_minor);
+		if (vol->device)
+			check_uniq("device", "device:%s:%s", h->name, vol->device);
 	}
 }
+
+struct d_volume *find_volume(struct d_volume *vol, int vnr)
+{
+	while (vol) {
+		if (vol->vnr == vnr)
+			return vol;
+		vol = vol->next;
+	}
+	return NULL;
+}
+
+struct d_volume *volume0(struct d_volume **volp)
+{
+	struct d_volume *vol;
+
+	if (!*volp) {
+		vol = calloc(1, sizeof(struct d_volume));
+		vol->device_minor = -1;
+		*volp = vol;
+		vol->implicit = 1;
+		return vol;
+	} else {
+		vol = *volp;
+		if (vol->vnr == 0 && vol->next == NULL && vol->implicit)
+			return vol;
+
+		config_valid = 0;
+		fprintf(stderr,
+			"%s:%d: Explicit and implicit volumes not allowed\n",
+			config_file, line);
+		return vol;
+	}
+}
+
+int parse_volume_stmt(struct d_volume *vol, struct d_name* on_hosts, int token)
+{
+	switch (token) {
+	case TK_DISK:
+		token = yylex();
+		switch (token) {
+		case TK_STRING:
+			vol->disk = yylval.txt;
+			EXP(';');
+			break;
+		case '{':
+			vol->disk_options = parse_options(TK_DISK_FLAG,
+							  TK_DISK_NO_FLAG,
+							  TK_DISK_OPTION);
+			break;
+		default:
+			check_string_error(token);
+			pe_expected_got( "TK_STRING | {", token);
+		}
+		break;
+	case TK_DEVICE:
+		parse_device(on_hosts, vol);
+		break;
+	case TK_META_DISK:
+		parse_meta_disk(vol);
+		break;
+	case TK_FLEX_META_DISK:
+		EXP(TK_STRING);
+		vol->meta_disk = yylval.txt;
+		if (strcmp("internal", yylval.txt) != 0) {
+			/* external, flexible ize */
+			vol->meta_index = strdup("flexible");
+		} else {
+			/* internal, flexible size */
+			vol->meta_index = strdup("internal");
+		}
+		EXP(';');
+		break;
+	default:
+		return 0;
+	}
+	return 1;
+}
+
+struct d_volume *parse_volume(int vnr, struct d_name* on_hosts)
+{
+	struct d_volume *vol;
+	int token;
+
+	vol = calloc(1,sizeof(struct d_volume));
+	vol->device_minor = -1;
+	vol->vnr = vnr;
+
+	EXP('{');
+	while (1) {
+		token = yylex();
+		if (token == '}')
+			break;
+		if (!parse_volume_stmt(vol, on_hosts, token))
+			pe_expected_got("device | disk | meta-disk | flex-meta-disk | }",
+					token);
+	}
+
+	return vol;
+}
+
+struct d_volume *parse_stacked_volume(int vnr)
+{
+	struct d_volume *vol;
+
+	vol = calloc(1,sizeof(struct d_volume));
+	vol->device_minor = -1;
+	vol->vnr = vnr;
+
+	EXP('{');
+	EXP(TK_DEVICE);
+	parse_device(NULL, vol);
+	EXP('}');
+	vol->meta_disk = strdup("internal");
+	vol->meta_index = strdup("internal");
+
+	return vol;
+}
+
+void inherit_volumes(struct d_volume *from, struct d_host_info *host)
+{
+	struct d_volume *s, *t;
+	struct d_name *h;
+
+	for (s = from; s != NULL ; s = s->next) {
+		t = find_volume(host->volumes, s->vnr);
+		if (!t) {
+			t = calloc(1, sizeof(struct d_volume));
+			t->device_minor = -1;
+			t->vnr = s->vnr;
+			host->volumes = INSERT_SORTED(host->volumes, t, vnr);
+		}
+		if (!t->disk && s->disk) {
+			t->disk = strdup(s->disk);
+			for_each_host(h, host->on_hosts)
+				check_uniq("disk", "disk:%s:%s", h->name, t->disk);
+		}
+		if (!t->device && s->device)
+			t->device = strdup(s->device);
+		if (t->device_minor == -1U && s->device_minor != -1U) {
+			t->device_minor = s->device_minor;
+			for_each_host(h, host->on_hosts)
+				check_uniq("device-minor", "device-minor:%s:%d", h->name, t->device_minor);
+		}
+		if (!t->meta_disk && s->meta_disk) {
+			t->meta_disk = strdup(s->meta_disk);
+			if (s->meta_index)
+				t->meta_index = strdup(s->meta_index);
+		}
+	}
+}
+
+void check_volume_complete(struct d_resource *res, struct d_host_info *host, struct d_volume *vol)
+{
+	if (!vol->device && vol->device_minor == -1U)
+		derror(host, res, "device");
+	if (!vol->disk)
+		derror(host, res, "disk");
+	if (!vol->meta_disk)
+		derror(host, res, "meta-disk");
+	if (!vol->meta_index)
+		derror(host, res, "meta-index");
+}
+
+void check_volumes_complete(struct d_resource *res, struct d_host_info *host)
+{
+	struct d_volume *vol = host->volumes;
+	unsigned vnr = -1U;
+	while (vol) {
+		if (vnr == -1U || vnr < vol->vnr)
+			vnr = vol->vnr;
+		else
+			fprintf(stderr,
+				"internal error: in %s: unsorted volumes list\n",
+				res->name);
+		check_volume_complete(res, host, vol);
+		vol = vol->next;
+	}
+}
+
+void check_volume_sets_equal(struct d_resource *res, struct d_host_info *host1, struct d_host_info *host2)
+{
+	struct d_volume *a, *b;
+
+	/* change the error output, if we have been called to
+	 * compare stacked with lower resource volumes */
+	int compare_stacked = host1->lower && host1->lower->me == host2;
+
+	a = host1->volumes;
+	b = host2->volumes;
+
+	/* volume lists are supposed to be sorted on vnr */
+	while (a || b) {
+		while (a && (!b || a->vnr < b->vnr)) {
+			fprintf(stderr,
+				"%s:%d: in resource %s, on %s { ... }: "
+				"volume %d not defined on %s\n",
+				config_file, line, res->name,
+				names_to_str(host1->on_hosts),
+				a->vnr,
+				compare_stacked ? host1->lower->name
+					: names_to_str(host2->on_hosts));
+			a = a->next;
+			config_valid = 0;
+		}
+		while (b && (!a || a->vnr > b->vnr)) {
+			/* Though unusual, it is "legal" for a lower resource
+			 * to have more volumes than the resource stacked on
+			 * top of it.  Warn (if we have a terminal),
+			 * but consider it as valid. */
+			if (!(compare_stacked && no_tty))
+				fprintf(stderr,
+					"%s:%d: in resource %s, on %s { ... }: "
+					"volume %d missing (present on %s)\n",
+					config_file, line, res->name,
+					names_to_str(host1->on_hosts),
+					b->vnr,
+					compare_stacked ? host1->lower->name
+						: names_to_str(host2->on_hosts));
+			if (!compare_stacked)
+				config_valid = 0;
+			b = b->next;
+		}
+		if (a && b && a->vnr == b->vnr) {
+			a = a->next;
+			b = b->next;
+		}
+	}
+}
+
+/* Ensure that in all host sections the same volumes are defined */
+void check_volumes_hosts(struct d_resource *res)
+{
+	struct d_host_info *host1, *host2;
+
+	host1 = res->all_hosts;
+
+	if (!host1)
+		return;
+
+	for (host2 = host1->next; host2; host2 = host2->next)
+		check_volume_sets_equal(res, host1, host2);
+}
+
 
 enum parse_host_section_flags {
 	REQUIRE_ALL = 1,
 	BY_ADDRESS  = 2,
 };
 
-static void parse_host_section(struct d_resource *res,
+void parse_host_section(struct d_resource *res,
 			       struct d_name* on_hosts,
 			       enum parse_host_section_flags flags)
 {
 	struct d_host_info *host;
+	struct d_volume *vol;
 	struct d_name *h;
 	int in_braces = 1;
 
 	c_section_start = line;
 	fline = line;
 
-	host=calloc(1,sizeof(struct d_host_info));
+	host = calloc(1,sizeof(struct d_host_info));
 	host->on_hosts = on_hosts;
 	host->config_line = c_section_start;
-	host->device_minor = -1;
 
 	if (flags & BY_ADDRESS) {
 		/* floating <address> {} */
@@ -951,16 +1305,21 @@ static void parse_host_section(struct d_resource *res,
 		case TK_DISK:
 			for_each_host(h, on_hosts)
 				check_upr("disk statement", "%s:%s:disk", res->name, h->name);
-			EXP(TK_STRING);
-			host->disk = yylval.txt;
-			for_each_host(h, on_hosts)
-				check_uniq("disk", "disk:%s:%s", h->name, yylval.txt);
-			EXP(';');
-			break;
+			goto vol0stmt;
+			/* for_each_host(h, on_hosts)
+			  check_uniq("disk", "disk:%s:%s", h->name, yylval.txt); */
 		case TK_DEVICE:
 			for_each_host(h, on_hosts)
 				check_upr("device statement", "%s:%s:device", res->name, h->name);
-			parse_device(on_hosts, &host->device_minor, &host->device);
+			goto vol0stmt;
+		case TK_META_DISK:
+			for_each_host(h, on_hosts)
+				check_upr("meta-disk statement", "%s:%s:meta-disk", res->name, h->name);
+			goto vol0stmt;
+		case TK_FLEX_META_DISK:
+			for_each_host(h, on_hosts)
+				check_upr("meta-disk statement", "%s:%s:meta-disk", res->name, h->name);
+			goto vol0stmt;
 			break;
 		case TK_ADDRESS:
 			if (host->by_address) {
@@ -975,68 +1334,43 @@ static void parse_host_section(struct d_resource *res,
 			parse_address(on_hosts, &host->address, &host->port, &host->address_family);
 			range_check(R_PORT, "port", host->port);
 			break;
-		case TK_META_DISK:
-			for_each_host(h, on_hosts)
-				check_upr("meta-disk statement", "%s:%s:meta-disk", res->name, h->name);
-			parse_meta_disk(&host->meta_disk, &host->meta_index);
-			check_meta_disk(host);
-			break;
-		case TK_FLEX_META_DISK:
-			for_each_host(h, on_hosts)
-				check_upr("meta-disk statement", "%s:%s:meta-disk", res->name, h->name);
-			EXP(TK_STRING);
-			host->meta_disk = yylval.txt;
-			if (strcmp("internal", yylval.txt)) {
-				host->meta_index = strdup("flexible");
-			}
-			check_meta_disk(host);
-			EXP(';');
-			break;
 		case TK_PROXY:
 			parse_proxy_section(host);
+			break;
+		case TK_VOLUME:
+			EXP(TK_INTEGER);
+			host->volumes = INSERT_SORTED(host->volumes,
+						      parse_volume(atoi(yylval.txt), on_hosts),
+						      vnr);
+			break;
+		case TK_OPTIONS:
+			EXP('{');
+			host->res_options = parse_options(0,
+							  0,
+							  TK_RES_OPTION);
 			break;
 		case '}':
 			in_braces = 0;
 			break;
+		vol0stmt:
+			if (parse_volume_stmt(volume0(&host->volumes), on_hosts, token))
+				break;
+			/* else fall through */
 		default:
 			pe_expected("disk | device | address | meta-disk "
 				    "| flexible-meta-disk");
 		}
 	}
 
-	/* Inherit device, disk, meta_disk and meta_index from the resource. */
-	if(!host->disk && res->disk) {
-		host->disk = strdup(res->disk);
-		for_each_host(h, on_hosts)
-			check_uniq("disk", "disk:%s:%s", h->name, host->disk);
-	}
-
-	if(!host->device && res->device) {
-		host->device = strdup(res->device);
-	}
-
-	if (host->device_minor == -1U && res->device_minor != -1U) {
-		host->device_minor = res->device_minor;
-		for_each_host(h, on_hosts)
-			check_uniq("device-minor", "device-minor:%s:%d", h->name, host->device_minor);
-	}
-
-	if(!host->meta_disk && res->meta_disk) {
-		host->meta_disk = strdup(res->meta_disk);
-		if(res->meta_index) host->meta_index = strdup(res->meta_index);
-		check_meta_disk(host);
-	}
+	inherit_volumes(res->volumes, host);
+	for_each_volume(vol, host->volumes)
+		check_meta_disk(vol, host);
 
 	if (!(flags & REQUIRE_ALL))
 		return;
-	if (!host->device && host->device_minor == -1U)
-		derror(host, res, "device");
-	if (!host->disk)
-		derror(host, res, "disk");
 	if (!host->address)
 		derror(host, res, "address");
-	if (!host->meta_disk)
-		derror(host, res, "meta-disk");
+	check_volumes_complete(res, host);
 }
 
 void parse_skip()
@@ -1078,7 +1412,7 @@ void parse_skip()
 	while (level) ;
 }
 
-static void parse_stacked_section(struct d_resource* res)
+void parse_stacked_section(struct d_resource* res)
 {
 	struct d_host_info *host;
 	struct d_name *h;
@@ -1087,22 +1421,20 @@ static void parse_stacked_section(struct d_resource* res)
 	fline = line;
 
 	host=calloc(1,sizeof(struct d_host_info));
-	host->device_minor = -1;
 	res->all_hosts = APPEND(res->all_hosts, host);
 	EXP(TK_STRING);
 	check_uniq("stacked-on-top-of", "stacked:%s", yylval.txt);
 	host->lower_name = yylval.txt;
 
-	m_asprintf(&host->meta_disk, "%s", "internal");
-	m_asprintf(&host->meta_index, "%s", "internal");
-
 	EXP('{');
 	while (1) {
 		switch(yylex()) {
 		case TK_DEVICE:
-			for_each_host(h, host->on_hosts)
-				check_upr("device statement", "%s:%s:device", res->name, h->name);
-			parse_device(host->on_hosts, &host->device_minor, &host->device);
+			/* for_each_host(h, host->on_hosts)
+			  check_upr("device statement", "%s:%s:device", res->name, h->name); */
+			parse_device(host->on_hosts, volume0(&host->volumes));
+			volume0(&host->volumes)->meta_disk = strdup("internal");
+			volume0(&host->volumes)->meta_index = strdup("internal");
 			break;
 		case TK_ADDRESS:
 			for_each_host(h, host->on_hosts)
@@ -1112,6 +1444,10 @@ static void parse_stacked_section(struct d_resource* res)
 			break;
 		case TK_PROXY:
 			parse_proxy_section(host);
+			break;
+		case TK_VOLUME:
+			EXP(TK_INTEGER);
+			host->volumes = INSERT_SORTED(host->volumes, parse_stacked_volume(atoi(yylval.txt)), vnr);
 			break;
 		case '}':
 			goto break_loop;
@@ -1123,27 +1459,10 @@ static void parse_stacked_section(struct d_resource* res)
 
 	res->stacked_on_one = 1;
 
-	/* inherit device */
-	if (!host->device && res->device) {
-		host->device = strdup(res->device);
-		for_each_host(h, host->on_hosts) {
-			if (host->device)
-				check_uniq("device", "device:%s:%s", h->name, host->device);
-		}
-	}
+	inherit_volumes(res->volumes, host);
 
-	if (host->device_minor == -1U && res->device_minor != -1U) {
-		host->device_minor = res->device_minor;
-		for_each_host(h, host->on_hosts)
-			check_uniq("device-minor", "device-minor:%s:%d", h->name, host->device_minor);
-	}
-
-	if (!host->device && host->device_minor == -1U)
-		derror(host, res, "device");
 	if (!host->address)
 		derror(host,res,"address");
-	if (!host->meta_disk)
-		derror(host,res,"meta-disk");
 }
 
 void startup_delegate(void *ctx)
@@ -1163,9 +1482,20 @@ void net_delegate(void *ctx)
 {
 	enum pr_flags flags = (enum pr_flags)ctx;
 
-	if (!strcmp(yytext, "discard-my-data") && flags & IgnDiscardMyData)
-		EXP(';');
-	else
+	if (!strcmp(yytext, "discard-my-data") && flags & PARSE_FOR_ADJUST) {
+		switch(yylex()) {
+		case TK_YES:
+		case TK_NO:
+			/* Ignore this option.  */
+			EXP(';');
+			break;
+		case ';':
+			/* Ignore this option.  */
+			return;
+		default:
+			pe_expected("yes | no | ;");
+		}
+	} else
 		pe_expected("an option keyword");
 }
 
@@ -1350,12 +1680,16 @@ void set_on_hosts_in_res(struct d_resource *res)
 					append_names(&host->on_hosts, &last, host2->on_hosts);
 
 					for_each_host(h, host2->on_hosts) {
-						check_uniq("device-minor", "device-minor:%s:%u", h->name,
-							   host->device_minor);
+						struct d_volume *vol;
 
-						if (host->device)
-							check_uniq("device", "device:%s:%s", h->name,
-								   host->device);
+						for_each_volume(vol, host->volumes)
+							check_uniq("device-minor", "device-minor:%s:%u", h->name,
+								   vol->device_minor);
+
+						for_each_volume(vol, host->volumes)
+							if (vol->device)
+								check_uniq("device", "device:%s:%s", h->name,
+									   vol->device);
 					}
 				}
 
@@ -1373,37 +1707,58 @@ void set_on_hosts_in_res(struct d_resource *res)
 void set_disk_in_res(struct d_resource *res)
 {
 	struct d_host_info *host;
+	struct d_volume *a, *b;
 
 	if (res->ignore)
 		return;
 
 	for (host = res->all_hosts; host; host=host->next) {
-		if (host->lower) {
-			if (res->stacked && host->lower->stacked) {
-				fprintf(stderr,
-					"%s:%d: in resource %s, stacked-on-top-of %s { ... }:\n"
-					"\tFIXME. I won't stack stacked resources.\n",
-					res->config_file, res->start_line, res->name, host->lower_name);
-				config_valid = 0;
+		if (!host->lower)
+			continue;
+
+		if (host->lower->ignore)
+			continue;
+
+		check_volume_sets_equal(res, host, host->lower->me);
+		if (!config_valid)
+			/* don't even bother for broken config. */
+			continue;
+
+		/* volume lists are sorted on vnr */
+		a = host->volumes;
+		b = host->lower->me->volumes;
+		while (a) {
+			while (b && a->vnr > b->vnr) {
+				/* Lower resource has more volumes.
+				 * Probably unusual, but we decided
+				 * that it should be legal.
+				 * Skip those that do not match */
+				b = b->next;
 			}
-
-			if (host->lower->ignore)
-				continue;
-
-			if (host->lower->me->device)
-				m_asprintf(&host->disk, "%s", host->lower->me->device);
-			else
-				m_asprintf(&host->disk, "/dev/drbd%u", host->lower->me->device_minor);
-
-			if (!host->disk)
-				derror(host,res,"disk");
+			if (a && b && a->vnr == b->vnr) {
+				if (b->device)
+					m_asprintf(&a->disk, "%s", b->device);
+				else
+					m_asprintf(&a->disk, "/dev/drbd%u", b->device_minor);
+				/* stacked implicit volumes need internal meta data, too */
+				if (!a->meta_disk)
+					m_asprintf(&a->meta_disk, "internal");
+				if (!a->meta_index)
+					m_asprintf(&a->meta_index, "internal");
+				a = a->next;
+				b = b->next;
+			} else {
+				/* config_invalid should have been set
+				 * by check_volume_sets_equal */
+				assert(0);
+			}
 		}
 	}
 }
 
 void proxy_delegate(void *ctx)
 {
-	struct d_resource *res = (struct d_resource *)ctx;
+	struct d_option **proxy_plugins = (struct d_option **)ctx;
 	int token;
 	struct d_option *options, *opt;
 	struct d_name *line, *word, **pnp;
@@ -1420,6 +1775,7 @@ void proxy_delegate(void *ctx)
 	while (1) {
 		pnp = &line;
 		while (1) {
+			yylval.txt = NULL;
 			token = yylex();
 			if (token == ';')
 				break;
@@ -1435,7 +1791,7 @@ void proxy_delegate(void *ctx)
 			word = malloc(sizeof(struct d_name));
 			if (!word)
 				pdperror("out of memory.");
-			word->name = yylval.txt;
+			word->name = yylval.txt ? yylval.txt : strdup(yytext);
 			word->next = NULL;
 			*pnp = word;
 			pnp = &word->next;
@@ -1449,40 +1805,42 @@ void proxy_delegate(void *ctx)
 		free_names(line);
 	}
 out:
-	res->proxy_plugins = options;
+	if (proxy_plugins)
+		*proxy_plugins = options;
 }
 
-int parse_proxy_settings(struct d_resource *res, int flags)
+static int parse_proxy_options(struct d_option **proxy_options, struct d_option **proxy_plugins)
+{
+	struct d_option *opts;
+
+	EXP('{');
+	opts = parse_options_d(0, 0, TK_PROXY_OPTION | TK_PROXY_GROUP,
+			       TK_PROXY_DELEGATE, proxy_delegate, proxy_plugins);
+
+	if (proxy_options)
+		*proxy_options = opts;
+
+	return 0;
+}
+
+int parse_proxy_options_section(struct d_resource *res)
 {
 	int token;
 
-	if (flags & PARSER_CHECK_PROXY_KEYWORD) {
-		token = yylex();
-		if (token != TK_PROXY) {
-			if (flags & PARSER_STOP_IF_INVALID) {
-				yyrestart(yyin); /* flushes flex's buffers */
-				return 1;
-			}
-
-			pe_expected_got("proxy", token);
-		}
+	token = yylex();
+	if (token != TK_PROXY) {
+		yyrestart(yyin); /* flushes flex's buffers */
+		return 1;
 	}
 
-	EXP('{');
-
-	res->proxy_options =
-		parse_options_d(TK_PROXY_SWITCH,
-				TK_PROXY_OPTION | TK_PROXY_GROUP,
-				TK_PROXY_DELEGATE,
-				proxy_delegate, res);
-
-	return 0;
+	return parse_proxy_options(&res->proxy_options, &res->proxy_plugins);
 }
 
 struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 {
 	struct d_resource* res;
 	struct d_name *host_names;
+	char *opt_name;
 	int token;
 
 	check_upr_init();
@@ -1490,18 +1848,21 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 
 	res=calloc(1,sizeof(struct d_resource));
 	res->name = res_name;
-	res->device_minor = -1;
-	res->config_file = config_file;
+	res->config_file = config_save;
 	res->start_line = line;
 
 	while(1) {
 		token = yylex();
 		fline = line;
 		switch(token) {
-		case TK_PROTOCOL:
+		case TK_NET_OPTION:
+			if (strcmp(yylval.txt, "protocol"))
+				goto goto_default;
 			check_upr("protocol statement","%s: protocol",res->name);
+			opt_name = yylval.txt;
 			EXP(TK_STRING);
-			res->protocol=yylval.txt;
+			range_check(R_PROTOCOL, opt_name, yylval.txt);
+			res->net_options = APPEND(res->net_options, new_opt(opt_name, yylval.txt));
 			EXP(';');
 			break;
 		case TK_ON:
@@ -1541,13 +1902,17 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		case TK_DISK:
 			switch (token=yylex()) {
 			case TK_STRING:
-				res->disk = yylval.txt;
+				/* open coded parse_volume_stmt() */
+				volume0(&res->volumes)->disk = yylval.txt;
 				EXP(';');
 				break;
 			case '{':
 				check_upr("disk section", "%s:disk", res->name);
-				res->disk_options = parse_options(TK_DISK_SWITCH,
-								  TK_DISK_OPTION);
+				res->disk_options =
+					SPLICE(res->disk_options,
+					       parse_options(TK_DISK_FLAG,
+							     TK_DISK_NO_FLAG,
+							     TK_DISK_OPTION));
 				break;
 			default:
 				check_string_error(token);
@@ -1557,55 +1922,65 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		case TK_NET:
 			check_upr("net section", "%s:net", res->name);
 			EXP('{');
-			res->net_options = parse_options_d(TK_NET_SWITCH,
-							   TK_NET_OPTION,
-							   TK_NET_DELEGATE,
-							   &net_delegate,
-							   (void *)flags);
+			res->net_options =
+				SPLICE(res->net_options,
+				       parse_options_d(TK_NET_FLAG,
+						       TK_NET_NO_FLAG,
+						       TK_NET_OPTION,
+						       TK_NET_DELEGATE,
+						       &net_delegate,
+						       (void *)flags));
 			break;
 		case TK_SYNCER:
 			check_upr("syncer section", "%s:syncer", res->name);
 			EXP('{');
-			res->sync_options = parse_options(TK_SYNCER_SWITCH,
-							  TK_SYNCER_OPTION);
+			parse_options_syncer(res);
 			break;
 		case TK_STARTUP:
 			check_upr("startup section", "%s:startup", res->name);
 			EXP('{');
-			res->startup_options=parse_options_d(TK_STARTUP_SWITCH,
-							     TK_STARTUP_OPTION,
-							     TK_STARTUP_DELEGATE,
-							     &startup_delegate,
-							     res);
+			res->startup_options = parse_options_d(TK_STARTUP_FLAG,
+							       0,
+							       TK_STARTUP_OPTION,
+							       TK_STARTUP_DELEGATE,
+							       &startup_delegate,
+							       res);
 			break;
 		case TK_HANDLER:
 			check_upr("handlers section", "%s:handlers", res->name);
 			EXP('{');
-			res->handlers =  parse_options(0, TK_HANDLER_OPTION);
+			res->handlers =  parse_options(0, 0, TK_HANDLER_OPTION);
 			break;
 		case TK_PROXY:
 			check_upr("proxy section", "%s:proxy", res->name);
-			parse_proxy_settings(res, 0);
+			parse_proxy_options(&res->proxy_options, &res->proxy_plugins);
 			break;
 		case TK_DEVICE:
 			check_upr("device statement", "%s:device", res->name);
-			parse_device(NULL, &res->device_minor, &res->device);
-			break;
 		case TK_META_DISK:
-			parse_meta_disk(&res->meta_disk, &res->meta_index);
-			break;
 		case TK_FLEX_META_DISK:
-			EXP(TK_STRING);
-			res->meta_disk = yylval.txt;
-			if (strcmp("internal", yylval.txt)) {
-				res->meta_index = strdup("flexible");
-			}
-			EXP(';');
+			parse_volume_stmt(volume0(&res->volumes), NULL, token);
+			break;
+		case TK_VOLUME:
+			EXP(TK_INTEGER);
+			res->volumes = INSERT_SORTED(res->volumes,
+						     parse_volume(atoi(yylval.txt), NULL),
+						     vnr);
+			break;
+		case TK_OPTIONS:
+			check_upr("resource options section", "%s:res_options", res->name);
+			EXP('{');
+			res->res_options =
+				SPLICE(res->res_options,
+				       parse_options(0,
+						     0,
+						     TK_RES_OPTION));
 			break;
 		case '}':
 		case 0:
 			goto exit_loop;
 		default:
+		goto_default:
 			pe_expected_got("protocol | on | disk | net | syncer |"
 					" startup | handlers |"
 					" ignore-on | stacked-on-top-of",token);
@@ -1623,7 +1998,31 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 			config_file, c_section_start, res->name);
 	}
 
+	if (!(flags & PARSE_FOR_ADJUST))
+		check_volumes_hosts(res);
+
 	return res;
+}
+
+struct d_resource* parse_resource_for_adjust(struct cfg_ctx *ctx)
+{
+	int token;
+
+	token = yylex();
+	if (token != TK_RESOURCE)
+		return NULL;
+
+	token = yylex();
+	if (token != TK_STRING)
+		return NULL;
+
+	/* FIXME assert that string and ctx->res->name match? */
+
+	token = yylex();
+	if (token != '{')
+		return NULL;
+
+	return parse_resource(ctx->res->name, PARSE_FOR_ADJUST);
 }
 
 void post_parse(struct d_resource *config, enum pp_flags flags)
@@ -1637,12 +2036,12 @@ void post_parse(struct d_resource *config, enum pp_flags flags)
 	/* Needs "on_hosts" and host->lower already set */
 	for_each_resource(res, tmp, config)
 		if (!res->stacked_on_one)
-			set_me_in_resource(res, flags & match_on_proxy);
+			set_me_in_resource(res, flags & MATCH_ON_PROXY);
 
 	/* Needs host->lower->me already set */
 	for_each_resource(res, tmp, config)
 		if (res->stacked_on_one)
-			set_me_in_resource(res, flags & match_on_proxy);
+			set_me_in_resource(res, flags & MATCH_ON_PROXY);
 
 	// Needs "me" set already
 	for_each_resource(res, tmp, config)

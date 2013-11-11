@@ -31,7 +31,6 @@
 #define _GNU_SOURCE
 #define _XOPEN_SOURCE 600
 #define _FILE_OFFSET_BITS 64
-#define __USE_LARGEFILE64
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -63,16 +62,23 @@
 extern FILE* yyin;
 YYSTYPE yylval;
 
-/* int     force = 0; now extern, see drbdtool_common.c */
+int	force = 0;
 int	verbose = 0;
 int	ignore_sanity_checks = 0;
 int	dry_run = 0;
+int     option_peer_max_bio_size = 0;
+unsigned option_al_stripes = 1;
+unsigned option_al_stripe_size_4k = 8;
+unsigned option_al_stripes_used = 0;
 
 struct option metaopt[] = {
     { "ignore-sanity-checks",  no_argument, &ignore_sanity_checks, 1000 },
     { "dry-run",  no_argument, &dry_run, 1000 },
     { "force",  no_argument,    0, 'f' },
     { "verbose",  no_argument,    0, 'v' },
+    { "peer-max-bio-size",  required_argument, NULL, 'p' },
+    { "al-stripes",  required_argument, NULL, 's' },
+    { "al-stripe-size-kB",  required_argument, NULL, 'z' },
     { NULL,     0,              0, 0 },
 };
 
@@ -90,13 +96,44 @@ struct option metaopt[] = {
 
 #if 0
 #define ASSERT(x) ((void)(0))
+#define d_expect(x) (x)
 #else
-#define ASSERT(x) do { if (!(x)) {			\
+#define ASSERT(x) do { if (!(x)) {				\
 	fprintf(stderr, "%s:%u:%s: ASSERT(%s) failed.\n",	\
 		__FILE__ , __LINE__ , __func__ , #x );		\
 	abort(); }						\
 	} while (0)
+#define d_expect(x) ({						\
+	int _x = (x);						\
+	if (!_x)						\
+		fprintf(stderr, "%s:%u:%s: ASSERT(%s) failed.\n",\
+			__FILE__ , __LINE__ , __func__ , #x );	\
+	_x; })
 #endif
+
+static int confirmed(const char *text)
+{
+	const char yes[] = "yes";
+	const ssize_t N = sizeof(yes);
+	char *answer = NULL;
+	size_t n = 0;
+	int ok;
+
+	printf("\n%s\n", text);
+
+	if (force) {
+	    printf("*** confirmation forced via --force option ***\n");
+	    ok = 1;
+	}
+	else {
+	    printf("[need to type '%s' to confirm] ", yes);
+	    ok = getline(&answer,&n,stdin) == N &&
+		strncmp(answer,yes,N-1) == 0;
+	    if (answer) free(answer);
+	    printf("\n");
+	}
+	return ok;
+}
 
 /*
  * FIXME
@@ -166,6 +203,7 @@ struct option metaopt[] = {
 #define DRBD_MD_MAGIC_06   (DRBD_MAGIC+2)
 #define DRBD_MD_MAGIC_07   (DRBD_MAGIC+3)
 #define DRBD_MD_MAGIC_08   (DRBD_MAGIC+4)
+#define DRBD_MD_MAGIC_84_UNCLEAN   (DRBD_MAGIC+5)
 
 /*
  * }
@@ -176,7 +214,12 @@ struct option metaopt[] = {
  * global variables and data types
  */
 
-const size_t buffer_size = 128*1024;
+/* buffer_size has to be a multiple of 4096, and at least 32k.
+ * Pending a "nice" implementation of replay_al_84 for striped activity log,
+ * I chose a big buffer hopefully large enough to hold the whole activity log,
+ * even with "large" number of stripes and stripe sizes.
+ */
+const size_t buffer_size = 32 * 1024 * 1024;
 size_t pagesize; /* = sysconf(_SC_PAGESIZE) */
 int opened_odirect = 1;
 void *on_disk_buffer = NULL;
@@ -197,6 +240,7 @@ typedef struct { uint64_t be; } be_u64;
 typedef struct { uint32_t le; } le_u32;
 typedef struct { uint32_t be; } be_u32;
 typedef struct { int32_t be; } be_s32;
+typedef struct { uint16_t be; } be_u16;
 typedef struct { unsigned long le; } le_ulong;
 typedef struct { unsigned long be; } be_ulong;
 
@@ -208,7 +252,7 @@ struct md_cpu {
 	uint32_t gc[GEN_CNT_SIZE];	/* generation counter */
 	uint32_t magic;
 	/* added in drbd 0.7;
-	 * 0.7 stores la_size on disk as kb, 0.8 in units of sectors.
+	 * 0.7 stores la_size_sect on disk as kb, 0.8 in units of sectors.
 	 * we use sectors in our general working structure here */
 	uint64_t la_sect;		/* last agreed size. */
 	uint32_t md_size_sect;
@@ -221,6 +265,8 @@ struct md_cpu {
 	uint64_t device_uuid;
 	uint32_t bm_bytes_per_bit;
 	uint32_t la_peer_max_bio_size;
+	uint32_t al_stripes;
+	uint32_t al_stripe_size_4k;
 };
 
 /*
@@ -262,6 +308,9 @@ struct format {
 
 	/* convenience */
 	uint64_t bd_size; /* size of block device for internal meta data */
+
+	/* size limit due to available on-disk bitmap */
+	uint64_t max_usable_sect;
 
 	/* last-known bdev info,
 	 * to increase the chance of finding internal meta data in case the
@@ -358,6 +407,8 @@ void md_disk_07_to_cpu(struct md_cpu *cpu, const struct md_on_disk_07 *disk)
 	cpu->al_nr_extents = be32_to_cpu(disk->al_nr_extents.be);
 	cpu->bm_offset = be32_to_cpu(disk->bm_offset.be);
 	cpu->bm_bytes_per_bit = 4096;
+	cpu->al_stripes = 1;
+	cpu->al_stripe_size_4k = 8;
 }
 
 void md_cpu_to_disk_07(struct md_on_disk_07 *disk, const struct md_cpu const *cpu)
@@ -379,18 +430,20 @@ int is_valid_md(int f,
 	const struct md_cpu const *md, const int md_index, const uint64_t ll_size)
 {
 	uint64_t md_size_sect;
+	int al_size_sect;
 	char *v = (f == Drbd_07) ? "v07" : "v08";
-	const unsigned int magic = (f == Drbd_07) ? DRBD_MD_MAGIC_07 : DRBD_MD_MAGIC_08;
-
 
 	ASSERT(f == Drbd_07 || f == Drbd_08);
 
-	if (md->magic != magic) {
+	if ((f == Drbd_07 && md->magic != DRBD_MD_MAGIC_07) ||
+	    (f == Drbd_08 && md->magic != DRBD_MD_MAGIC_08
+			  && md->magic != DRBD_MD_MAGIC_84_UNCLEAN)) {
 		if (verbose >= 1)
 			fprintf(stderr, "%s Magic number not found\n", v);
 		return 0;
 	}
 
+	al_size_sect = md->al_stripes * md->al_stripe_size_4k * 8;
 	switch(md_index) {
 	default:
 	case DRBD_MD_INDEX_INTERNAL:
@@ -401,16 +454,16 @@ int is_valid_md(int f,
 				MD_AL_OFFSET_07, md->al_offset);
 			return 0;
 		}
-		if (md->bm_offset != MD_BM_OFFSET_07) {
-			fprintf(stderr, "%s Magic number (bm_offset) not found\n", v);
+		if (md->bm_offset != MD_AL_OFFSET_07 + al_size_sect) {
+			fprintf(stderr, "%s bm_offset: expected %d, found %d\n", v,
+				MD_AL_OFFSET_07 + al_size_sect, md->bm_offset);
 			return 0;
 		}
 		break;
 	case DRBD_MD_INDEX_FLEX_INT:
-		if (md->al_offset != -MD_AL_MAX_SECT_07) {
-			fprintf(stderr, "%s Magic number (al_offset) not found\n", v);
-			fprintf(stderr, "\texpected: %d, found %d\n",
-				-MD_AL_MAX_SECT_07, md->al_offset);
+		if (md->al_offset != -al_size_sect) {
+			fprintf(stderr, "%s al_offset: expected %d, found %d\n", v,
+				-al_size_sect, md->al_offset);
 			return 0;
 		}
 
@@ -419,7 +472,7 @@ int is_valid_md(int f,
 		md_size_sect = (md_size_sect + 7) & ~7ULL;    /* align on 4K blocks */
 		/* plus the "drbd meta data super block",
 		 * and the activity log; unit still sectors */
-		md_size_sect += MD_BM_OFFSET_07;
+		md_size_sect += MD_AL_OFFSET_07 + al_size_sect;
 
 		if (md->bm_offset != -(int64_t)md_size_sect + MD_AL_OFFSET_07) {
 			fprintf(stderr, "strange bm_offset %d (expected: "D64")\n",
@@ -436,7 +489,7 @@ int is_valid_md(int f,
 		break;
 	}
 
-	/* FIXME consistency check, la_size < ll_device_size,
+	/* FIXME consistency check, la_size_sect < ll_device_size,
 	 * no overlap with internal meta data,
 	 * no overlap of flexible meta data offsets/sizes
 	 * ...
@@ -449,10 +502,10 @@ int is_valid_md(int f,
  * these stay the same for 0.8, too:
  */
 
-struct __packed al_sector_cpu {
+struct al_sector_cpu {
 	uint32_t magic;
 	uint32_t tr_number;
-	struct __packed {
+	struct {
 		uint32_t pos;
 		uint32_t extent;
 	} updates[62];
@@ -487,7 +540,7 @@ int v07_al_disk_to_cpu(struct al_sector_cpu *al_cpu, struct al_sector_on_disk *a
 }
 
 /*
- * -- DRBD 0.8 --------------------------------------
+ * -- DRBD 8.0, 8.2, 8.3 --------------------------------------
  */
 
 struct __packed md_on_disk_08 {
@@ -503,7 +556,12 @@ struct __packed md_on_disk_08 {
 	be_s32 bm_offset;	/* signed sector offset to the bitmap, from here */
 	be_u32 bm_bytes_per_bit;
 	be_u32 la_peer_max_bio_size; /* last peer max_bio_size */
-	be_u32 reserved_u32[3];
+
+	/* see al_tr_number_to_on_disk_sector() */
+	be_u32 al_stripes;
+	be_u32 al_stripe_size_4k;
+
+	be_u32 reserved_u32[1];
 
 	char reserved[8 * 512 - (8*(UI_SIZE+3)+4*11)];
 };
@@ -525,11 +583,22 @@ void md_disk_08_to_cpu(struct md_cpu *cpu, const struct md_on_disk_08 *disk)
 	cpu->bm_offset = be32_to_cpu(disk->bm_offset.be);
 	cpu->bm_bytes_per_bit = be32_to_cpu(disk->bm_bytes_per_bit.be);
 	cpu->la_peer_max_bio_size = be32_to_cpu(disk->la_peer_max_bio_size.be);
+	cpu->al_stripes = be32_to_cpu(disk->al_stripes.be);
+	cpu->al_stripe_size_4k = be32_to_cpu(disk->al_stripe_size_4k.be);
+
+	/* not set? --> default to old fixed size activity log */
+	if (cpu->al_stripes == 0 && cpu->al_stripe_size_4k == 0) {
+		cpu->al_stripes = 1;
+		cpu->al_stripe_size_4k = 8;
+	}
 }
 
 void md_cpu_to_disk_08(struct md_on_disk_08 *disk, const struct md_cpu *cpu)
 {
 	int i;
+
+	memset(disk, 0, sizeof(*disk));
+
 	disk->la_sect.be = cpu_to_be64(cpu->la_sect);
 	for ( i=UI_CURRENT ; i<UI_SIZE ; i++ ) {
 		disk->uuid[i].be = cpu_to_be64(cpu->uuid[i]);
@@ -543,8 +612,207 @@ void md_cpu_to_disk_08(struct md_on_disk_08 *disk, const struct md_cpu *cpu)
 	disk->bm_offset.be = cpu_to_be32(cpu->bm_offset);
 	disk->bm_bytes_per_bit.be = cpu_to_be32(cpu->bm_bytes_per_bit);
 	disk->la_peer_max_bio_size.be = cpu_to_be32(cpu->la_peer_max_bio_size);
-	memset(disk->reserved, 0, sizeof(disk->reserved));
+	disk->al_stripes.be = cpu_to_be32(cpu->al_stripes);
+	disk->al_stripe_size_4k.be = cpu_to_be32(cpu->al_stripe_size_4k);
 }
+
+/*
+ * -- DRBD 8.4 --------------------------------------
+ */
+
+/* new in 8.4: 4k al transaction blocks */
+#define AL_UPDATES_PER_TRANSACTION 64
+#define AL_CONTEXT_PER_TRANSACTION 919
+/* from DRBD 8.4 linux/drbd/drbd_limits.h, DRBD_AL_EXTENTS_MAX */
+#define AL_EXTENTS_MAX  65534
+enum al_transaction_types {
+	AL_TR_UPDATE = 0,
+	AL_TR_INITIALIZED = 0xffff
+};
+struct __packed al_4k_transaction_on_disk {
+	/* don't we all like magic */
+	be_u32	magic;
+
+	/* to identify the most recent transaction block
+	 * in the on disk ring buffer */
+	be_u32	tr_number;
+
+	/* checksum on the full 4k block, with this field set to 0. */
+	be_u32	crc32c;
+
+	/* type of transaction, special transaction types like:
+	 * purge-all, set-all-idle, set-all-active, ... to-be-defined
+	 * see also enum al_transaction_types */
+	be_u16	transaction_type;
+
+	/* we currently allow only a few thousand extents,
+	 * so 16bit will be enough for the slot number. */
+
+	/* how many updates in this transaction */
+	be_u16	n_updates;
+
+	/* maximum slot number, "al-extents" in drbd.conf speak.
+	 * Having this in each transaction should make reconfiguration
+	 * of that parameter easier. */
+	be_u16	context_size;
+
+	/* slot number the context starts with */
+	be_u16	context_start_slot_nr;
+
+	/* Some reserved bytes.  Expected usage is a 64bit counter of
+	 * sectors-written since device creation, and other data generation tag
+	 * supporting usage */
+	be_u32	__reserved[4];
+
+	/* --- 36 byte used --- */
+
+	/* Reserve space for up to AL_UPDATES_PER_TRANSACTION changes
+	 * in one transaction, then use the remaining byte in the 4k block for
+	 * context information.  "Flexible" number of updates per transaction
+	 * does not help, as we have to account for the case when all update
+	 * slots are used anyways, so it would only complicate code without
+	 * additional benefit.
+	 */
+	be_u16	update_slot_nr[AL_UPDATES_PER_TRANSACTION];
+
+	/* but the extent number is 32bit, which at an extent size of 4 MiB
+	 * allows to cover device sizes of up to 2**54 Byte (16 PiB) */
+	be_u32	update_extent_nr[AL_UPDATES_PER_TRANSACTION];
+
+	/* --- 420 bytes used (36 + 64*6) --- */
+
+	/* 4096 - 420 = 3676 = 919 * 4 */
+	be_u32	context[AL_CONTEXT_PER_TRANSACTION];
+};
+
+struct al_4k_cpu {
+	uint32_t	magic;
+	uint32_t	tr_number;
+	uint32_t	crc32c;
+	uint16_t	transaction_type;
+	uint16_t	n_updates;
+	uint16_t	context_size;
+	uint16_t	context_start_slot_nr;
+	uint32_t	__reserved[4];
+	uint16_t	update_slot_nr[AL_UPDATES_PER_TRANSACTION];
+	uint32_t	update_extent_nr[AL_UPDATES_PER_TRANSACTION];
+	uint32_t	context[AL_CONTEXT_PER_TRANSACTION];
+	uint32_t	is_valid;
+};
+
+/* from linux/crypto/crc32.c */
+static const uint32_t crc32c_table[256] = {
+	0x00000000L, 0xF26B8303L, 0xE13B70F7L, 0x1350F3F4L,
+	0xC79A971FL, 0x35F1141CL, 0x26A1E7E8L, 0xD4CA64EBL,
+	0x8AD958CFL, 0x78B2DBCCL, 0x6BE22838L, 0x9989AB3BL,
+	0x4D43CFD0L, 0xBF284CD3L, 0xAC78BF27L, 0x5E133C24L,
+	0x105EC76FL, 0xE235446CL, 0xF165B798L, 0x030E349BL,
+	0xD7C45070L, 0x25AFD373L, 0x36FF2087L, 0xC494A384L,
+	0x9A879FA0L, 0x68EC1CA3L, 0x7BBCEF57L, 0x89D76C54L,
+	0x5D1D08BFL, 0xAF768BBCL, 0xBC267848L, 0x4E4DFB4BL,
+	0x20BD8EDEL, 0xD2D60DDDL, 0xC186FE29L, 0x33ED7D2AL,
+	0xE72719C1L, 0x154C9AC2L, 0x061C6936L, 0xF477EA35L,
+	0xAA64D611L, 0x580F5512L, 0x4B5FA6E6L, 0xB93425E5L,
+	0x6DFE410EL, 0x9F95C20DL, 0x8CC531F9L, 0x7EAEB2FAL,
+	0x30E349B1L, 0xC288CAB2L, 0xD1D83946L, 0x23B3BA45L,
+	0xF779DEAEL, 0x05125DADL, 0x1642AE59L, 0xE4292D5AL,
+	0xBA3A117EL, 0x4851927DL, 0x5B016189L, 0xA96AE28AL,
+	0x7DA08661L, 0x8FCB0562L, 0x9C9BF696L, 0x6EF07595L,
+	0x417B1DBCL, 0xB3109EBFL, 0xA0406D4BL, 0x522BEE48L,
+	0x86E18AA3L, 0x748A09A0L, 0x67DAFA54L, 0x95B17957L,
+	0xCBA24573L, 0x39C9C670L, 0x2A993584L, 0xD8F2B687L,
+	0x0C38D26CL, 0xFE53516FL, 0xED03A29BL, 0x1F682198L,
+	0x5125DAD3L, 0xA34E59D0L, 0xB01EAA24L, 0x42752927L,
+	0x96BF4DCCL, 0x64D4CECFL, 0x77843D3BL, 0x85EFBE38L,
+	0xDBFC821CL, 0x2997011FL, 0x3AC7F2EBL, 0xC8AC71E8L,
+	0x1C661503L, 0xEE0D9600L, 0xFD5D65F4L, 0x0F36E6F7L,
+	0x61C69362L, 0x93AD1061L, 0x80FDE395L, 0x72966096L,
+	0xA65C047DL, 0x5437877EL, 0x4767748AL, 0xB50CF789L,
+	0xEB1FCBADL, 0x197448AEL, 0x0A24BB5AL, 0xF84F3859L,
+	0x2C855CB2L, 0xDEEEDFB1L, 0xCDBE2C45L, 0x3FD5AF46L,
+	0x7198540DL, 0x83F3D70EL, 0x90A324FAL, 0x62C8A7F9L,
+	0xB602C312L, 0x44694011L, 0x5739B3E5L, 0xA55230E6L,
+	0xFB410CC2L, 0x092A8FC1L, 0x1A7A7C35L, 0xE811FF36L,
+	0x3CDB9BDDL, 0xCEB018DEL, 0xDDE0EB2AL, 0x2F8B6829L,
+	0x82F63B78L, 0x709DB87BL, 0x63CD4B8FL, 0x91A6C88CL,
+	0x456CAC67L, 0xB7072F64L, 0xA457DC90L, 0x563C5F93L,
+	0x082F63B7L, 0xFA44E0B4L, 0xE9141340L, 0x1B7F9043L,
+	0xCFB5F4A8L, 0x3DDE77ABL, 0x2E8E845FL, 0xDCE5075CL,
+	0x92A8FC17L, 0x60C37F14L, 0x73938CE0L, 0x81F80FE3L,
+	0x55326B08L, 0xA759E80BL, 0xB4091BFFL, 0x466298FCL,
+	0x1871A4D8L, 0xEA1A27DBL, 0xF94AD42FL, 0x0B21572CL,
+	0xDFEB33C7L, 0x2D80B0C4L, 0x3ED04330L, 0xCCBBC033L,
+	0xA24BB5A6L, 0x502036A5L, 0x4370C551L, 0xB11B4652L,
+	0x65D122B9L, 0x97BAA1BAL, 0x84EA524EL, 0x7681D14DL,
+	0x2892ED69L, 0xDAF96E6AL, 0xC9A99D9EL, 0x3BC21E9DL,
+	0xEF087A76L, 0x1D63F975L, 0x0E330A81L, 0xFC588982L,
+	0xB21572C9L, 0x407EF1CAL, 0x532E023EL, 0xA145813DL,
+	0x758FE5D6L, 0x87E466D5L, 0x94B49521L, 0x66DF1622L,
+	0x38CC2A06L, 0xCAA7A905L, 0xD9F75AF1L, 0x2B9CD9F2L,
+	0xFF56BD19L, 0x0D3D3E1AL, 0x1E6DCDEEL, 0xEC064EEDL,
+	0xC38D26C4L, 0x31E6A5C7L, 0x22B65633L, 0xD0DDD530L,
+	0x0417B1DBL, 0xF67C32D8L, 0xE52CC12CL, 0x1747422FL,
+	0x49547E0BL, 0xBB3FFD08L, 0xA86F0EFCL, 0x5A048DFFL,
+	0x8ECEE914L, 0x7CA56A17L, 0x6FF599E3L, 0x9D9E1AE0L,
+	0xD3D3E1ABL, 0x21B862A8L, 0x32E8915CL, 0xC083125FL,
+	0x144976B4L, 0xE622F5B7L, 0xF5720643L, 0x07198540L,
+	0x590AB964L, 0xAB613A67L, 0xB831C993L, 0x4A5A4A90L,
+	0x9E902E7BL, 0x6CFBAD78L, 0x7FAB5E8CL, 0x8DC0DD8FL,
+	0xE330A81AL, 0x115B2B19L, 0x020BD8EDL, 0xF0605BEEL,
+	0x24AA3F05L, 0xD6C1BC06L, 0xC5914FF2L, 0x37FACCF1L,
+	0x69E9F0D5L, 0x9B8273D6L, 0x88D28022L, 0x7AB90321L,
+	0xAE7367CAL, 0x5C18E4C9L, 0x4F48173DL, 0xBD23943EL,
+	0xF36E6F75L, 0x0105EC76L, 0x12551F82L, 0xE03E9C81L,
+	0x34F4F86AL, 0xC69F7B69L, 0xD5CF889DL, 0x27A40B9EL,
+	0x79B737BAL, 0x8BDCB4B9L, 0x988C474DL, 0x6AE7C44EL,
+	0xBE2DA0A5L, 0x4C4623A6L, 0x5F16D052L, 0xAD7D5351L
+};
+
+/*
+ * Steps through buffer one byte at at time, calculates reflected
+ * crc using table.
+ */
+
+static uint32_t crc32c(uint32_t crc, const uint8_t *data, unsigned int length)
+{
+	while (length--)
+		crc = crc32c_table[(crc ^ *data++) & 0xFFL] ^ (crc >> 8);
+
+	return crc;
+}
+/* --- */
+
+int v84_al_disk_to_cpu(struct al_4k_cpu *al_cpu, struct al_4k_transaction_on_disk *al_disk)
+{
+	unsigned crc = 0;
+	unsigned i;
+
+	al_cpu->magic                 = be32_to_cpu(al_disk->magic.be);
+	al_cpu->tr_number             = be32_to_cpu(al_disk->tr_number.be);
+	al_cpu->crc32c                = be32_to_cpu(al_disk->crc32c.be);
+	al_cpu->transaction_type      = be16_to_cpu(al_disk->transaction_type.be);
+	al_cpu->n_updates             = be16_to_cpu(al_disk->n_updates.be);
+	al_cpu->context_size          = be16_to_cpu(al_disk->context_size.be);
+	al_cpu->context_start_slot_nr = be16_to_cpu(al_disk->context_start_slot_nr.be);
+
+	/* reserverd al_disk->__reserved[4] */
+
+	for (i=0; i < AL_UPDATES_PER_TRANSACTION; i++)
+		al_cpu->update_slot_nr[i] = be16_to_cpu(al_disk->update_slot_nr[i].be);
+	for (i=0; i < AL_UPDATES_PER_TRANSACTION; i++)
+		al_cpu->update_extent_nr[i] = be32_to_cpu(al_disk->update_extent_nr[i].be);
+	for (i=0; i < AL_CONTEXT_PER_TRANSACTION; i++)
+		al_cpu->context[i] = be32_to_cpu(al_disk->context[i].be);
+
+	al_disk->crc32c.be = 0;
+	crc = crc32c(crc, (void*)al_disk, 4096);
+	al_cpu->is_valid = (al_cpu->magic == DRBD_AL_MAGIC && al_cpu->crc32c == crc);
+	return al_cpu->is_valid;
+}
+
+/*
+ * --------------------------------------------------
+ */
 
 /* pre declarations */
 void m_get_gc(struct md_cpu *md);
@@ -661,11 +929,15 @@ struct meta_cmd {
 	int (*function) (struct format *, char **argv, int argc);
 	int show_in_usage;
 };
+/* Global command pointer, to be able to change behavior in helper functions
+ * based on which top-level command is being processed. */
+static struct meta_cmd *command;
 
 /* pre declarations */
 int meta_get_gi(struct format *cfg, char **argv, int argc);
 int meta_show_gi(struct format *cfg, char **argv, int argc);
 int meta_dump_md(struct format *cfg, char **argv, int argc);
+int meta_apply_al(struct format *cfg, char **argv, int argc);
 int meta_restore_md(struct format *cfg, char **argv, int argc);
 int meta_verify_dump_file(struct format *cfg, char **argv, int argc);
 int meta_create_md(struct format *cfg, char **argv, int argc);
@@ -684,7 +956,7 @@ struct meta_cmd cmds[] = {
 	{"dump-md", 0, meta_dump_md, 1},
 	{"restore-md", "file", meta_restore_md, 1},
 	{"verify-dump", "file", meta_verify_dump_file, 1},
-	{"create-md", 0, meta_create_md, 1},
+	{"apply-al", 0, meta_apply_al, 1},
 	{"wipe-md", 0, meta_wipe_md, 1},
 	{"outdate", 0, meta_outdate, 1},
 	{"invalidate", 0, meta_invalidate, 1},
@@ -693,6 +965,11 @@ struct meta_cmd cmds[] = {
 	{"write-dev-uuid", "VAL", meta_write_dev_uuid, 0},
 	{"set-gi", ":::VAL:VAL:...", meta_set_gi, 0},
 	{"check-resize", 0, meta_chk_offline_resize, 1},
+	{"create-md",
+		"[--peer-max-bio-size {val}] "
+		"[--al-stripes {val}] "
+		"[--al-stripe-size-kB {val}]",
+		meta_create_md, 1},
 };
 
 /*
@@ -763,6 +1040,23 @@ void pwrite_or_die(int fd, const void *buf, size_t count, off_t offset, const ch
 			" actually wrote %d\n", tag, (int)count, (int)c);
 		exit(10);
 	}
+}
+
+size_t pwrite_with_limit_or_die(int fd, const void *buf, size_t count, off_t offset, off_t limit, const char* tag)
+{
+	if (offset >= limit) {
+		fprintf(stderr,"confused in %s: offset (%llu) > limit (%llu)\n",
+			tag, (unsigned long long)offset, (unsigned long long)limit);
+		exit(10);
+	}
+	if (count > limit - offset) {
+		fprintf(stderr,"in %s: truncating byte count from %lu to %lu\n", tag,
+				(unsigned long)count,
+				(unsigned long)(limit -offset));
+		count = limit - offset;
+	}
+	pwrite_or_die(fd, buf, count, offset, tag);
+	return count;
 }
 
 void m_get_gc(struct md_cpu *md)
@@ -1045,29 +1339,85 @@ int v06_md_initialize(struct format *cfg)
   }}} end of v06
  ******************************************/
 
+static uint64_t max_usable_sectors(struct format *cfg)
+{
+#define min(x,y) ((x) < (y) ? (x) : (y))
+	/* We currently have two possible layouts:
+	 * external:
+	 *   |----------- md_size_sect ------------------|
+	 *   [ 4k superblock ][ activity log ][  Bitmap  ]
+	 *   | al_offset == 8 |
+	 *   | bm_offset = al_offset + X      |
+	 *  ==> bitmap sectors = md_size_sect - bm_offset
+	 *
+	 * internal:
+	 *            |----------- md_size_sect ------------------|
+	 * [data.....][  Bitmap  ][ activity log ][ 4k superblock ]
+	 *                        | al_offset < 0 |
+	 *            | bm_offset = al_offset - Y |
+	 *  ==> bitmap sectors = Y = al_offset - bm_offset
+	 *
+	 * There also used to be the fixed size internal meta data,
+	 * which covers the last 128 MB of the device,
+	 * and has the same layout as the "external:" above.
+	 */
+	if(cfg->md_index == DRBD_MD_INDEX_INTERNAL ||
+	   cfg->md_index == DRBD_MD_INDEX_FLEX_INT) {
+		/* for internal meta data, the available storage is limitted by
+		 * the first meta data sector, even if the available bitmap
+		 * space would support more. */
+		return	min( cfg->md_offset,
+			min( cfg->al_offset,
+			     cfg->bm_offset )) >> 9;
+	} else {
+		/* For external meta data,
+		 * we are limited by available on-disk bitmap space.
+		 * Ok, and by the lower level storage device;
+		 * which we don't know about here :-( */
+		ASSERT(cfg->md.bm_bytes_per_bit == 4096);
+		return
+			/* bitmap sectors */
+			(uint64_t)(cfg->md.md_size_sect - cfg->md.bm_offset)
+			* 512	/* sector size */
+			* 8	/* bits per byte */
+				/* storage bytes per bitmap bit;
+				 * currently always 4096 */
+			* cfg->md.bm_bytes_per_bit
+			/ 512;	/* and back to sectors */;
+	}
+#undef min
+}
+
 void re_initialize_md_offsets(struct format *cfg)
 {
 	uint64_t md_size_sect;
+	int al_size_sect;
+
+	if (is_v08(cfg))
+		al_size_sect = cfg->md.al_stripes * cfg->md.al_stripe_size_4k * 8;
+	else
+		al_size_sect = MD_AL_MAX_SECT_07;
+
 	switch(cfg->md_index) {
 	default:
 		cfg->md.md_size_sect = MD_RESERVED_SECT_07;
 		cfg->md.al_offset = MD_AL_OFFSET_07;
-		cfg->md.bm_offset = MD_BM_OFFSET_07;
+		cfg->md.bm_offset = cfg->md.al_offset + al_size_sect;
 		break;
 	case DRBD_MD_INDEX_FLEX_EXT:
 		/* just occupy the full device; unit: sectors */
 		cfg->md.md_size_sect = cfg->bd_size >> 9;
 		cfg->md.al_offset = MD_AL_OFFSET_07;
-		cfg->md.bm_offset = MD_BM_OFFSET_07;
+		cfg->md.bm_offset = cfg->md.al_offset + al_size_sect;
 		break;
-	case DRBD_MD_INDEX_INTERNAL:
+	case DRBD_MD_INDEX_INTERNAL: /* only v07 */
 		cfg->md.md_size_sect = MD_RESERVED_SECT_07;
 		cfg->md.al_offset = MD_AL_OFFSET_07;
 		cfg->md.bm_offset = MD_BM_OFFSET_07;
 		break;
 	case DRBD_MD_INDEX_FLEX_INT:
 		/* al size is still fixed */
-		cfg->md.al_offset = -MD_AL_MAX_SECT_07;
+		cfg->md.al_offset = -al_size_sect;
 
 		/* we need (slightly less than) ~ this much bitmap sectors: */
 		md_size_sect = (cfg->bd_size + (1UL<<24)-1) >> 24; /* BM_EXT_SIZE_B */
@@ -1083,35 +1433,66 @@ void re_initialize_md_offsets(struct format *cfg)
 		}
 		/* plus the "drbd meta data super block",
 		 * and the activity log; unit still sectors */
-		md_size_sect += MD_BM_OFFSET_07;
+		md_size_sect += MD_AL_OFFSET_07 + al_size_sect;
 		cfg->md.md_size_sect = md_size_sect;
 		cfg->md.bm_offset = -md_size_sect + MD_AL_OFFSET_07;
 		break;
 	}
 	cfg->al_offset = cfg->md_offset + cfg->md.al_offset * 512LL;
 	cfg->bm_offset = cfg->md_offset + cfg->md.bm_offset * 512LL;
-}
-
-/* MAYBE DOES DISK WRITES!! */
-int md_initialize_common(struct format *cfg, int do_disk_writes)
-{
-	/* no need to re-initialize the offset of md
-	 * FIXME we need to, if we convert, or resize, in case we allow/implement that...
-	 */
-	re_initialize_md_offsets(cfg);
-
-	cfg->md.al_nr_extents = 257;	/* arbitrary. */
-	cfg->md.bm_bytes_per_bit = DEFAULT_BM_BLOCK_SIZE;
+	cfg->max_usable_sect = max_usable_sectors(cfg);
 
 	if (verbose >= 2) {
 		fprintf(stderr,"md_offset: "U64"\n", cfg->md_offset);
 		fprintf(stderr,"al_offset: "U64" (%d)\n", cfg->al_offset, cfg->md.al_offset);
 		fprintf(stderr,"bm_offset: "U64" (%d)\n", cfg->bm_offset, cfg->md.bm_offset);
-		fprintf(stderr,"md_size_sect: %lu\n", (unsigned long)cfg->md.md_size_sect);
+		fprintf(stderr,"md_size_sect: "U32"\n", cfg->md.md_size_sect);
+		fprintf(stderr,"max_usable_sect: "U64"\n", cfg->max_usable_sect);
 	}
+}
+
+void initialize_al(struct format *cfg)
+{
+	unsigned int mx = cfg->md.al_stripes * cfg->md.al_stripe_size_4k;
+	size_t al_size = mx * 4096;
+	memset(on_disk_buffer, 0x00, al_size);
+	if (format_version(cfg) == Drbd_08) {
+		/* DRBD <= 8.3 does not care if it is all zero,
+		 * or otherwise wrong magic.
+		 *
+		 * For 8.4, we initialize to something that is
+		 * valid magic, valid crc, and transaction_type = 0xffff.
+		 */
+		struct al_4k_transaction_on_disk *al = on_disk_buffer;
+		unsigned crc_be = 0;
+		int i;
+		for (i = 0; i < mx; i++, al++) {
+			al->magic.be = cpu_to_be32(DRBD_AL_MAGIC);
+			al->transaction_type.be = cpu_to_be16(AL_TR_INITIALIZED);
+			/* crc calculated once */
+			if (i == 0)
+				crc_be = cpu_to_be32(crc32c(0, (void*)al, 4096));
+			al->crc32c.be = crc_be;
+		}
+	}
+	pwrite_or_die(cfg->md_fd, on_disk_buffer, al_size, cfg->al_offset,
+		"md_initialize_common:AL");
+}
+
+void check_for_existing_data(struct format *cfg);
+
+/* MAYBE DOES DISK WRITES!! */
+int md_initialize_common(struct format *cfg, int do_disk_writes)
+{
+	cfg->md.al_nr_extents = 257;	/* arbitrary. */
+	cfg->md.bm_bytes_per_bit = DEFAULT_BM_BLOCK_SIZE;
+
+	re_initialize_md_offsets(cfg);
 
 	if (!do_disk_writes)
 		return 0;
+
+	check_for_existing_data(cfg);
 
 	/* do you want to initialize al to something more useful? */
 	printf("initializing activity log\n");
@@ -1119,9 +1500,7 @@ int md_initialize_common(struct format *cfg, int do_disk_writes)
 		fprintf(stderr, "%s:%u: LOGIC BUG\n" , __FILE__ , __LINE__ );
 		exit(111);
 	}
-	memset(on_disk_buffer, 0x00, MD_AL_MAX_SECT_07*512);
-	pwrite_or_die(cfg->md_fd, on_disk_buffer, MD_AL_MAX_SECT_07*512, cfg->al_offset,
-		"md_initialize_common:AL");
+	initialize_al(cfg);
 
 	/* THINK
 	 * do we really need to initialize the bitmap? */
@@ -1157,7 +1536,7 @@ int md_initialize_common(struct format *cfg, int do_disk_writes)
 		}
 		fprintf(stderr,"\r100%%\n");
 	} else {
-		fprintf(stderr,"NOT initialized bitmap\n");
+		fprintf(stderr,"NOT initializing bitmap\n");
 	}
 	return 0;
 }
@@ -1191,17 +1570,11 @@ uint64_t v07_style_md_get_byte_offset(const int idx, const uint64_t bd_size)
 	return offset;
 }
 
-void printf_al(struct format *cfg)
+void printf_al_07(struct format *cfg, struct al_sector_on_disk *al_disk)
 {
 	struct al_sector_cpu al_cpu;
-	off_t al_on_disk_off = cfg->al_offset;
-	off_t al_size = MD_AL_MAX_SECT_07 * 512;
-	struct al_sector_on_disk *al_disk = on_disk_buffer;
 	unsigned s, i;
 	unsigned max_slot_nr = 0;
-
-	printf("# al {\n");
-	pread_or_die(cfg->md_fd, on_disk_buffer, al_size, al_on_disk_off, "printf_al");
 	for (s = 0; s < MD_AL_MAX_SECT_07; s++) {
 		int ok = v07_al_disk_to_cpu(&al_cpu, al_disk + s);
 		printf("#     sector %2u { %s\n", s, ok ? "valid" : "invalid");
@@ -1218,13 +1591,601 @@ void printf_al(struct format *cfg)
 		printf("# \txor: 0x%08x\n", al_cpu.xor_sum);
 		printf("#     }\n");
 	}
-	printf("# }\n");
 	if (max_slot_nr >= cfg->md.al_nr_extents)
 		printf(
 		"### CAUTION: maximum slot number found in AL: %u\n"
 		"### CAUTION: but 'super-block' al-extents is: %u\n",
 		max_slot_nr, cfg->md.al_nr_extents);
+}
 
+void printf_al_84(struct format *cfg, struct al_4k_transaction_on_disk *al_disk,
+	unsigned block_nr_offset, unsigned N)
+{
+	struct al_4k_cpu al_cpu;
+	unsigned b, i;
+	unsigned max_slot_nr = 0;
+	for (b = 0; b < N; b++) {
+		int ok = v84_al_disk_to_cpu(&al_cpu, al_disk + b);
+		if (!ok) {
+			printf("#     block %2u { INVALID }\n", b + block_nr_offset);
+			continue;
+		}
+		if (al_cpu.transaction_type == 0xffff) {
+			printf("#     block %2u { INITIALIZED }\n", b + block_nr_offset);
+			continue;
+		}
+		printf("#     block %2u {\n", b + block_nr_offset);
+		printf("# \tmagic: 0x%08x\n", al_cpu.magic);
+		printf("# \ttype: 0x%04x\n", al_cpu.transaction_type);
+		printf("# \ttr: %10u\n", al_cpu.tr_number);
+		printf("# \tactive set size: %u\n", al_cpu.context_size);
+		if (al_cpu.context_size -1 > max_slot_nr)
+			max_slot_nr = al_cpu.context_size -1;
+		for (i = 0; i < AL_CONTEXT_PER_TRANSACTION; i++) {
+			unsigned slot = al_cpu.context_start_slot_nr + i;
+			if (al_cpu.context[i] == ~0U && slot >= al_cpu.context_size)
+				continue;
+			if (slot > max_slot_nr)
+				max_slot_nr = slot;
+			printf("# \t%2u: %10u %10u\n", i, slot, al_cpu.context[i]);
+		}
+		printf("# \tupdates: %u\n", al_cpu.n_updates);
+		for (i = 0; i < AL_UPDATES_PER_TRANSACTION; i++) {
+			if (i >= al_cpu.n_updates &&
+			    al_cpu.update_slot_nr[i] == (uint16_t)(~0U))
+				continue;
+			printf("# \t%2u: %10u %10u\n", i,
+				al_cpu.update_slot_nr[i],
+				al_cpu.update_extent_nr[i]);
+			if (al_cpu.update_slot_nr[i] > max_slot_nr)
+				max_slot_nr = al_cpu.update_slot_nr[i];
+		}
+		printf("# \tcrc32c: 0x%08x\n", al_cpu.crc32c);
+		printf("#     }\n");
+	}
+	if (max_slot_nr >= cfg->md.al_nr_extents)
+		printf(
+		"### CAUTION: maximum slot number found in AL: %u\n"
+		"### CAUTION: but 'super-block' al-extents is: %u\n",
+		max_slot_nr, cfg->md.al_nr_extents);
+}
+
+void printf_al(struct format *cfg)
+{
+	off_t al_on_disk_off = cfg->al_offset;
+	off_t al_size = cfg->md.al_stripes * cfg->md.al_stripe_size_4k * 4096;
+	struct al_sector_on_disk *al_512_disk = on_disk_buffer;
+	struct al_4k_transaction_on_disk *al_4k_disk = on_disk_buffer;
+	unsigned block_nr_offset = 0;
+	unsigned N;
+
+	int is_al_84 =
+		is_v08(cfg) &&
+		(cfg->md.al_stripes != 1 || cfg->md.al_stripe_size_4k != 8);
+
+	printf("# al {\n");
+
+	while (al_size) {
+		off_t chunk = al_size;
+		if (chunk > buffer_size)
+			chunk = buffer_size;
+		ASSERT(chunk);
+		pread_or_die(cfg->md_fd, on_disk_buffer,
+			chunk, al_on_disk_off, "printf_al");
+		al_on_disk_off += chunk;
+		al_size -= chunk;
+		N = chunk/4096;
+
+		/* FIXME
+		 * we should introduce a new meta data "super block" magic, so we won't
+		 * have the same super block with two different activity log
+		 * transaction layouts */
+		if (format_version(cfg) < Drbd_08)
+			printf_al_07(cfg, al_512_disk);
+
+		/* looks like we have the new al format */
+		else if (is_al_84 ||
+			 DRBD_AL_MAGIC == be32_to_cpu(al_4k_disk[0].magic.be) ||
+			 DRBD_AL_MAGIC == be32_to_cpu(al_4k_disk[1].magic.be)) {
+			is_al_84 = 1;
+			printf_al_84(cfg, al_4k_disk, block_nr_offset, N);
+		}
+
+		/* try the old al format anyways */
+		else
+			printf_al_07(cfg, al_512_disk);
+
+		block_nr_offset += N;
+		if (al_size && !is_al_84) {
+			printf("### UNEXPECTED ACTIVITY LOG SIZE!\n");
+		}
+	}
+	printf("# }\n");
+}
+
+/* One activity log extent represents 4M of storage,
+ * one bit corresponds to 4k.
+ *                       4M / 4k / 8bit per byte */
+#define BM_BYTES_PER_AL_EXT	(1UL << (22 - 12 - 3))
+
+struct al_cursor {
+	unsigned i;
+	uint32_t tr_number;
+};
+
+static int replay_al_07(struct format *cfg, uint32_t *hot_extent)
+{
+	unsigned int mx;
+	struct al_sector_cpu al_cpu[MD_AL_MAX_SECT_07];
+	unsigned char valid[MD_AL_MAX_SECT_07];
+
+	struct al_sector_on_disk *al_disk = on_disk_buffer;
+
+	unsigned b, i;
+
+	int found_valid = 0;
+	struct al_cursor oldest = { 0, };
+	struct al_cursor newest = { 0, };
+
+	/* Endian convert, validate, and find oldest to newest log range.
+	 * In contrast to the 8.4 log format, this log format does NOT
+	 * use all log space, but only as many sectors as absolutely necessary.
+	 *
+	 * We need to trust the "al_nr_extents" setting in the "super block".
+	 */
+#define AL_EXTENTS_PT 61
+	/* mx = 1 + div_ceil(al_nr_extents, AL_EXTENTS_PT); */
+	mx = 1 + (cfg->md.al_nr_extents + AL_EXTENTS_PT -1) / AL_EXTENTS_PT;
+	for (b = 0; b < mx; b++) {
+		valid[b] = v07_al_disk_to_cpu(al_cpu + b, al_disk + b);
+		if (!valid[b])
+		       continue;
+		if (++found_valid == 1) {
+			oldest.i = b;
+			oldest.tr_number = al_cpu[b].tr_number;
+			newest = oldest;
+			continue;
+		}
+
+		d_expect(al_cpu[b].tr_number != oldest.tr_number);
+		d_expect(al_cpu[b].tr_number != newest.tr_number);
+		if ((int)al_cpu[b].tr_number - (int)oldest.tr_number < 0) {
+			d_expect(oldest.tr_number - al_cpu[b].tr_number + b - oldest.i == mx);
+			oldest.i = b;
+			oldest.tr_number = al_cpu[b].tr_number;
+		}
+		if ((int)al_cpu[b].tr_number - (int)newest.tr_number > 0) {
+			d_expect(al_cpu[b].tr_number - newest.tr_number == b - newest.i);
+			newest.i = b;
+			newest.tr_number = al_cpu[b].tr_number;
+		}
+	}
+
+	if (!found_valid) {
+		/* not even one transaction was valid.
+		 * Has this ever been initialized correctly? */
+		fprintf(stderr, "No usable activity log found.\n");
+		/* with up to 8.3 style activity log, this is NOT an error. */
+		return 0;
+	}
+
+	/* we do expect at most one corrupt transaction, and only in case
+	 * things went wrong during transaction write. */
+	if (found_valid != mx) {
+		fprintf(stderr, "%u corrupt or uninitialized AL transactions found\n", mx - found_valid);
+		fprintf(stderr, "You can safely ignore this if this node was cleanly stopped (no crash).\n");
+	}
+
+	/* Any other paranoia checks possible with this log format? */
+
+	/* Ok, so we found valid update transactions.  Reconstruct the "active
+	 * set" at the time of the newest transaction. */
+
+	/* wrap around */
+	if (newest.i < oldest.i)
+		newest.i += mx;
+
+	for (b = oldest.i; b <= newest.i; b++) {
+		unsigned idx = b % mx;
+		if (!valid[idx])
+			continue;
+
+		/* This loop processes both "context" and "update" information.
+		 * There is only one update, on index 0,
+		 * which is why this loop counts down. */
+		for (i = AL_EXTENTS_PT; (int)i >= 0; i--) {
+			unsigned slot = al_cpu[idx].updates[i].pos;
+			if (al_cpu[idx].updates[i].extent == ~0U)
+				continue;
+			if (slot >= AL_EXTENTS_MAX) {
+				fprintf(stderr, "slot number out of range: tr:%u slot:%u\n",
+						idx, slot);
+				continue;
+			}
+			hot_extent[slot] = al_cpu[idx].updates[i].extent;
+		}
+	}
+	return found_valid;
+}
+
+static unsigned int al_tr_number_to_on_disk_slot(struct format *cfg, unsigned int b, unsigned int mx)
+{
+	const unsigned int stripes = cfg->md.al_stripes;
+	const unsigned int stripe_size_4kB = cfg->md.al_stripe_size_4k;
+
+	/* transaction number, modulo on-disk ring buffer wrap around */
+	unsigned int t = b % mx;
+
+	/* ... to aligned 4k on disk block */
+	t = ((t % stripes) * stripe_size_4kB) + t/stripes;
+
+	return t;
+}
+
+
+/* Expects the AL to be read into on_disk_buffer already.
+ * Returns negative error code for non-interpretable data,
+ * 0 for "just mark me clean, nothing more to do",
+ * and positive if we have to apply something. */
+int replay_al_84(struct format *cfg, uint32_t *hot_extent)
+{
+	const unsigned int mx = cfg->md.al_stripes * cfg->md.al_stripe_size_4k;
+	struct al_4k_transaction_on_disk *al_disk = on_disk_buffer;
+	struct al_4k_cpu *al_cpu = NULL;
+	unsigned b, o, i;
+
+	int found_valid = 0;
+	int found_valid_updates = 0;
+	struct al_cursor oldest = { 0, };
+	struct al_cursor newest = { 0, };
+
+	al_cpu = calloc(mx, sizeof(*al_cpu));
+	if (!al_cpu) {
+		fprintf(stderr, "Could not calloc(%u, sizeof(*al_cpu))\n", mx);
+		exit(30); /* FIXME sane exit codes */
+	}
+
+	/* endian convert, validate, and find oldest to newest log range */
+	for (b = 0; b < mx; b++) {
+		o = al_tr_number_to_on_disk_slot(cfg, b, mx);
+		if (!v84_al_disk_to_cpu(al_cpu + b, al_disk + o))
+		       continue;
+		++found_valid;
+		if (al_cpu[b].transaction_type == AL_TR_INITIALIZED)
+			continue;
+		d_expect(al_cpu[b].transaction_type == AL_TR_UPDATE);
+		if (++found_valid_updates == 1) {
+			oldest.i = b;
+			oldest.tr_number = al_cpu[b].tr_number;
+			newest = oldest;
+			continue;
+		}
+		d_expect(al_cpu[b].tr_number != oldest.tr_number);
+		d_expect(al_cpu[b].tr_number != newest.tr_number);
+		if ((int)al_cpu[b].tr_number - (int)oldest.tr_number < 0) {
+			d_expect(oldest.tr_number - al_cpu[b].tr_number + b - oldest.i == mx);
+			oldest.i = b;
+			oldest.tr_number = al_cpu[b].tr_number;
+		}
+		if ((int)al_cpu[b].tr_number - (int)newest.tr_number > 0) {
+			d_expect(al_cpu[b].tr_number - newest.tr_number == b - newest.i);
+			newest.i = b;
+			newest.tr_number = al_cpu[b].tr_number;
+		}
+	}
+
+	if (!found_valid) {
+		/* not even one transaction was valid.
+		 * Has this ever been initialized correctly? */
+		fprintf(stderr, "No usable activity log found. Do you need to create-md?\n");
+		return -ENODATA;
+	}
+
+	/* we do expect at most one corrupt transaction, and only in case
+	 * things went wrong during transaction write. */
+	if (found_valid != mx)
+		fprintf(stderr, "%u corrupt AL transactions found\n", mx - found_valid);
+
+	if (!found_valid_updates) {
+		if (found_valid == mx)
+			/* nothing to do, all slots are valid AL_TR_INITIALIZED */
+			return 0;
+
+		/* this is only expected, in case the _first_ transaction
+		 * somehow failed. */
+		if (!al_cpu[0].is_valid && found_valid == mx - 1)
+			return 0;
+
+		/* Hmm. Some transactions are valid.
+		 * Some are not.
+		 * This is not expected. */
+		/* FIXME how do we want to handle this? */
+		fprintf(stderr, "No valid AL update transaction found.\n");
+		return -EINVAL;
+	}
+
+	/* FIXME what do we do
+	 * about more than one corrupt transaction?
+	 * about corrupt transaction in the middle of the oldest -> newest range? */
+
+	/* Ok, so we found valid update transactions.  Reconstruct the "active
+	 * set" at the time of the newest transaction. */
+
+	/* wrap around */
+	if (newest.i < oldest.i)
+		newest.i += mx;
+
+	for (b = oldest.i; b <= newest.i; b++) {
+		unsigned idx = b % mx;
+		if (!al_cpu[idx].is_valid || al_cpu[idx].transaction_type == AL_TR_INITIALIZED)
+			continue;
+
+		for (i = 0; i < AL_CONTEXT_PER_TRANSACTION; i++) {
+			unsigned slot = al_cpu[idx].context_start_slot_nr + i;
+			if (al_cpu[idx].context[i] == ~0U && slot >= al_cpu[idx].context_size)
+				continue;
+			if (slot >= AL_EXTENTS_MAX) {
+				fprintf(stderr, "slot number out of range: tr:%u slot:%u\n",
+						idx, slot);
+				continue;
+			}
+			hot_extent[slot] = al_cpu[idx].context[i];
+		}
+		for (i = 0; i < AL_UPDATES_PER_TRANSACTION; i++) {
+			unsigned slot = al_cpu[idx].update_slot_nr[i];
+			if (i >= al_cpu[idx].n_updates && slot == (uint16_t)(~0U))
+				continue;
+			if (slot >= AL_EXTENTS_MAX) {
+				fprintf(stderr, "update slot number out of range: tr:%u slot:%u\n",
+						idx, slot);
+				continue;
+			}
+			hot_extent[slot] = al_cpu[idx].update_extent_nr[i];
+		}
+	}
+	return found_valid_updates;
+}
+
+int cmp_u32(const void *p1, const void *p2)
+{
+	const unsigned a = *(unsigned *)p1;
+	const unsigned b = *(unsigned *)p2;
+
+	/* how best to deal with 32bit wrap? */
+	return a < b ? -1 : a == b ? 0 : 1;
+}
+
+void apply_al(struct format *cfg, uint32_t *hot_extent)
+{
+	const size_t bm_bytes = ALIGN(cfg->bm_bytes, cfg->md_hard_sect_size);
+	off_t bm_on_disk_off = cfg->bm_offset;
+	size_t bm_on_disk_pos = 0;
+	size_t chunk = 0;
+	int i, j;
+
+	/* can only be AL_EXTENTS_MAX * BM_BYTES_PER_AL_EXT * 8,
+	 * which currently is 65534 * 128 * 8 == 67106816
+	 * fits easily into 32bit. */
+	unsigned additional_bits_set = 0;
+	uint64_t *w;
+	char ppb[10];
+
+	/* Now, actually apply this stuff to the on-disk bitmap.
+	 * Since one AL extent corresponds to 128 Byte of bitmap,
+	 * we need to do some read/modify/write cycles here.
+	 *
+	 * Note that this can be slow due to the use of O_DIRECT,
+	 * worst case it does 65534 (AL_EXTENTS_MAX) cycles of
+	 *  - read 128 kByte (buffer_size)
+	 *  - memset 128 Bytes (BM_BYTES_PER_AL_EXT) to 0xff
+	 *  - write 128 kByte
+	 * This implementation could optimized in various ways:
+	 *  - don't use direct IO; has other drawbacks
+	 *  - first scan hot_extents for extent ranges,
+	 *    and optimize the IO size.
+	 *  - use aio with multiple buffers
+	 *  - ...
+	 */
+	for (i = 0; i < AL_EXTENTS_MAX; i++) {
+		size_t bm_pos;
+		unsigned bits_set = 0;
+		if (hot_extent[i] == ~0U)
+			break;
+		bm_pos = hot_extent[i] * BM_BYTES_PER_AL_EXT;
+		if (bm_pos >= bm_bytes) {
+			fprintf(stderr, "extent %u beyond end of bitmap!\n", hot_extent[i]);
+			/* could break or return error here,
+			 * but I'll just print a warning, and skip, each of them. */
+			continue;
+		}
+
+
+		/* On first iteration, or when the current position in the bitmap
+		 * exceeds the current buffer, write out the current buffer, if any,
+		 * and read in the next (at most buffer_size) chunk of bitmap,
+		 * containing the currently processed bitmap region.
+		 */
+
+		if (i == 0 ||
+		    bm_pos + BM_BYTES_PER_AL_EXT >= bm_on_disk_pos + chunk) {
+			if (i != 0)
+				pwrite_or_die(cfg->md_fd, on_disk_buffer, chunk,
+						bm_on_disk_off + bm_on_disk_pos,
+						"apply_al");
+
+			/* don't special case logical sector size != 512,
+			 * operate in 4k always. */
+			bm_on_disk_pos = bm_pos & ~(off_t)(4095);
+			chunk = bm_bytes - bm_on_disk_pos;
+			if (chunk > buffer_size)
+				chunk = buffer_size;
+			pread_or_die(cfg->md_fd, on_disk_buffer, chunk,
+					bm_on_disk_off + bm_on_disk_pos,
+					"apply_al");
+		}
+		ASSERT(bm_pos - bm_on_disk_pos <= chunk - BM_BYTES_PER_AL_EXT);
+		ASSERT((bm_pos - bm_on_disk_pos) % sizeof(uint64_t) == 0);
+		w = (uint64_t *)on_disk_buffer
+			+ (bm_pos - bm_on_disk_pos)/sizeof(uint64_t);
+		for (j = 0; j < BM_BYTES_PER_AL_EXT/sizeof(uint64_t); j++)
+			bits_set += generic_hweight64(w[j]);
+
+		additional_bits_set += BM_BYTES_PER_AL_EXT * 8 - bits_set;
+		memset((char*)on_disk_buffer + (bm_pos - bm_on_disk_pos),
+			0xff, BM_BYTES_PER_AL_EXT);
+	}
+	/* we still need to write out the buffer of the last iteration */
+	if (i != 0) {
+		pwrite_or_die(cfg->md_fd, on_disk_buffer, chunk,
+				bm_on_disk_off + bm_on_disk_pos,
+				"apply_al");
+		fprintf(stderr, "Marked additional %s as out-of-sync based on AL.\n",
+		     ppsize(ppb, additional_bits_set * 4));
+	} else
+		fprintf(stderr, "Nothing to do.\n");
+}
+
+int need_to_apply_al(struct format *cfg)
+{
+	if (is_v08(cfg))
+		return cfg->md.flags & MDF_PRIMARY_IND;
+	else if (is_v07(cfg))
+		return cfg->md.gc[Flags] & MDF_PRIMARY_IND;
+	else
+		return 0; /* there was no activity log in 0.6, right? */
+}
+
+int v08_move_internal_md_after_resize(struct format *cfg);
+int meta_apply_al(struct format *cfg, char **argv __attribute((unused)), int argc)
+{
+	off_t al_size;
+	struct al_4k_transaction_on_disk *al_4k_disk = on_disk_buffer;
+	uint32_t hot_extent[AL_EXTENTS_MAX];
+	int need_to_update_md_flags = 0;
+	int re_initialize_anyways = 0;
+	int err;
+
+	if (argc > 0)
+		fprintf(stderr, "Ignoring additional arguments\n");
+
+	if (format_version(cfg) < Drbd_07) {
+		fprintf(stderr, "apply-al only implemented for DRBD >= 0.7\n");
+		return -1;
+	}
+
+	err = cfg->ops->open(cfg);
+	if (err == VALID_MD_FOUND_AT_LAST_KNOWN_LOCATION) {
+		if (v08_move_internal_md_after_resize(cfg) == 0)
+			err = cfg->ops->open(cfg);
+	}
+	if (err != VALID_MD_FOUND) {
+		fprintf(stderr, "No valid meta data found\n");
+		return -1;
+	}
+
+	al_size = cfg->md.al_stripes * cfg->md.al_stripe_size_4k * 4096;
+
+	/* read in first chunk (which is actually the whole AL
+	 * for old fixed size 32k activity log */
+	pread_or_die(cfg->md_fd, on_disk_buffer,
+		al_size < buffer_size ? al_size : buffer_size,
+		cfg->al_offset, "apply_al");
+
+	/* init all extent numbers to -1U aka "unused" */
+	memset(hot_extent, 0xff, sizeof(hot_extent));
+
+	/* replay al */
+	if (is_v07(cfg))
+		err = replay_al_07(cfg, hot_extent);
+
+	/* FIXME
+	 * we should introduce a new meta data "super block" magic, so we won't
+	 * have the same super block with two different activity log
+	 * transaction layouts */
+	else if (DRBD_MD_MAGIC_84_UNCLEAN == cfg->md.magic ||
+		 DRBD_AL_MAGIC == be32_to_cpu(al_4k_disk[0].magic.be) ||
+		 DRBD_AL_MAGIC == be32_to_cpu(al_4k_disk[1].magic.be) ||
+		 cfg->md.al_stripes != 1 || cfg->md.al_stripe_size_4k != 8) {
+		err = replay_al_84(cfg, hot_extent);
+	} else {
+		/* try the old al format anyways, this may be the first time we
+		* run after upgrading from < 8.4 to 8.4, and we need to
+		* transparently "convert" the activity log format. */
+		err = replay_al_07(cfg, hot_extent);
+		re_initialize_anyways = 1;
+	}
+
+	if (err < 0) {
+		/* ENODATA:
+		 * most likely this is an uninitialized,
+		 * or at least non-8.4-style activity log.
+		 * Cannot do anything about that.
+		 *
+		 * EINVAL:
+		 * Some valid 8.4 style INITIALIZED transactions found,
+		 * but others have been corrupt, and no single "usable"
+		 * update transaction was found.
+		 * FIXME: what to do about that?
+		 * We probably need some "FORCE" mode as well. */
+
+		if (need_to_apply_al(cfg)) {
+			/* 1, 2, 10, 20? FIXME sane exit codes! */
+			if (err == -ENODATA)
+				return 1;
+			return 2;
+		} else if (is_v08(cfg)) {
+			fprintf(stderr, "Error ignored, no need to apply the AL\n");
+			re_initialize_anyways = 1;
+		}
+	}
+
+	/* do we need to actually apply it? */
+	if (err > 0 && need_to_apply_al(cfg)) {
+		/* process hot extents in order, to reduce disk seeks. */
+		qsort(hot_extent, ARRAY_SIZE(hot_extent), sizeof(hot_extent[0]), cmp_u32);
+		apply_al(cfg, hot_extent);
+		need_to_update_md_flags = 1;
+	}
+
+	/* (Re-)initialize the activity log.
+	 * This is needed on 8.4, and does not hurt on < 8.4.
+	 * It may cause a "No usable activity log found" kernel message
+	 * if it is attached to < 8.4, but that is cosmetic.
+	 * We can skip this, if it was clean anyways (err == 0),
+	 * or if we know that this is for 0.7.
+	 */
+	if (re_initialize_anyways || (err > 0 && !is_v07(cfg)))
+		initialize_al(cfg);
+
+	if (is_v08(cfg) &&
+		((cfg->md.flags & MDF_AL_CLEAN) == 0 ||
+		  cfg->md.magic != DRBD_MD_MAGIC_08))
+		need_to_update_md_flags = 1;
+
+	err = 0;
+	if (need_to_update_md_flags) {
+		/* Must not touch MDF_PRIMARY_IND.
+		 * This flag is used in-kernel to determine which
+		 * "wait-for-connection-timeout" is to be used.
+		 * Maybe it is time to reconsider the concept or
+		 * current implementation of "degr-wfc-timeout".
+		 * RFC:
+		 * If we set MDF_CRASHED_PRIMARY, in case MDF_PRIMARY_IND
+		 * was set, and clear MDF_PRIMARY_IND here, we can then
+		 * USE_DEGR_WFC_T as long as MDF_CRASHED_PRIMARY is set.
+		 * Maybe that even results in better semantics.
+		 */
+		if (is_v08(cfg)) {
+			cfg->md.flags |= MDF_AL_CLEAN;
+			cfg->md.magic = DRBD_MD_MAGIC_08;
+		}
+		err = cfg->ops->md_cpu_to_disk(cfg);
+		err = cfg->ops->close(cfg) || err;
+		if (err)
+			fprintf(stderr, "update of super block flags failed\n");
+	}
+
+	return err;
 }
 
 unsigned long bm_words(uint64_t sectors, int bytes_per_bit)
@@ -1315,19 +2276,52 @@ next:
 	cfg->bits_set = bits_set;
 }
 
+static void clip_la_sect_and_bm_bytes(struct format *cfg)
+{
+	if (cfg->md.la_sect > cfg->max_usable_sect) {
+		printf("# la-size-sect was too big (%llu), truncated (%llu)!\n",
+			(unsigned long long)cfg->md.la_sect,
+			(unsigned long long)cfg->max_usable_sect);
+		cfg->md.la_sect = cfg->max_usable_sect;
+	}
+	cfg->bm_bytes = sizeof(long) *
+		bm_words(cfg->md.la_sect, cfg->md.bm_bytes_per_bit);
+}
+
 int v07_style_md_open(struct format *cfg)
 {
 	struct stat sb;
-	unsigned long words;
 	unsigned long hard_sect_size = 0;
 	int ioctl_err;
 	int open_flags = O_RDWR | O_DIRECT;
+
+	/* For old-style fixed size indexed external meta data,
+	 * we cannot really use O_EXCL, we have to trust the given minor.
+	 *
+	 * For internal, or "flexible" external meta data, we open O_EXCL to
+	 * avoid accidentally damaging otherwise in-use data, just because
+	 * someone had a typo in the command line.
+	 */
+	if (cfg->md_index < 0)
+		open_flags |= O_EXCL;
 
  retry:
 	cfg->md_fd = open(cfg->md_device_name, open_flags );
 
 	if (cfg->md_fd == -1) {
-		if (errno == EINVAL && (open_flags & O_DIRECT)) {
+		int save_errno = errno;
+		PERROR("open(%s) failed", cfg->md_device_name);
+		if (save_errno == EBUSY && (open_flags & O_EXCL)) {
+			if ((!force && command->function == &meta_apply_al) ||
+			    !confirmed("Exclusive open failed. Do it anyways?"))
+			{
+				printf("Operation canceled.\n");
+				exit(20);
+			}
+			open_flags &= ~O_EXCL;
+			goto retry;
+		}
+		if (save_errno == EINVAL && (open_flags & O_DIRECT)) {
 			/* shoo. O_DIRECT is not supported?
 			 * retry, but remember this, so we can
 			 * BLKFLSBUF appropriately */
@@ -1336,7 +2330,6 @@ int v07_style_md_open(struct format *cfg)
 			opened_odirect = 0;
 			goto retry;
 		}
-		PERROR("open(%s) failed", cfg->md_device_name);
 		exit(20);
 	}
 
@@ -1394,33 +2387,18 @@ int v07_style_md_open(struct format *cfg)
 					"we may read stale data\n", ioctl_err);
 	}
 
-	if (cfg->ops->md_disk_to_cpu(cfg)) {
-		/* no valid meta data found.  but we want to initialize
-		 * al_offset and bm_offset anyways, so check_for_existing_data
-		 * has something to work with. */
-		re_initialize_md_offsets(cfg);
+	if (cfg->ops->md_disk_to_cpu(cfg))
 		return NO_VALID_MD_FOUND;
-	}
 
-	cfg->al_offset = cfg->md_offset + cfg->md.al_offset * 512LL;
-	cfg->bm_offset = cfg->md_offset + cfg->md.bm_offset * 512LL;
-
-	// For the case that someone modified la_sect by hand..
-	if( (cfg->md_index == DRBD_MD_INDEX_INTERNAL ||
-	     cfg->md_index == DRBD_MD_INDEX_FLEX_INT ) &&
-	    (cfg->md.la_sect*512 > cfg->md_offset) ) {
-		printf("la-size-sect was too big, fixed.\n");
-		cfg->md.la_sect = cfg->md_offset/512;
-	}
 	if(cfg->md.bm_bytes_per_bit == 0 ) {
 		printf("bm-byte-per-bit was 0, fixed. (Set to 4096)\n");
 		cfg->md.bm_bytes_per_bit = 4096;
 	}
-	words = bm_words(cfg->md.la_sect, cfg->md.bm_bytes_per_bit);
-	cfg->bm_bytes = words * sizeof(long);
 
-	//fprintf(stderr,"al_offset: "U64" (%d)\n", cfg->al_offset, cfg->md.al_offset);
-	//fprintf(stderr,"bm_offset: "U64" (%d)\n", cfg->bm_offset, cfg->md.bm_offset);
+	cfg->al_offset = cfg->md_offset + cfg->md.al_offset * 512LL;
+	cfg->bm_offset = cfg->md_offset + cfg->md.bm_offset * 512LL;
+	cfg->max_usable_sect = max_usable_sectors(cfg);
+	clip_la_sect_and_bm_bytes(cfg);
 
 	cfg->bits_set = -1U;
 
@@ -1648,8 +2626,10 @@ int _v08_md_initialize(struct format *cfg, int do_disk_writes)
 	for ( i=UI_HISTORY_START ; i<=UI_HISTORY_END ; i++ ) {
 		cfg->md.uuid[i]=0;
 	}
-	cfg->md.flags = 0;
+	cfg->md.flags = MDF_AL_CLEAN;
 	cfg->md.magic = DRBD_MD_MAGIC_08;
+	cfg->md.al_stripes = option_al_stripes;
+	cfg->md.al_stripe_size_4k = option_al_stripe_size_4k;
 
 	return md_initialize_common(cfg, do_disk_writes);
 }
@@ -1707,8 +2687,11 @@ int meta_show_gi(struct format *cfg, char **argv __attribute((unused)), int argc
 	cfg->ops->show_gi(&cfg->md);
 
 	if (cfg->md.la_sect) {
-		printf("last agreed size: %s\n",
-		       ppsize(ppb, cfg->md.la_sect >> 1));
+		printf("last agreed size: %s (%llu sectors)\n",
+		       ppsize(ppb, cfg->md.la_sect >> 1),
+		       (unsigned long long)cfg->md.la_sect);
+		printf("last agreed max bio size: %u Byte\n",
+			       cfg->md.la_peer_max_bio_size);
 #if 0
 		/* FIXME implement count_bits() */
 		printf("%u bits set in the bitmap [ %s out of sync ]\n",
@@ -1734,7 +2717,10 @@ int meta_dstate(struct format *cfg, char **argv __attribute((unused)), int argc)
 
 	if(cfg->md.flags & MDF_CONSISTENT) {
 		if(cfg->md.flags & MDF_WAS_UP_TO_DATE) {
-			printf("Consistent/DUnknown\n");
+			if (cfg->md.flags & MDF_PEER_OUT_DATED)
+				printf("UpToDate/Outdated\n");
+			else
+				printf("Consistent/DUnknown\n");
 		} else {
 			printf("Outdated/DUnknown\n");
 		}
@@ -1810,11 +2796,22 @@ int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc
 	}
 
 	i = cfg->ops->open(cfg);
-	if (i == NO_VALID_MD_FOUND)
+	if (i == NO_VALID_MD_FOUND) {
+		fprintf(stderr, "No valid meta data found\n");
 		return -1;
+	}
+
+	if (DRBD_MD_MAGIC_84_UNCLEAN == cfg->md.magic) {
+		fprintf(stderr, "Found meta data is \"unclean\", please apply-al first\n");
+		if (!force)
+			return -1;
+	}
 
 	print_dump_header();
 	printf("version \"%s\";\n\n", cfg->ops->name);
+	if (DRBD_MD_MAGIC_84_UNCLEAN == cfg->md.magic) {
+		printf("This_is_an_unclean_meta_data_dump._Don't_trust_the_bitmap.\n\n");
+	}
 	printf("# md_size_sect %llu\n", (long long unsigned)cfg->md.md_size_sect);
 
 	if (i == VALID_MD_FOUND_AT_LAST_KNOWN_LOCATION) {
@@ -1874,6 +2871,12 @@ int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc
 			       cfg->md.device_uuid);
 			printf("la-peer-max-bio-size %d;\n",
 			       cfg->md.la_peer_max_bio_size);
+			if (cfg->md.al_stripes != 1 || cfg->md.al_stripe_size_4k != 8) {
+				printf("al-stripes "U32";\n",
+					cfg->md.al_stripes);
+				printf("al-stripe-size-4k "U32";\n",
+					cfg->md.al_stripe_size_4k);
+			}
 		}
 		printf("# bm-bytes %u;\n", cfg->bm_bytes);
 		printf_bm(cfg); /* pretty prints the whole bitmap */
@@ -1970,13 +2973,12 @@ static void EXP(int expected_token) {
 		md_parse_error(expected_token, tok, NULL);
 }
 
-void check_for_existing_data(struct format *cfg);
-
 int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int parse_only)
 {
 	int i,times;
 	int err;
 	off_t bm_on_disk_off;
+	off_t bm_max_on_disk_off;
 	le_u64 *bm, value;
 
 	if (argc > 0) {
@@ -1996,7 +2998,7 @@ int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int pa
 
 			ASSERT(!is_v06(cfg));
 		}
-		fprintf(stderr, "reinitializing\n");
+		fprintf(stderr, "initializing with defaults\n");
 		if (is_v07(cfg))
 			_v07_md_initialize(cfg,0);
 		else
@@ -2045,15 +3047,44 @@ int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int pa
 		default:
 			md_parse_error(TK_BM, 0, "keyword 'bm' or 'la-peer-max-bio-size'");
 		}
+
+		/* do we have al stripe settings? */
+		tok = yylex();
+		switch(tok) {
+		case TK_AL_STRIPES:
+			EXP(TK_NUM); EXP(';');
+			cfg->md.al_stripes = yylval.u64;
+			EXP(TK_AL_STRIPE_SIZE_4K); EXP(TK_NUM); EXP(';');
+			cfg->md.al_stripe_size_4k = yylval.u64;
+			/* FIXME reject invalid values */
+			break;
+		case TK_BM:
+			goto start_of_bm;
+		default:
+			md_parse_error(TK_BM, 0, "keyword 'bm' or 'al-stripe-size'");
+		}
 	} else {
 		cfg->md.bm_bytes_per_bit = 4096;
 	}
 	EXP(TK_BM);
 start_of_bm:
+	if (option_al_stripes != cfg->md.al_stripes ||
+	    option_al_stripe_size_4k != cfg->md.al_stripe_size_4k) {
+		if (option_al_stripes_used) {
+			fprintf(stderr, "override activity log striping from commandline\n");
+			cfg->md.al_stripes = option_al_stripes;
+			cfg->md.al_stripe_size_4k = option_al_stripe_size_4k;
+		}
+		if (verbose >= 2)
+			fprintf(stderr, "adjusting activity-log and bitmap offsets\n");
+		re_initialize_md_offsets(cfg);
+	}
+	clip_la_sect_and_bm_bytes(cfg);
 	EXP('{');
 	bm = (le_u64 *)on_disk_buffer;
 	i = 0;
 	bm_on_disk_off = cfg->bm_offset;
+	bm_max_on_disk_off = bm_on_disk_off + ALIGN(cfg->bm_bytes, 4096);
 	while(1) {
 		int tok = yylex();
 		switch(tok) {
@@ -2070,11 +3101,19 @@ start_of_bm:
 			if (parse_only) break;
 			bm[i].le = cpu_to_le64(yylval.u64);
 			if ((unsigned)++i == buffer_size/sizeof(*bm)) {
-				pwrite_or_die(cfg->md_fd, on_disk_buffer,
-					buffer_size, bm_on_disk_off,
-					"meta_restore_md:TK_U64");
-				bm_on_disk_off += buffer_size;
+				size_t s = pwrite_with_limit_or_die(cfg->md_fd,
+					on_disk_buffer, buffer_size,
+					bm_on_disk_off, bm_max_on_disk_off,
+					"meta_restore_md:bitmap:TK_U64");
+				bm_on_disk_off += s;
 				i = 0;
+				if (s != buffer_size) {
+					fprintf(stderr, "Bitmap info too large, truncated!\n");
+					if (parse_only)
+						goto break_loop;
+					else
+						goto close;
+				}
 			}
 			break;
 		case TK_NUM:
@@ -2087,11 +3126,19 @@ start_of_bm:
 			while(times--) {
 				bm[i] = value;
 				if ((unsigned)++i == buffer_size/sizeof(*bm)) {
-					pwrite_or_die(cfg->md_fd, on_disk_buffer,
-						buffer_size, bm_on_disk_off,
-						"meta_restore_md:TK_NUM");
-					bm_on_disk_off += buffer_size;
+					size_t s = pwrite_with_limit_or_die(cfg->md_fd,
+						on_disk_buffer, buffer_size,
+						bm_on_disk_off, bm_max_on_disk_off,
+						"meta_restore_md:bitmap:TK_NUM");
+					bm_on_disk_off += s;
 					i = 0;
+					if (s != buffer_size) {
+						fprintf(stderr, "Bitmap info too large, truncated!\n");
+						if (parse_only)
+							goto break_loop;
+						else
+							goto close;
+					}
 				}
 			}
 			break;
@@ -2120,10 +3167,13 @@ start_of_bm:
 		/* need to sector-align this for O_DIRECT. to be
 		 * generic, maybe we even need to PAGE align it? */
 		s = ALIGN(s, cfg->md_hard_sect_size);
-		pwrite_or_die(cfg->md_fd, on_disk_buffer,
-			s, bm_on_disk_off, "meta_restore_md");
+		pwrite_with_limit_or_die(cfg->md_fd,
+			on_disk_buffer, s,
+			bm_on_disk_off, bm_max_on_disk_off,
+			"meta_restore_md:bitmap:tail");
 	}
 
+close:
 	err = cfg->ops->md_cpu_to_disk(cfg);
 	err = cfg->ops->close(cfg) || err;
 	if (err) {
@@ -2359,12 +3409,13 @@ int guessed_size_from_pvs(struct fstype_s *f, char *dev_name)
 	if (pid < 0)
 		goto out;
 
+	setenv("dev_name", dev_name, 1);
 	if (pid == 0) {
 		/* child */
 		char *argv[] = {
-			"pvs", "-vvv", "--noheadings", "--nosuffix", "--units", "s",
-			"-o", "pv_size",
-			dev_name,
+			"sh", "-vxc",
+			"pvs -vvv --noheadings --nosuffix --units s -o pv_size"
+			" --config \"devices { write_cache_state=0 filter = [ 'a|$dev_name|', 'r|.|' ] }\"",
 			NULL,
 		};
 		close(pipes[0][1]); /* close unused pipe ends */
@@ -2498,13 +3549,7 @@ void check_for_existing_data(struct format *cfg)
 	 * seems irrelevant to me for now.
 	 */
 	fs_kB = ((f.bsize * f.bnum) + (1<<10)-1) >> 10;
-#define min(x,y) ((x) < (y) ? (x) : (y))
-	max_usable_kB =
-		min( cfg->md_offset,
-		min( cfg->al_offset,
-		     cfg->bm_offset )) >> 10;
-#undef min
-
+	max_usable_kB = max_usable_sectors(cfg) >> 1;
 
 	if (f.bnum) {
 		if (cfg->md_index >= 0 ||
@@ -2648,6 +3693,18 @@ void check_internal_md_flavours(struct format * cfg) {
 
 	if (is_v08(cfg)) {
 		if (have_flex_v08) {
+			if (cfg->md.al_stripes != option_al_stripes
+			||  cfg->md.al_stripe_size_4k != option_al_stripe_size_4k) {
+				if (confirmed("Do you want to change the activity log stripe settings only?")) {
+					fprintf(stderr, "sorry, not yet fully implemented\n");
+					exit(30);
+					cfg->md.al_stripes = option_al_stripes;
+					cfg->md.al_stripe_size_4k = option_al_stripe_size_4k;
+					re_initialize_md_offsets(cfg);
+					have_flex_v08 = 0; /* do not wipe this */
+					goto out;
+				}
+			}
 			if (!confirmed("Do you really want to overwrite the existing v08 meta-data?")) {
 				printf("Operation cancelled.\n");
 				exit(1); // 1 to avoid online resource counting
@@ -2691,6 +3748,7 @@ void check_internal_md_flavours(struct format * cfg) {
 			}
 		}
 	}
+out:
 	if (have_fixed_v07)
 		cfg->wipe_fixed = fixed_offset;
 	if (have_flex_v08 || have_flex_v07)
@@ -2830,7 +3888,7 @@ int v08_move_internal_md_after_resize(struct format *cfg)
 		printf("Internal drbd meta data successfully moved.\n");
 
 	if (!err && old_offset < cfg->bm_offset) {
-		/* wipe out previous meta data block, it has been superseeded. */
+		/* wipe out previous meta data block, it has been superseded. */
 		memset(on_disk_buffer, 0, 4096);
 		PWRITE(cfg->md_fd, on_disk_buffer, 4096, old_offset);
 	}
@@ -2852,18 +3910,25 @@ int meta_create_md(struct format *cfg, char **argv __attribute((unused)), int ar
 
 	err = cfg->ops->open(cfg);
 
-	/* Maybe we want to use some library that provides detection of
-	 * fs/partition/usage types? */
-	check_for_existing_data(cfg);
-
 	/* Suggest to move existing meta data after offline resize.  Though, if
 	 * you --force create-md, you probably mean it, so we don't even ask.
 	 * If you want to automatically move it, use check-resize.
 	 */
 	if (err == VALID_MD_FOUND_AT_LAST_KNOWN_LOCATION) {
+		if (option_al_stripes_used) {
+			if (option_al_stripes != cfg->md.al_stripes
+			||  option_al_stripe_size_4k != cfg->md.al_stripe_size_4k) {
+				fprintf(stderr, "Cannot move after offline resize and change AL-striping at the same time, yet.\n");
+				exit(20);
+			}
+		}
 		if (!force &&
-		    confirmed("Move internal meta data from last-known position?\n"))
+		    confirmed("Move internal meta data from last-known position?\n")) {
+			/* Maybe we want to use some library that provides detection of
+			 * fs/partition/usage types? */
+			check_for_existing_data(cfg);
 			return v08_move_internal_md_after_resize(cfg);
+		}
 		/* else: reset cfg->md, it needs to be re-initialized below */
 		memset(&cfg->md, 0, sizeof(cfg->md));
 	}
@@ -2891,9 +3956,14 @@ int meta_create_md(struct format *cfg, char **argv __attribute((unused)), int ar
 
 	printf("Writing meta data...\n");
 	if (!cfg->md.magic) /* not converted: initialize */
+		/* calls check_for_existing_data() internally */
 		err = cfg->ops->md_initialize(cfg); /* Clears on disk AL implicitly */
-	else
+	else {
 		err = 0; /* we have sucessfully converted somthing */
+		check_for_existing_data(cfg);
+	}
+
+	cfg->md.la_peer_max_bio_size = option_peer_max_bio_size;
 
 	/* FIXME
 	 * if this converted fixed-size 128MB internal meta data
@@ -3054,7 +4124,7 @@ void print_usage_and_exit()
 	}
 
 	printf("\nCOMMANDS:\n");
-	for (i = 0; i < ARRY_SIZE(cmds); i++) {
+	for (i = 0; i < ARRAY_SIZE(cmds); i++) {
 		if (!cmds[i].show_in_usage)
 			continue;
 		printf("  %s %s\n", cmds[i].name,
@@ -3190,7 +4260,6 @@ struct format *new_cfg()
 
 int main(int argc, char **argv)
 {
-	struct meta_cmd *command = NULL;
 	struct format *cfg;
 	size_t i;
 	int ai;
@@ -3233,7 +4302,7 @@ int main(int argc, char **argv)
 
 	/* Check for options (e.g. --force) */
 	while (1) {
-	    int c = getopt_long(argc,argv,make_optstring(metaopt,0),metaopt,0);
+	    int c = getopt_long(argc, argv, make_optstring(metaopt), metaopt, 0);
 
 	    if (c == -1)
 		break;
@@ -3247,6 +4316,22 @@ int main(int argc, char **argv)
 	    case 'v':
 		verbose++;
 		break;
+	    case 'p':
+		    option_peer_max_bio_size = m_strtoll(optarg, 1);
+		    if (option_peer_max_bio_size < 0 ||
+			option_peer_max_bio_size > 128 * 1024) {
+			    fprintf(stderr, "peer-max-bio-size out of range (0...128k)\n");
+			    exit(10);
+		    }
+		    break;
+	    case 's':
+		    option_al_stripes = m_strtoll(optarg, 1);
+		    option_al_stripes_used = 1;
+		    break;
+	    case 'z':
+		    option_al_stripe_size_4k = m_strtoll(optarg, 'k')/4;
+		    option_al_stripes_used = 1;
+		    break;
 	    default:
 		print_usage_and_exit();
 		break;
@@ -3269,7 +4354,7 @@ int main(int argc, char **argv)
 		exit(20);
 	}
 
-	for (i = 0; i < ARRY_SIZE(cmds); i++) {
+	for (i = 0; i < ARRAY_SIZE(cmds); i++) {
 		if (!strcmp(cmds[i].name, argv[ai])) {
 			command = cmds + i;
 			break;
@@ -3285,8 +4370,14 @@ int main(int argc, char **argv)
 	 * unlock happens implicitly when the process dies,
 	 * but may be requested implicitly
 	 */
-	cfg->lock_fd = dt_lock_drbd(cfg->drbd_dev_name);
 	cfg->minor = dt_minor_of_dev(cfg->drbd_dev_name);
+	if (cfg->minor < 0) {
+		fprintf(stderr, "Cannot determine minor device number of "
+				"drbd device '%s'",
+			cfg->drbd_dev_name);
+		exit(20);
+	}
+	cfg->lock_fd = dt_lock_drbd(cfg->minor);
 
 	/* unconditionally check whether this is in use */
 	if (is_attached(cfg->minor)) {
@@ -3295,6 +4386,28 @@ int main(int argc, char **argv)
 				cfg->drbd_dev_name);
 			exit(20);
 		}
+	}
+
+	if (option_peer_max_bio_size &&
+	    command->function != &meta_create_md) {
+		fprintf(stderr, "The --peer-max-bio-size option is only allowed with create-md\n");
+		exit(10);
+	}
+	if (option_al_stripes_used &&
+	    command->function != &meta_create_md &&
+	    command->function != &meta_restore_md) {
+		fprintf(stderr, "The --al-stripe* options are only allowed with create-md and restore-md\n");
+		exit(10);
+	}
+
+	/* at some point I'd like to go for this: (16*1024*1024/4) */
+	if ((uint64_t)option_al_stripes * option_al_stripe_size_4k > (buffer_size/4096)) {
+		    fprintf(stderr, "invalid (too large) al-stripe* settings\n");
+		    exit(10);
+	}
+	if (option_al_stripes * option_al_stripe_size_4k < 32/4) {
+		    fprintf(stderr, "invalid (too small) al-stripe* settings\n");
+		    exit(10);
 	}
 
 	return command->function(cfg, argv + ai, argc - ai);

@@ -277,6 +277,37 @@ void warn_on_version_mismatch(void)
 			msg);
 }
 
+void add_lib_drbd_to_path(void)
+{
+	char *new_path = NULL;
+	char *old_path = getenv("PATH");
+
+	m_asprintf(&new_path, "%s%s%s",
+			old_path,
+			old_path ? ":" : "",
+			"/lib/drbd");
+	setenv("PATH", new_path, 1);
+}
+
+void maybe_exec_drbdadm_83(char **argv)
+{
+	if (current_vcs_rel.version.major == 8 &&
+	    current_vcs_rel.version.minor == 3) {
+#ifdef DRBD_LEGACY_83
+		/* This drbdadm warned already... */
+		setenv("DRBD_DONT_WARN_ON_VERSION_MISMATCH", "1", 0);
+		add_lib_drbd_to_path();
+		execvp(drbdadm_83, argv);
+		fprintf(stderr, "execvp() failed to exec %s: %m\n", drbdadm_83);
+#else
+		fprintf(stderr, "This drbdadm was build without support for legacy\n"
+			"drbd kernel code. Consider to rebuild your user land\n"
+			"tools with ./configure --with-legacy-connector\n");
+#endif
+		exit(E_exec_error);
+	}
+}
+
 static char *vcs_to_str(struct vcs_rel *rev)
 {
 	static char buffer[80]; // Not generic, sufficient for the purpose.
@@ -536,7 +567,7 @@ void uc_node(enum usage_count_type type)
 	int update = 0;
 	char answer[ANSWER_SIZE];
 	char n_comment[ANSWER_SIZE*3];
-	char *unused_res;
+	char *r;
 
 	if( type == UC_NO ) return;
 	if( getuid() != 0 ) return;
@@ -590,8 +621,8 @@ void uc_node(enum usage_count_type type)
 "* To count this node without comment, just press [RETURN]\n",
 			update ? "an update" : "a new installation",
 			REL_VERSION,ni.node_uuid, vcs_to_str(&ni.rev));
-		unused_res = fgets(answer, ANSWER_SIZE, stdin);
-		if(!strcmp(answer,"no\n")) send = 0;
+		r = fgets(answer, ANSWER_SIZE, stdin);
+		if(r && !strcmp(answer,"no\n")) send = 0;
 		url_encode(answer,n_comment);
 	}
 
@@ -615,14 +646,14 @@ void uc_node(enum usage_count_type type)
 "to ask you for confirmation as long as 'usage-count' is at its default\n"
 "value of 'ask'.\n\n"
 "Just press [RETURN] to continue: ");
-			unused_res = fgets(answer, 9, stdin);
+			r = fgets(answer, 9, stdin);
 		}
 	}
 }
 
 /* For our purpose (finding the revision) SLURP_SIZE is always enough.
  */
-char* run_admm_generic(struct d_resource* res ,const char* cmd)
+static char* run_admm_generic(struct cfg_ctx *ctx, const char *arg_override)
 {
 	const int SLURP_SIZE = 4096;
 	int rr,pipes[2];
@@ -644,9 +675,13 @@ char* run_admm_generic(struct d_resource* res ,const char* cmd)
 		close(pipes[0]); // close reading end
 		dup2(pipes[1],1); // 1 = stdout
 		close(pipes[1]);
-		exit(_admm_generic(res,cmd,
+		/* local modification in child,
+		 * no propagation to parent */
+		ctx->arg = arg_override;
+		rr = _admm_generic(ctx,
 				   SLEEPS_VERY_LONG|SUPRESS_STDERR|
-				   DONT_REPORT_FAILED));
+				   DONT_REPORT_FAILED);
+		exit(rr);
 	}
 	close(pipes[1]); // close writing end
 
@@ -664,7 +699,7 @@ char* run_admm_generic(struct d_resource* res ,const char* cmd)
 	return buffer;
 }
 
-int adm_create_md(struct d_resource* res ,const char* cmd)
+int adm_create_md(struct cfg_ctx *ctx)
 {
 	char answer[ANSWER_SIZE];
 	struct node_info ni;
@@ -674,19 +709,18 @@ int adm_create_md(struct d_resource* res ,const char* cmd)
 	int send=0;
 	char *tb;
 	int rv,fd;
-	int soi_tmp;
-	char *setup_opts_0_tmp;
-	char *unused_res;
+	char *r;
 
-	tb = run_admm_generic(res, "read-dev-uuid");
+	tb = run_admm_generic(ctx, "read-dev-uuid");
 	device_uuid = strto_u64(tb,NULL,16);
 	free(tb);
 
-	rv = _admm_generic(res, cmd, SLEEPS_VERY_LONG); // cmd is "create-md".
+	/* this is "drbdmeta ... create-md" */
+	rv = _admm_generic(ctx, SLEEPS_VERY_LONG);
 
 	if(rv || dry_run) return rv;
 
-	fd = open(res->me->disk,O_RDONLY);
+	fd = open(ctx->vol->disk,O_RDONLY);
 	if( fd != -1) {
 		device_size = bdev_size(fd);
 		close(fd);
@@ -710,8 +744,8 @@ int adm_create_md(struct d_resource* res ,const char* cmd)
 "* To continue, just press [RETURN]\n",
 				ni.node_uuid,device_uuid,device_size
 				);
-			unused_res = fgets(answer, ANSWER_SIZE, stdin);
-			if(strcmp(answer,"no\n")) send = 1;
+			r = fgets(answer, ANSWER_SIZE, stdin);
+			if(r && strcmp(answer,"no\n")) send = 1;
 		}
 	}
 
@@ -727,17 +761,22 @@ int adm_create_md(struct d_resource* res ,const char* cmd)
 	}
 
 	/* HACK */
-	soi_tmp = soi;
-	setup_opts_0_tmp = setup_opts[0];
+	{
+		struct cfg_ctx local_ctx = *ctx;
+		struct setup_option *old_setup_options;
+		char *opt;
 
-	setup_opts[0] = NULL;
-	ssprintf( setup_opts[0], X64(016), device_uuid);
-	soi=1;
-	_admm_generic(res, "write-dev-uuid", SLEEPS_VERY_LONG);
+		ssprintf(opt, X64(016), device_uuid);
+		old_setup_options = setup_options;
+		setup_options = NULL;
+		add_setup_option(false, opt);
 
-	setup_opts[0] = setup_opts_0_tmp;
-	soi = soi_tmp;
+		local_ctx.arg = "write-dev-uuid";
+		_admm_generic(&local_ctx, SLEEPS_VERY_LONG);
 
+		free(setup_options);
+		setup_options = old_setup_options;
+	}
 	return rv;
 }
 

@@ -53,6 +53,7 @@ enum range_checks
 	R_C_MIN_RATE,
 	R_CONG_FILL,
 	R_CONG_EXTENTS,
+	R_PROTOCOL,
 };
 
 enum yytokentype {
@@ -64,7 +65,7 @@ enum yytokentype {
 	TK_NET,
 	TK_DISK,
 	TK_SKIP,
-	TK_SYNCER,
+	TK_SYNCER, /* depricated after 8.3 */
 	TK_STARTUP,
 	TK_DISABLE_IP_VERIFICATION,
 	TK_DIALOG_REFRESH,
@@ -81,13 +82,15 @@ enum yytokentype {
 	TK_INTEGER,
 	TK_STRING,
 	TK_ELSE,
-	TK_DISK_SWITCH,
+	TK_DISK_FLAG,
+	TK_DISK_NO_FLAG,
 	TK_DISK_OPTION,
-	TK_NET_SWITCH,
+	TK_NET_FLAG,
+	TK_NET_NO_FLAG,
 	TK_NET_OPTION,
-	TK_SYNCER_SWITCH,
+	TK_SYNCER_FLAG,
 	TK_SYNCER_OPTION,
-	TK_STARTUP_SWITCH,
+	TK_STARTUP_FLAG,
 	TK_STARTUP_OPTION,
 	TK_STARTUP_DELEGATE,
 	TK_HANDLER_OPTION,
@@ -95,7 +98,6 @@ enum yytokentype {
 	TK_ASK,
 	TK_YES,
 	TK_NO,
-	TK__IS_DEFAULT,
 	TK__THIS_HOST,
 	TK__REMOTE_HOST,
 	TK_PROXY,
@@ -103,7 +105,6 @@ enum yytokentype {
 	TK_OUTSIDE,
 	TK_MEMLIMIT,
 	TK_PROXY_OPTION,
-	TK_PROXY_SWITCH,
 	TK_PROXY_DELEGATE,
 	TK_ERR_STRING_TOO_LONG,
 	TK_ERR_DQSTRING_TOO_LONG,
@@ -116,10 +117,15 @@ enum yytokentype {
 	TK_IPADDR6,
 	TK_NET_DELEGATE,
 	TK_INCLUDE,
+	TK_BWLIMIT,
 	TK_FLOATING,
 	TK_DEPRECATED_OPTION,
+	TK_VOLUME,
+	TK_RES_OPTION,
+	TK_OPTIONS,
 	TK__GROUPING_BASE = 0x1000,
-	TK_PROXY_GROUP = 0x2000, /* Gets or'ed to some options */
+	TK_SYNCER_OLD_OPT = 0x2000, /* Might be or'ed to TK_[NET|DISK]_[OPTION|SWITCH] */
+	TK_PROXY_GROUP = 0x3000, /* Gets or'ed to some options */
 };
 
 /* The higher bits define one or more token groups. */
