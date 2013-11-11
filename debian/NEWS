@@ -1,0 +1,13 @@
+drbd8 (2:8.4.4-1) unstable; urgency=low
+
+  DRBD 8.4 includes a number of important changes from the 8.3 series, both
+  in operation and in configuration files. An overview of these changes is
+  provided upstream at:
+
+           http://www.drbd.org/users-guide-8.4/ap-recent-changes.html
+
+  Also, activating your DRBD 8.4 resources on older (pre-3.8) kernels will not
+  work automatically, see /usr/share/doc/drbd8-utils/README.Debian for more
+  information.
+
+ -- Apollon Oikonomopoulos <apoikos@gmail.com>  Mon, 11 Nov 2013 16:07:50 +0200
