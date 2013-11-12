@@ -35,3 +35,11 @@ make your devices work with DRBD 8.3, you will have to do the following
 More information can be found at:
 
        http://www.drbd.org/users-guide-8.4/s-downgrading-drbd84.html
+
+Participation in the usage count
+--------------------------------
+The Debian package by default disables the participation in the DRBD usage
+count survey[0]. If you wish your system to be counted, change the
+'usage-count' setting to 'yes' or 'ask' in /etc/drbd.d/common_global.conf.
+
+[0] http://www.drbd.org/usage/introduction0/
