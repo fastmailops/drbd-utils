@@ -1,0 +1,14 @@
+Author: Apollon Oikonomopoulos <apoikos@debian.org>
+Description: Allow wrapping the synopsis line of the drbd(8) manpage
+Last-Update: 2014-01-15
+--- a/documentation/drbd.8
++++ b/documentation/drbd.8
+@@ -31,7 +31,7 @@
+ drbd \- The start and stop script for DRBD
+ .SH "SYNOPSIS"
+ .HP \w'\fB/etc/init\&.d/drbd\fR\ 'u
+-\fB/etc/init\&.d/drbd\fR [\fIresource\fR] {{start}\ |\ {stop}\ |\ {status}\ |\ {reload}\ |\ {restart}\ |\ {force\-reload}}
++\fB/etc/init\&.d/drbd\fR [\fIresource\fR] {{start} | {stop} | {status} | {reload} | {restart} | {force\-reload}}
+ .SH "INTRODUCTION"
+ .PP
+ The
