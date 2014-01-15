@@ -29,6 +29,9 @@ override_dh_install:
 	# Place the initscript where dh_installinit can find it
 	mv $(CURDIR)/debian/drbd8-utils/etc/init.d/drbd $(CURDIR)/debian/drbd8-utils.drbd.init
 
+	# systemd/kmod integration
+	install -D -m0644 $(CURDIR)/debian/drbd.modules-load.d $(CURDIR)/debian/drbd8-utils/lib/modules-load.d/drbd.conf
+
 
 override_dh_installinit:
 	dh_installinit --name=drbd --no-start
