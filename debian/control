@@ -5,7 +5,7 @@ Maintainer: Debian DRBD Maintainers <debian-ha-maintainers@lists.alioth.debian.o
 Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
  Martin Loschwitz <madkiss@debian.org>,
  Philipp Hug <debian@hug.cx>,
- Apollon Oikonomopoulos <apoikos@gmail.com>
+ Apollon Oikonomopoulos <apoikos@debian.org>
 Build-Depends: debhelper (>= 9), flex, xsltproc, git, dh-systemd (>= 1.5)
 Standards-Version: 3.9.5
 Homepage: http://www.drbd.org/
