@@ -3,6 +3,8 @@
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
+PKG_VERSION=$(shell dpkg-parsechangelog -Sversion)
+
 %:
 	dh $@ --with systemd
 
@@ -38,7 +40,11 @@ override_dh_install:
 override_dh_installinit:
 	dh_installinit --name=drbd --no-start
 
+override_dh_gencontrol:
+	dh_gencontrol -Ndrbd8-utils
+	# Add the previous epoch to drbd8-utils
+	dh_gencontrol -pdrbd8-utils -- -v2:$(PKG_VERSION)
 
 .PHONY: override_dh_auto_configure override_dh_install \
 	override_dh_auto_clean override_dh_installinit \
-	override_dh_auto_install
+	override_dh_gencontrol override_dh_auto_install
