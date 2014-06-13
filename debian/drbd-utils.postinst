@@ -1,0 +1,40 @@
+#!/bin/sh
+
+set -e
+
+# Register the different versions as alternatives
+# For the time being we default to the 8.4 versions, since sid kernels ship
+# DRBD 8.4.x.
+
+# 8.4 -- we install the highest priority version first to avoid auto changes by
+# the alternatives below.
+update-alternatives \
+	--install /sbin/drbdadm drbd-utils /lib/drbd/drbdadm-84 40 \
+	--slave /sbin/drbdsetup drbdsetup /lib/drbd/drbdsetup-84 \
+	--slave /usr/share/man/man8/drbd.8.gz drbd.8.gz /usr/share/man/man8/drbd-8.4.8.gz \
+	--slave /usr/share/man/man8/drbdadm.8.gz drbdadm.8.gz /usr/share/man/man8/drbdadm-8.4.8.gz \
+	--slave /usr/share/man/man8/drbdsetup.8.gz drbdsetup.8.gz /usr/share/man/man8/drbdsetup-8.4.8.gz \
+	--slave /usr/share/man/man8/drbdmeta.8.gz drbdmeta.8.gz /usr/share/man/man8/drbdmeta-8.4.8.gz \
+	--slave /usr/share/man/man5/drbd.conf.5.gz drbd.conf.5.gz /usr/share/man/man5/drbd.conf-8.4.5.gz
+
+# 8.3
+update-alternatives \
+	--install /sbin/drbdadm drbd-utils /lib/drbd/drbdadm-83 10 \
+	--slave /sbin/drbdsetup drbdsetup /lib/drbd/drbdsetup-83 \
+	--slave /usr/share/man/man8/drbd.8.gz drbd.8.gz /usr/share/man/man8/drbd-8.3.8.gz \
+	--slave /usr/share/man/man8/drbdadm.8.gz drbdadm.8.gz /usr/share/man/man8/drbdadm-8.3.8.gz \
+	--slave /usr/share/man/man8/drbdsetup.8.gz drbdsetup.8.gz /usr/share/man/man8/drbdsetup-8.3.8.gz \
+	--slave /usr/share/man/man8/drbdmeta.8.gz drbdmeta.8.gz /usr/share/man/man8/drbdmeta-8.3.8.gz \
+	--slave /usr/share/man/man5/drbd.conf.5.gz drbd.conf.5.gz /usr/share/man/man5/drbd.conf-8.3.5.gz
+
+# 9.0
+update-alternatives \
+	--install /sbin/drbdadm drbd-utils /lib/drbd/drbdadm-90 30 \
+	--slave /sbin/drbdsetup drbdsetup /lib/drbd/drbdsetup-90 \
+	--slave /usr/share/man/man8/drbd.8.gz drbd.8.gz /usr/share/man/man8/drbd-9.0.8.gz \
+	--slave /usr/share/man/man8/drbdadm.8.gz drbdadm.8.gz /usr/share/man/man8/drbdadm-9.0.8.gz \
+	--slave /usr/share/man/man8/drbdsetup.8.gz drbdsetup.8.gz /usr/share/man/man8/drbdsetup-9.0.8.gz \
+	--slave /usr/share/man/man8/drbdmeta.8.gz drbdmeta.8.gz /usr/share/man/man8/drbdmeta-9.0.8.gz \
+	--slave /usr/share/man/man5/drbd.conf.5.gz drbd.conf.5.gz /usr/share/man/man5/drbd.conf-9.0.5.gz
+
+#DEBHELPER#
