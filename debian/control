@@ -1,4 +1,4 @@
-Source: drbd8
+Source: drbd-utils
 Section: admin
 Priority: extra
 Maintainer: Debian DRBD Maintainers <debian-ha-maintainers@lists.alioth.debian.org>
@@ -12,12 +12,11 @@ Homepage: http://www.drbd.org/
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd.git
 Vcs-Git: git://anonscm.debian.org/debian-ha/drbd/
 
-Package: drbd8-utils
+Package: drbd-utils
 Architecture: linux-any
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
-Conflicts: drbd-utils
-Provides: drbd-utils
-Replaces: drbd-utils, drbd
+Breaks: drbd8-utils (<< 2:8.9.0)
+Replaces: drbd8-utils (<< 2:8.9.0), drbd
 Suggests: heartbeat
 Recommends: heirloom-mailx|mailx
 Description: RAID 1 over TCP/IP for Linux (user utilities)
@@ -29,3 +28,9 @@ Description: RAID 1 over TCP/IP for Linux (user utilities)
  .
  This package contains the programs that will control the drbd kernel
  module provided in the Linux kernel.
+
+Package: drbd8-utils
+Architecture: linux-any
+Depends: drbd-utils (>= 8.9.0), ${misc:Depends}
+Description: transitional dummy package
+ This is a transitional dummy package for drbd-utils. It can be removed safely.
