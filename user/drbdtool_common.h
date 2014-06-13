@@ -22,6 +22,32 @@
 #define ARRAY_SIZE(A) (sizeof(A)/sizeof(A[0]))
 #endif
 
+/**
+ * BUILD_BUG_ON - break compile if a condition is true.
+ * @condition: the condition which the compiler should know is false.
+ *
+ * If you have some code which relies on certain constants being equal, or
+ * other compile-time-evaluated condition, you should use BUILD_BUG_ON to
+ * detect if someone changes it.
+ *
+ * The implementation uses gcc's reluctance to create a negative array, but
+ * gcc (as of 4.4) only emits that error for obvious cases (eg. not arguments
+ * to inline functions).  So as a fallback we use the optimizer; if it can't
+ * prove the condition is false, it will cause a link error on the undefined
+ * "__build_bug_on_failed".  This error message can be harder to track down
+ * though, hence the two different methods.
+ */
+#ifndef __OPTIMIZE__
+#define BUILD_BUG_ON(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
+#else
+extern int __build_bug_on_failed;
+#define BUILD_BUG_ON(condition)                                 \
+	do {                                                    \
+		((void)sizeof(char[1 - 2*!!(condition)]));      \
+		if (condition) __build_bug_on_failed = 1;       \
+	} while(0)
+#endif
+
 #define COMM_TIMEOUT 120
 
 /* MetaDataIndex for v06 / v07 style meta data blocks */
@@ -40,13 +66,12 @@ do { fprintf(stderr,fmt ": " , ##args); perror(0); } while (0)
 */
 #define PERROR(fmt, args...) fprintf(stderr, fmt ": %m\n" , ##args);
 
-enum new_strtoll_errs {
-	MSE_OK,
-	MSE_DEFAULT_UNIT,
-	MSE_MISSING_NUMBER,
-	MSE_INVALID_NUMBER,
-	MSE_INVALID_UNIT,
-	MSE_OUT_OF_RANGE,
+/* Flags which used to be in enum mdf_flag before version 09 */
+enum mdf_flag_08 {
+	MDF_CONNECTED_IND =  1 << 2,
+	MDF_FULL_SYNC =      1 << 3,
+	MDF_PEER_OUT_DATED = 1 << 5,
+	MDF_FENCING_IND =    1 << 8,
 };
 
 struct option;
@@ -56,7 +81,6 @@ extern int dt_lock_drbd(int minor);
 extern void dt_unlock_drbd(int lock_fd);
 extern void dt_release_lockfile(int drbd_fd);
 extern int dt_minor_of_dev(const char *device);
-extern int new_strtoll(const char *s, const char def_unit, unsigned long long *rv);
 extern unsigned long long m_strtoll(const char* s,const char def_unit);
 extern const char* make_optstring(struct option *options);
 extern char* ppsize(char* buf, unsigned long long size);
@@ -70,6 +94,9 @@ extern uint64_t bdev_size(int fd);
 extern void get_random_bytes(void* buffer, int len);
 
 extern const char* shell_escape(const char* s);
+
+void dt_print_v9_uuids(const uint64_t*, unsigned int, unsigned int);
+void dt_pretty_print_v9_uuids(const uint64_t*, unsigned int, unsigned int);
 
 /* In-place unescape double quotes and backslash escape sequences from a
  * double quoted string. Note: backslash is only useful to quote itself, or
@@ -109,5 +136,32 @@ extern int lk_bdev_delete(const unsigned minor);
 /* load info from that file.
  * caller should free(bd->bd_name) once it is no longer needed. */
 extern int lk_bdev_load(const unsigned minor, struct bdev_info *bd);
+const char *get_hostname(void);
+
+#define GIT_HASH_BYTE   20
+#define SRCVERSION_BYTE 12     /* actually 11 and a half. */
+#define SRCVERSION_PAD (GIT_HASH_BYTE - SRCVERSION_BYTE)
+#define SVN_STYLE_OD  16
+
+struct version {
+	uint32_t svn_revision;
+	char git_hash[GIT_HASH_BYTE];
+	struct {
+		unsigned major, minor, sublvl;
+	} version;
+	unsigned version_code;
+};
+
+enum driver_version_policy {
+	STRICT,
+	FALLBACK_TO_UTILS
+};
+extern const struct version *drbd_driver_version(enum driver_version_policy fallback);
+extern const struct version *drbd_utils_version(void);
+extern int version_code_kernel(void);
+extern int version_code_userland(void);
+extern int version_equal(const struct version *rev1, const struct version *rev2);
+extern void add_lib_drbd_to_path(void);
+extern uint32_t crc32c(uint32_t crc, const uint8_t *data, unsigned int length);
 
 #endif

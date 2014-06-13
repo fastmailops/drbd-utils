@@ -27,9 +27,19 @@ enum yytokentype {
 	TK_INVALID,
 	TK_INVALID_CHAR,
 	TK_LA_BIO_SIZE,
+	TK_NODE_ID,
+	TK_CURRENT_UUID,
+	TK_BITMAP,
+	TK_BITMAP_UUID,
+	TK_HISTORY_UUIDS,
+	TK_PEER,
+	TK_HASH,
+	TK_MAX_PEERS,
 	TK_AL_STRIPES,
 	TK_AL_STRIPE_SIZE_4K,
 };
 
 /* avoid compiler warnings about implicit declaration */
 int yylex(void);
+void yyrestart (FILE *input_file);
+int my_yy_unscaned_characters(void);

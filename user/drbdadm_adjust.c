@@ -56,19 +56,19 @@ static FILE *m_popen(int *pid,char** argv)
 
 	if(pipe(pipes)) {
 		perror("Creation of pipes failed");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 
 	dev_null = open("/dev/null", O_WRONLY);
 	if (dev_null == -1) {
 		perror("Opening /dev/null failed");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 
 	mpid = fork();
 	if(mpid == -1) {
 		fprintf(stderr,"Can not fork");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 	if(mpid == 0) {
 		close(pipes[0]); // close reading end
@@ -78,7 +78,7 @@ static FILE *m_popen(int *pid,char** argv)
 		close(dev_null);
 		execvp(argv[0],argv);
 		fprintf(stderr,"Can not exec");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 
 	close(pipes[1]); // close writing end
@@ -112,85 +112,73 @@ static bool is_default(struct context_def *ctx, struct d_option *opt)
 	return false;
 }
 
-static int opts_equal(struct context_def *ctx, struct d_option* conf, struct d_option* running)
+static int opts_equal(struct context_def *ctx, struct options *conf, struct options *run_base)
 {
-	struct d_option* opt;
+	struct d_option *opt, *run_opt;
 
-	while(running) {
-		if((opt=find_opt(conf,running->name))) {
-			if(!is_equal(ctx, running, opt)) {
+	STAILQ_FOREACH(run_opt, run_base, link) {
+		if (run_opt->adj_skip)
+			continue;
+
+		opt = find_opt(conf, run_opt->name);
+		if (opt) {
+			if (!is_equal(ctx, run_opt, opt)) {
 				if (verbose > 2)
 					fprintf(stderr, "Value of '%s' differs: r=%s c=%s\n",
-						opt->name,running->value,opt->value);
+						opt->name,run_opt->value,opt->value);
 				return 0;
 			}
 			if (verbose > 3)
 				fprintf(stderr, "Value of '%s' equal: r=%s c=%s\n",
-					opt->name,running->value,opt->value);
-			opt->mentioned=1;
+					opt->name,run_opt->value,opt->value);
+			opt->mentioned = 1;
 		} else {
-			if(!is_default(ctx, running)) {
+			if (!is_default(ctx, run_opt)) {
 				if (verbose > 2)
 					fprintf(stderr, "Only in running config %s: %s\n",
-						running->name,running->value);
+						run_opt->name,run_opt->value);
 				return 0;
 			}
 			if (verbose > 3)
 				fprintf(stderr, "Is default: '%s' equal: r=%s\n",
-					running->name,running->value);
+					run_opt->name,run_opt->value);
 		}
-		running=running->next;
 	}
 
-	while(conf) {
-		if(conf->mentioned==0 && !is_default(ctx, conf)) {
+	STAILQ_FOREACH(opt, conf, link) {
+		if (opt->adj_skip)
+			continue;
+
+		if (opt->mentioned==0 && !is_default(ctx, opt)) {
 			if (verbose > 2)
-				fprintf(stderr, "Only in config file %s: %s\n",
-					conf->name,conf->value);
+				fprintf(stderr, "Only in optig file %s: %s\n",
+					opt->name, opt->value);
 			return 0;
 		}
-		conf=conf->next;
 	}
 	return 1;
 }
 
-static int addr_equal(struct d_resource* conf, struct d_resource* running)
+static int addr_equal(struct d_address *a1, struct d_address *a2)
 {
-	int equal;
-	char *peer_addr, *peer_af, *peer_port;
+	return  !strcmp(a1->addr, a2->addr) &&
+		!strcmp(a1->port, a2->port) &&
+		!strcmp(a1->af, a2->af);
+}
 
-	if (conf->peer == NULL && running->peer == NULL) return 1;
-	if (running->peer == NULL) return 0;
+static struct connection *matching_conn(struct connection *pattern, struct connections *pool)
+{
+	struct connection *conn;
 
-	equal = !strcmp(conf->me->address,        running->me->address) &&
-		!strcmp(conf->me->port,           running->me->port) &&
-		!strcmp(conf->me->address_family, running->me->address_family);
-
-	if(conf->me->proxy) {
-		peer_addr = conf->me->proxy->inside_addr;
-		peer_port = conf->me->proxy->inside_port;
-		peer_af = conf->me->proxy->inside_af;
-	} else {
-		peer_addr = conf->peer->address;
-		peer_port = conf->peer->port;
-		peer_af = conf->peer->address_family;
+	for_each_connection(conn, pool) {
+		if (conn->ignore)
+			continue;
+		if (addr_equal(pattern->my_address, conn->my_address) &&
+		    addr_equal(pattern->connect_to, conn->connect_to))
+			return conn;
 	}
 
-	equal = equal && conf->peer &&
-		!strcmp(peer_addr, running->peer->address) &&
-		!strcmp(peer_port, running->peer->port) &&
-		!strcmp(peer_af, running->peer->address_family);
-
-	if (verbose > 2)
-		fprintf(stderr, "Network addresses differ:\n"
-			"\trunning: %s:%s:%s -- %s:%s:%s\n"
-			"\t config: %s:%s:%s -- %s:%s:%s\n",
-			running->me->address_family, running->me->address, running->me->port,
-			running->peer->address_family, running->peer->address, running->peer->port,
-			conf->me->address_family, conf->me->address, conf->me->port,
-			peer_af, peer_addr, peer_port);
-
-	return equal;
+	return NULL;
 }
 
 /* Are both internal, or are both not internal. */
@@ -217,37 +205,35 @@ static int disk_equal(struct d_volume *conf, struct d_volume *running)
 	return eq;
 }
 
+/* The following is a cruel misuse of the cmd->name field. The whole proxy_reconf
+   function should be rewritten in a sane way!
+   It should schedule itself to get invoked later, and at the late point in time
+   iterate the config and find out what to do...
 
-/* NULL terminated */
-static void find_option_in_resources(char *name,
-		struct d_option *list, struct d_option **opt, ...)
-{
-	va_list va;
+   Obviously the schedule_deferred_proxy_reconf() function should go away */
 
-	va_start(va, opt);
-	/* We need to keep setting *opt to NULL, even if a list == NULL. */
-	while (list || opt) {
-		while (list) {
-			if (strcmp(list->name, name) == 0)
-				break;
-			list = list->next;
-		}
-
-		*opt = list;
-
-		list = va_arg(va, struct d_option*);
-		opt  = va_arg(va, struct d_option**);
-	}
-	va_end(va);
-}
-
-static int do_proxy_reconf(struct cfg_ctx *ctx)
+static int do_proxy_reconf(const struct cfg_ctx *ctx)
 {
 	int rv;
-	char *argv[4] = { drbd_proxy_ctl, "-c", (char*)ctx->arg, NULL };
+	char *argv[4] = { drbd_proxy_ctl, "-c", (char*)ctx->cmd->name, NULL };
 
 	rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
 	return rv;
+}
+
+static void schedule_deferred_proxy_reconf(const struct cfg_ctx *ctx, char *text)
+{
+	struct adm_cmd *cmd;
+
+	cmd = calloc(1, sizeof(struct adm_cmd));
+	if (cmd == NULL) {
+		perror("calloc");
+		exit(E_EXEC_ERROR);
+	}
+
+	cmd->name = text;
+	cmd->function = &do_proxy_reconf;
+	schedule_deferred_cmd(cmd, ctx, CFG_NET);
 }
 
 #define MAX_PLUGINS (10)
@@ -269,7 +255,7 @@ int _is_plugin_in_list(char *string,
 	if (word_len+1 >= MAX_PLUGIN_NAME) {
 		fprintf(stderr, "Wrong proxy plugin name %*.*s",
 				word_len, word_len, string);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	copy = alist[list_len];
@@ -285,14 +271,14 @@ int _is_plugin_in_list(char *string,
 	/* Not found, insert into list. */
 	if (list_len >= MAX_PLUGINS) {
 		fprintf(stderr, "Too many proxy plugins.");
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	return 0;
 }
 
 
-static int proxy_reconf(struct cfg_ctx *ctx, struct d_resource *running)
+static int proxy_reconf(const struct cfg_ctx *ctx, struct d_resource *running)
 {
 	int reconn = 0;
 	struct d_resource *res = ctx->res;
@@ -310,10 +296,8 @@ static int proxy_reconf(struct cfg_ctx *ctx, struct d_resource *running)
 	if (!running)
 		goto redo_whole_conn;
 
-	find_option_in_resources("memlimit",
-			res->me->proxy->options, &res_o,
-			running->proxy_options, &run_o,
-			NULL, NULL);
+	res_o = find_opt(&res->me->proxy->options, "memlimit");
+	run_o = find_opt(&running->proxy_options, "memlimit");
 	v1 = res_o ? m_strtoll(res_o->value, 1) : 0;
 	v2 = run_o ? m_strtoll(run_o->value, 1) : 0;
 	minimum = v1 < v2 ? v1 : v2;
@@ -326,9 +310,9 @@ redo_whole_conn:
 		/* As the memory is in use while the connection is allocated we have to
 		 * completely destroy and rebuild the connection. */
 
-		schedule_deferred_cmd( do_proxy_conn_down, ctx, NULL, CFG_NET_PREREQ);
-		schedule_deferred_cmd( do_proxy_conn_up, ctx, NULL, CFG_NET_PREREQ);
-		schedule_deferred_cmd( do_proxy_conn_plugins, ctx, NULL, CFG_NET_PREREQ);
+		schedule_deferred_cmd(&proxy_conn_down_cmd, ctx, CFG_NET_PREREQ);
+		schedule_deferred_cmd(&proxy_conn_up_cmd, ctx, CFG_NET_PREREQ);
+		schedule_deferred_cmd(&proxy_conn_plugins_cmd, ctx, CFG_NET_PREREQ);
 
 		/* With connection cleanup and reopen everything is rebuild anyway, and
 		 * DRBD will get a reconnect too.  */
@@ -336,15 +320,15 @@ redo_whole_conn:
 	}
 
 
-	res_o = res->me->proxy->plugins;
-	run_o = running->proxy_plugins;
+	res_o = STAILQ_FIRST(&res->me->proxy->plugins);
+	run_o = STAILQ_FIRST(&running->proxy_plugins);
 	used = 0;
-	conn_name = proxy_connection_name(res);
+	conn_name = proxy_connection_name(ctx);
 	for(i=0; i<MAX_PLUGINS; i++)
 	{
 		if (used >= sizeof(plugin_changes)-1) {
 			fprintf(stderr, "Too many proxy plugin changes");
-			exit(E_config_invalid);
+			exit(E_CONFIG_INVALID);
 		}
 		/* Now we can be sure that we can store another pointer. */
 
@@ -400,14 +384,14 @@ redo_whole_conn:
 
 
 		if (res_o)
-			res_o = res_o->next;
+			res_o = STAILQ_NEXT(res_o, link);
 		if (run_o)
-			run_o = run_o->next;
+			run_o = STAILQ_NEXT(run_o, link);
 	}
 
 	/* change only a few plugin settings. */
 	for(i=0; i<used; i++)
-		schedule_deferred_cmd(do_proxy_reconf, ctx, plugin_changes[i], CFG_NET);
+		schedule_deferred_proxy_reconf(ctx, plugin_changes[i]);
 
 	return reconn;
 }
@@ -434,7 +418,7 @@ int need_trigger_kobj_change(struct d_resource *res)
 		return 1;
 	if (major(sbuf.st_rdev) != DRBD_MAJOR)
 		return 1;
-	if (minor(sbuf.st_rdev) != res->me->volumes->device_minor)
+	if (minor(sbuf.st_rdev) != STAILQ_FIRST(&res->me->volumes)->device_minor)
 		return 1;
 
 	/* Link exists, and is expected block major:minor.
@@ -442,105 +426,56 @@ int need_trigger_kobj_change(struct d_resource *res)
 	return 0;
 }
 
-/* moves option to the head of the single linked option list,
- * and marks it as to be skiped for "adjust only" commands
- * like disk-options see e.g. adm_attach_and_or_disk_options().
- */
-static void move_opt_to_head(struct d_option **head, struct d_option *o)
+void compare_size(struct d_volume *conf, struct d_volume *kern)
 {
-	struct d_option *t;
-	if (!o)
-		return;
-	o->adj_skip = 1;
-	if (o == *head)
-		return;
+	struct d_option *c = find_opt(&conf->disk_options, "size");
+	struct d_option *k = find_opt(&kern->disk_options, "size");
 
-	for (t = *head; t->next != o; t = t->next)
-		;
-	t->next = o->next;
-	o->next = *head;
-	*head = o;
-}
-
-void compare_max_bio_bvecs(struct d_volume *conf, struct d_volume *kern)
-{
-	struct d_option *c = find_opt(conf->disk_options, "max-bio-bvecs");
-	struct d_option *k = find_opt(kern->disk_options, "max-bio-bvecs");
-
-	/* move to front of list, so we can skip it
-	 * for the following opts_equal */
-	move_opt_to_head(&conf->disk_options, c);
-	move_opt_to_head(&kern->disk_options, k);
+	if (c)
+		c->adj_skip = 1;
+	if (k)
+		k->adj_skip = 1;
 
 	/* simplify logic below, would otherwise have to
 	 * (!x || is_default(x) all the time. */
 	if (k && is_default(&attach_cmd_ctx, k))
 		k = NULL;
 
-	/* there was a bvec restriction set,
-	 * but it is no longer in config, or vice versa */
-	if (!k != !c)
-		conf->adj_attach = 1;
-
-	/* restrictions differ */
-	if (k && c && !is_equal(&attach_cmd_ctx, k, c))
-		conf->adj_attach = 1;
-}
-
-/* similar to compare_max_bio_bvecs above */
-void compare_size(struct d_volume *conf, struct d_volume *kern)
-{
-	struct d_option *c = find_opt(conf->disk_options, "size");
-	struct d_option *k = find_opt(kern->disk_options, "size");
-
-	move_opt_to_head(&conf->disk_options, c);
-	move_opt_to_head(&kern->disk_options, k);
-
-	if (k && is_default(&attach_cmd_ctx, k))
-		k = NULL;
+	/* size was set, but it is no longer in config, or vice versa */
 	if (!k != !c)
 		conf->adj_resize = 1;
+
+	/* size options differ */
 	if (k && c && !is_equal(&attach_cmd_ctx, c, k))
 		conf->adj_resize = 1;
 }
 
 void compare_volume(struct d_volume *conf, struct d_volume *kern)
 {
-	/* Special-case "max-bio-bvecs", we do not allow to change that
-	 * while attached, yet.
-	 * Also special case "size", we need to issue a resize command to change that.
+	/* Special case "size", we need to issue a resize command to change that.
 	 * Move both options to the head of the disk_options list,
 	 * so we can easily skip them in the opts_equal, later.
 	 */
-	struct d_option *c, *k;
 
-	/* do we need to do a full attach,
-	 * potentially with a detach first? */
-	conf->adj_attach = (conf->device_minor != kern->device_minor)
-			|| !disk_equal(conf, kern);
+	conf->adj_new_minor = conf->device_minor != kern->device_minor;
+	conf->adj_del_minor = conf->adj_new_minor && kern->disk;
 
-	/* do we need to do a full (detach/)attach,
-	 * because max_bio_bvec setting differs? */
-	compare_max_bio_bvecs(conf, kern);
+	if (!disk_equal(conf, kern)) {
+		if (conf->disk && kern->disk) {
+			conf->adj_attach = 1;
+			conf->adj_detach = 1;
+		} else {
+			conf->adj_attach = conf->disk != NULL;
+			conf->adj_detach = kern->disk != NULL;
+		}
+	}
 
 	/* do we need to resize? */
 	compare_size(conf, kern);
 
-	/* skip these two options (if present) for the opts_equal below.
-	 * These have been move_opt_to_head()ed before already. */
-	k = kern->disk_options;
-	while (k && (!strcmp(k->name, "size") || !strcmp(k->name, "max-bio-bvecs")))
-		k = k->next;
-	c = conf->disk_options;
-	while (c && (!strcmp(c->name, "size") || !strcmp(c->name, "max-bio-bvecs")))
-		c = c->next;
-
 	/* is it sufficient to only adjust the disk options? */
-	if (!conf->adj_attach)
-		conf->adj_disk_opts = !opts_equal(&disk_options_ctx, c, k);
-
-	if (conf->adj_attach && kern->disk)
-		conf->adj_detach = 1;
+	if (!(conf->adj_detach || conf->adj_attach) && conf->disk)
+		conf->adj_disk_opts = !opts_equal(&disk_options_ctx, &conf->disk_options, &kern->disk_options);
 }
 
 struct d_volume *new_to_be_deleted_minor_from_template(struct d_volume *kern)
@@ -552,11 +487,13 @@ struct d_volume *new_to_be_deleted_minor_from_template(struct d_volume *kern)
 	conf->vnr = kern->vnr;
 	/* conf->device: no need */
 	conf->device_minor = kern->device_minor;
-	conf->disk = strdup(kern->disk);
-	conf->meta_disk = strdup(kern->meta_disk);
-	conf->meta_index = strdup(kern->meta_index);
+	if (kern->disk) {
+		conf->disk = strdup(kern->disk);
+		conf->meta_disk = strdup(kern->meta_disk);
+		conf->meta_index = strdup(kern->meta_index);
+		conf->adj_detach = 1;
+	}
 
-	conf->adj_detach = 1;
 	conf->adj_del_minor = 1;
 	return conf;
 }
@@ -571,55 +508,49 @@ struct d_volume *new_to_be_deleted_minor_from_template(struct d_volume *kern)
  * supposed to be ordered by ->vnr;
  * We may need to conjure dummy volumes to issue "del-minor" on,
  * and insert these into the conf list.
- * The resulting new conf list head is returned.
  */
-struct d_volume *compare_volumes(struct d_volume *conf, struct d_volume *kern)
+void compare_volumes(struct volumes *conf_head, struct volumes *kern_head)
 {
-	struct d_volume *to_be_deleted = NULL;
-	struct d_volume *conf_head = conf;
+	struct volumes to_be_deleted = STAILQ_HEAD_INITIALIZER(to_be_deleted);
+	struct d_volume *conf = STAILQ_FIRST(conf_head);
+	struct d_volume *kern = STAILQ_FIRST(kern_head);
 	while (conf || kern) {
 		if (kern && (conf == NULL || kern->vnr < conf->vnr)) {
-			to_be_deleted = INSERT_SORTED(to_be_deleted,
-					new_to_be_deleted_minor_from_template(kern),
-					vnr);
-			kern = kern->next;
+			insert_volume(&to_be_deleted, new_to_be_deleted_minor_from_template(kern));
+			kern = STAILQ_NEXT(kern, link);
 		} else if (conf && (kern == NULL || kern->vnr > conf->vnr)) {
-			conf->adj_add_minor = 1;
-			conf->adj_attach = 1;
-			conf = conf->next;
+			conf->adj_new_minor = 1;
+			if (conf->disk)
+				conf->adj_attach = 1;
+			conf = STAILQ_NEXT(conf, link);
 		} else {
 			ASSERT(conf);
 			ASSERT(kern);
 			ASSERT(conf->vnr == kern->vnr);
 
 			compare_volume(conf, kern);
-			conf = conf->next;
-			kern = kern->next;
+			conf = STAILQ_NEXT(conf, link);
+			kern = STAILQ_NEXT(kern, link);
 		}
 	}
-	for_each_volume(conf, to_be_deleted)
-		conf_head = INSERT_SORTED(conf_head, conf, vnr);
-	return conf_head;
+	for_each_volume(conf, &to_be_deleted)
+		insert_volume(conf_head, conf);
 }
 
 /*
  * CAUTION this modifies global static char * config_file!
  */
-int adm_adjust(struct cfg_ctx *ctx)
+int adm_adjust(const struct cfg_ctx *ctx)
 {
 	char* argv[20];
 	int pid,argc, i;
 	struct d_resource* running;
 	struct d_volume *vol;
+	struct connection *conn;
+	struct volumes empty = STAILQ_HEAD_INITIALIZER(empty);
 
 	/* necessary per resource actions */
 	int do_res_options = 0;
-
-	/* necessary per connection actions
-	 * (currently we still only have one connection per resource */
-	int do_net_options = 0;
-	int do_disconnect = 0;
-	int do_connect = 0;
 
 	/* necessary per volume actions are flagged
 	 * in the vol->adj_* members. */
@@ -633,17 +564,19 @@ int adm_adjust(struct cfg_ctx *ctx)
 	 * with parsing of drbdsetup show output */
 	config_valid = 2;
 
+	set_me_in_resource(ctx->res, true);
+	set_peer_in_resource(ctx->res, true);
 
 	/* setup error reporting context for the parsing routines */
 	line = 1;
 	sprintf(config_file_dummy,"drbdsetup show %s", ctx->res->name);
 	config_file = config_file_dummy;
 
-	argc=0;
-	argv[argc++]=drbdsetup;
-	argv[argc++]="show";
-	ssprintf(argv[argc++], "%s", ctx->res->name);
-	argv[argc++]=0;
+	argc = 0;
+	argv[argc++] = drbdsetup;
+	argv[argc++] = "show";
+	argv[argc++] = ctx->res->name;
+	argv[argc++] = NULL;
 
 	/* actually parse drbdsetup show output */
 	yyin = m_popen(&pid,argv);
@@ -652,8 +585,12 @@ int adm_adjust(struct cfg_ctx *ctx)
 	waitpid(pid, 0, 0);
 
 	if (running) {
-		/* Sets "me" and "peer" pointer */
-		post_parse(running, 0);
+		struct resources running_as_list;
+		STAILQ_INIT(&running_as_list);
+		insert_tail(&running_as_list, running);
+		post_parse(&running_as_list, 0);
+
+		set_me_in_resource(running, 0);
 		set_peer_in_resource(running, 0);
 	}
 
@@ -664,11 +601,11 @@ int adm_adjust(struct cfg_ctx *ctx)
 	 * clean them from the proxy. */
 	if (ctx->res->me->proxy) {
 		line = 1;
-		resource_name = proxy_connection_name(ctx->res);
+		resource_name = proxy_connection_name(ctx);
 		i=snprintf(show_conn, sizeof(show_conn), "show proxy-settings %s", resource_name);
 		if (i>= sizeof(show_conn)-1) {
 			fprintf(stderr,"connection name too long");
-			exit(E_thinko);
+			exit(E_THINKO);
 		}
 		sprintf(config_file_dummy,"drbd-proxy-ctl -c '%s'", show_conn);
 		config_file = config_file_dummy;
@@ -687,59 +624,67 @@ int adm_adjust(struct cfg_ctx *ctx)
 		waitpid(pid,0,0);
 	}
 
-	ctx->res->me->volumes = compare_volumes(ctx->res->me->volumes,
-			running ? running->me->volumes : NULL);
+	compare_volumes(&ctx->res->me->volumes, running ? &running->me->volumes : &empty);
 
 	if (running) {
-		do_connect = !addr_equal(ctx->res,running);
-		do_net_options = !opts_equal(&net_options_ctx, ctx->res->net_options, running->net_options);
-		do_res_options = !opts_equal(&resource_options_cmd_ctx, ctx->res->res_options, running->res_options);
+		do_res_options = !opts_equal(&resource_options_ctx, &ctx->res->res_options, &running->res_options);
 	} else {
-		do_res_options = 0;
-		do_connect = 1;
-		schedule_deferred_cmd(adm_new_resource, ctx, "new-resource", CFG_PREREQ);
+		schedule_deferred_cmd(&new_resource_cmd, ctx, CFG_PREREQ);
+	}
+
+	if (running) {
+		for_each_connection(conn, &running->connections) {
+			struct connection *configured_conn;
+
+			configured_conn = matching_conn(conn, &ctx->res->connections);
+			if (!configured_conn) {
+				struct cfg_ctx tmp_ctx = { .res = running, .conn = conn };
+				schedule_deferred_cmd(&disconnect_cmd, &tmp_ctx, CFG_NET);
+			}
+		}
+	}
+
+	for_each_connection(conn, &ctx->res->connections) {
+		struct connection *running_conn = NULL;
+		struct cfg_ctx tmp_ctx = { .res = ctx->res, .conn = conn };
+
+		if (conn->ignore)
+			continue;
+
+		if (running)
+			running_conn = matching_conn(conn, &running->connections);
+		if (!running_conn) {
+			schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET);
+		} else {
+			if (!opts_equal(&net_options_ctx, &conn->net_options, &running_conn->net_options))
+				schedule_deferred_cmd(&net_options_defaults_cmd, &tmp_ctx, CFG_NET);
+		}
 	}
 
 	if (ctx->res->me->proxy && can_do_proxy)
-		do_connect |= proxy_reconf(ctx, running);
-
-	do_disconnect = do_connect && running && (running->peer || running->net_options);
+		proxy_reconf(ctx, running);
 
 	if (do_res_options)
-		schedule_deferred_cmd(adm_set_default_res_options, ctx, "resource-options", CFG_RESOURCE);
+		schedule_deferred_cmd(&res_options_defaults_cmd, ctx, CFG_RESOURCE);
 
 	/* do we need to attach,
 	 * do we need to detach first,
 	 * or is this just some attribute change? */
-	for_each_volume(vol, ctx->res->me->volumes) {
+	for_each_volume(vol, &ctx->res->me->volumes) {
 		struct cfg_ctx tmp_ctx = { .res = ctx->res, .vol = vol };
 		if (vol->adj_detach)
-			schedule_deferred_cmd(adm_generic_s, &tmp_ctx, "detach", CFG_PREREQ);
+			schedule_deferred_cmd(&detach_cmd, &tmp_ctx, CFG_PREREQ);
 		if (vol->adj_del_minor)
-			schedule_deferred_cmd(adm_generic_s, &tmp_ctx, "del-minor", CFG_PREREQ);
-		if (vol->adj_add_minor)
-			schedule_deferred_cmd(adm_new_minor, &tmp_ctx, "new-minor", CFG_DISK_PREREQ);
+			schedule_deferred_cmd(&del_minor_cmd, &tmp_ctx, CFG_PREREQ);
+		if (vol->adj_new_minor)
+			schedule_deferred_cmd(&new_minor_cmd, &tmp_ctx, CFG_DISK_PREREQ);
 		if (vol->adj_attach)
-			schedule_deferred_cmd(adm_attach, &tmp_ctx, "attach", CFG_DISK);
+			schedule_deferred_cmd(&attach_cmd, &tmp_ctx, CFG_DISK);
 		if (vol->adj_disk_opts)
-			schedule_deferred_cmd(adm_set_default_disk_options, &tmp_ctx, "disk-options", CFG_DISK);
+			schedule_deferred_cmd(&disk_options_defaults_cmd, &tmp_ctx, CFG_DISK);
 		if (vol->adj_resize)
-			schedule_deferred_cmd(adm_resize, &tmp_ctx, "resize", CFG_DISK);
+			schedule_deferred_cmd(&resize_cmd, &tmp_ctx, CFG_DISK);
 	}
-
-	if (do_connect) {
-		/* "disconnect" specifying the end-point addresses currently in-use,
-		 * before "connect"ing with the addresses currently in-config-file. */
-		if (do_disconnect) {
-			struct cfg_ctx tmp_ctx = { .res = running, .vol = vol, };
-			schedule_deferred_cmd(adm_disconnect, &tmp_ctx, "disconnect", CFG_NET_PREREQ);
-		}
-		schedule_deferred_cmd(adm_connect, ctx, "connect", CFG_NET);
-		do_net_options = 0;
-	}
-
-	if (do_net_options)
-		schedule_deferred_cmd(adm_set_default_net_options, ctx, "net-options", CFG_NET);
 
 	return 0;
 }

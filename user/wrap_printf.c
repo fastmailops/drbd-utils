@@ -4,7 +4,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 
-int wrap_printf(int indent, char *format, ...)
+int wrap_printf(int indent, const char *format, ...)
 {
 	static int columns, col;
 	va_list ap1, ap2;
@@ -26,6 +26,8 @@ int wrap_printf(int indent, char *format, ...)
 	va_end(ap1);
 	if (col + n > columns) {
 		putchar('\n');
+		if (*format == '\n')
+			format++;
 		col = 0;
 	}
 	if (col == 0) {
@@ -43,6 +45,31 @@ int wrap_printf(int indent, char *format, ...)
 	nl = strrchr(format, '\n');
 	if (nl && nl[1] == 0)
 		col = 0;
+
+	return n;
+}
+
+int wrap_printf_wordwise(int indent, const char *str)
+{
+	int n = 0;
+
+	do {
+		const char *fmt = "%.*s", *s;
+		int m;
+
+		if (*str == ' ') {
+			fmt = " %.*s";
+			while (*str == ' ')
+				str++;
+		}
+		for (s = str; *s && *s != ' '; s++)
+			/* nothing */ ;
+		m = wrap_printf(indent, fmt, s - str, str);
+		if (m < 0)
+			return m;
+		n += m;
+		str = s;
+	} while (*str);
 
 	return n;
 }

@@ -12,8 +12,8 @@
 #include <linux/drbd_genl_api.h>
 #include <linux/drbd_limits.h>
 #include "drbd_nla.h"
-#include <linux/genl_magic_func.h>
 #include "drbdtool_common.h"
+#include <linux/genl_magic_func.h>
 #include "config_flags.h"
 
 #ifndef ARRAY_SIZE
@@ -512,7 +512,7 @@ const char *on_io_error_map[] = {
 	[EP_DETACH] = "detach",
 };
 
-const char *fencing_map[] = {
+const char *fencing_policy_map[] = {
 	[FP_DONT_CARE] = "dont-care",
 	[FP_RESOURCE] = "resource-only",
 	[FP_STONITH] = "resource-and-stonith",
@@ -575,11 +575,12 @@ const char *read_balancing_map[] = {
 
 #define CHANGEABLE_DISK_OPTIONS								\
 	{ "on-io-error", ENUM(on_io_error, ON_IO_ERROR) },				\
-	{ "fencing", ENUM(fencing, FENCING) },						\
+	/*{ "fencing", ENUM(fencing_policy, FENCING) },*/				\
 	{ "disk-barrier", BOOLEAN(disk_barrier, DISK_BARRIER) },			\
 	{ "disk-flushes", BOOLEAN(disk_flushes, DISK_FLUSHES) },			\
 	{ "disk-drain", BOOLEAN(disk_drain, DISK_DRAIN) },				\
 	{ "md-flushes", BOOLEAN(md_flushes, MD_FLUSHES) },				\
+	{ "unplug-watermark", NUMERIC(unplug_watermark, UNPLUG_WATERMARK) },		\
 	{ "resync-rate", NUMERIC(resync_rate, RESYNC_RATE),				\
           .unit = "bytes/second" },							\
 	{ "resync-after", NUMERIC(resync_after, MINOR_NUMBER) },			\
@@ -604,8 +605,6 @@ const char *read_balancing_map[] = {
 	{ "timeout", NUMERIC(timeout, TIMEOUT),						\
           .unit = "1/10 seconds" },							\
 	{ "max-epoch-size", NUMERIC(max_epoch_size, MAX_EPOCH_SIZE) },			\
-	{ "max-buffers", NUMERIC(max_buffers, MAX_BUFFERS) },				\
-	{ "unplug-watermark", NUMERIC(unplug_watermark, UNPLUG_WATERMARK) },		\
 	{ "connect-int", NUMERIC(connect_int, CONNECT_INT),				\
           .unit = "seconds" },								\
 	{ "ping-int", NUMERIC(ping_int, PING_INT),					\
@@ -633,10 +632,13 @@ const char *read_balancing_map[] = {
 	{ "congestion-extents", NUMERIC(cong_extents, CONG_EXTENTS) },			\
 	{ "csums-alg", STRING(csums_alg) },						\
 	{ "verify-alg", STRING(verify_alg) },						\
-	{ "use-rle", BOOLEAN(use_rle, USE_RLE) }
+	{ "use-rle", BOOLEAN(use_rle, USE_RLE) },					\
+	{ "fencing", ENUM(fencing_policy, FENCING) },					\
+	{ "_name", STRING(name) }
 
 struct context_def disk_options_ctx = {
 	NLA_POLICY(disk_conf),
+	.nla_type = DRBD_NLA_DISK_CONF,
 	.fields = {
 		CHANGEABLE_DISK_OPTIONS,
 		{ } },
@@ -644,6 +646,7 @@ struct context_def disk_options_ctx = {
 
 struct context_def net_options_ctx = {
 	NLA_POLICY(net_conf),
+	.nla_type = DRBD_NLA_NET_CONF,
 	.fields = {
 		CHANGEABLE_NET_OPTIONS,
 		{ } },
@@ -651,6 +654,7 @@ struct context_def net_options_ctx = {
 
 struct context_def primary_cmd_ctx = {
 	NLA_POLICY(set_role_parms),
+	.nla_type = DRBD_NLA_SET_ROLE_PARMS,
 	.fields = {
 		{ "force", FLAG(assume_uptodate) },
 		{ } },
@@ -658,10 +662,10 @@ struct context_def primary_cmd_ctx = {
 
 struct context_def attach_cmd_ctx = {
 	NLA_POLICY(disk_conf),
+	.nla_type = DRBD_NLA_DISK_CONF,
 	.fields = {
 		{ "size", NUMERIC(disk_size, DISK_SIZE),
 		  .unit = "bytes" },
-		{ "max-bio-bvecs", NUMERIC(max_bio_bvecs, MAX_BIO_BVECS) },
 		CHANGEABLE_DISK_OPTIONS,
 		/* { "*", STRING(backing_dev) }, */
 		/* { "*", STRING(meta_dev) }, */
@@ -671,6 +675,7 @@ struct context_def attach_cmd_ctx = {
 
 struct context_def detach_cmd_ctx = {
 	NLA_POLICY(detach_parms),
+	.nla_type = DRBD_NLA_DETACH_PARMS,
 	.fields = {
 		{ "force", FLAG(force_detach) },
 		{ }
@@ -679,15 +684,18 @@ struct context_def detach_cmd_ctx = {
 
 struct context_def connect_cmd_ctx = {
 	NLA_POLICY(net_conf),
+	.nla_type = DRBD_NLA_NET_CONF,
 	.fields = {
 		{ "tentative", FLAG(tentative) },
 		{ "discard-my-data", FLAG(discard_my_data) },
+		{ "peer-node-id", NUMERIC(peer_node_id, NODE_ID) },
 		CHANGEABLE_NET_OPTIONS,
 		{ } },
 };
 
 struct context_def disconnect_cmd_ctx = {
 	NLA_POLICY(disconnect_parms),
+	.nla_type = DRBD_NLA_DISCONNECT_PARMS,
 	.fields = {
 		{ "force", FLAG(force_disconnect) },
 		{ } },
@@ -695,6 +703,7 @@ struct context_def disconnect_cmd_ctx = {
 
 struct context_def resize_cmd_ctx = {
 	NLA_POLICY(resize_parms),
+	.nla_type = DRBD_NLA_RESIZE_PARMS,
 	.fields = {
 		{ "size", NUMERIC(resize_size, DISK_SIZE),
 		  .unit = "bytes" },
@@ -705,16 +714,23 @@ struct context_def resize_cmd_ctx = {
 		{ } },
 };
 
-struct context_def resource_options_cmd_ctx = {
+struct context_def resource_options_ctx = {
 	NLA_POLICY(res_opts),
+	.nla_type = DRBD_NLA_RESOURCE_OPTS,
 	.fields = {
 		{ "cpu-mask", STRING(cpu_mask) },
 		{ "on-no-data-accessible", ENUM(on_no_data, ON_NO_DATA) },
+		{ "auto-promote", BOOLEAN(auto_promote, AUTO_PROMOTE) },
+		{ "peer-ack-window", NUMERIC(peer_ack_window, PEER_ACK_WINDOW) },
+		{ "peer-ack-delay", NUMERIC(peer_ack_delay, PEER_ACK_DELAY) },
+		{ "twopc-timeout", NUMERIC(twopc_timeout, TWOPC_TIMEOUT) },
+		{ "twopc-retry-timeout", NUMERIC(twopc_retry_timeout, TWOPC_RETRY_TIMEOUT) },
 		{ } },
 };
 
 struct context_def new_current_uuid_cmd_ctx = {
 	NLA_POLICY(new_c_uuid_parms),
+	.nla_type = DRBD_NLA_NEW_C_UUID_PARMS,
 	.fields = {
 		{ "clear-bitmap", FLAG(clear_bm) },
 		{ } },
@@ -722,6 +738,7 @@ struct context_def new_current_uuid_cmd_ctx = {
 
 struct context_def verify_cmd_ctx = {
 	NLA_POLICY(start_ov_parms),
+	.nla_type = DRBD_NLA_START_OV_PARMS,
 	.fields = {
 		{ "start", NUMERIC(ov_start_sector, DISK_SIZE),
 		  .unit = "bytes" },
@@ -730,12 +747,29 @@ struct context_def verify_cmd_ctx = {
 		{ } },
 };
 
-struct context_def new_minor_cmd_ctx = {
-	NLA_POLICY(drbd_cfg_context),
+struct context_def device_options_ctx = {
+	NLA_POLICY(device_conf),
+	.nla_type = DRBD_NLA_DEVICE_CONF,
 	.fields = {
-		/* { "*", STRING(ctx_resource_name) }, */
-		/* { "*", NUMERIC(ctx_volume, >= 0) }, */
-		/* { "*", BINARY(ctx_my_addr) }, */
-		/* { "*", BINARY(ctx_peer_addr) }, */
+		{ "max-bio-size", NUMERIC(max_bio_size, MAX_BIO_SIZE) },
+		{ "max-buffers", NUMERIC(max_buffers, MAX_BUFFERS) },
+		{ } },
+};
+
+struct context_def invalidate_ctx = {
+	NLA_POLICY(invalidate_parms),
+	.nla_type = DRBD_NLA_INVALIDATE_PARMS,
+	.fields = {
+		{ "sync-from-peer-node-id", NUMERIC(sync_from_peer_node_id, SYNC_FROM_NID) },
+		{ } },
+};
+
+// only used in drbdadm:
+struct context_def create_md_ctx = {
+       .fields = {
+		{ .name = "max-peers", .argument_is_optional = false },
+		{ .name = "peer-max-bio-size", .argument_is_optional = false },
+		{ .name = "al-stripes", .argument_is_optional = false },
+		{ .name = "al-stripe-size-kB", .argument_is_optional = false },
 		{ } },
 };

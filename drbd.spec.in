@@ -16,51 +16,49 @@
 %bcond_without udev
 %bcond_without pacemaker
 %bcond_with rgmanager
-%bcond_without heartbeat
 # conditionals may not contain "-" nor "_", hence "bashcompletion"
 %bcond_without bashcompletion
+%bcond_without sbinsymlinks
 # --with xen is ignored on any non-x86 architecture
 %bcond_without xen
 %bcond_without legacy_utils
+%bcond_without legacy_utils_84
 %ifnarch %{ix86} x86_64
 %global _without_xen --without-xen
 %endif
 
-Name: @PACKAGE_TARNAME@
+Name: drbd
 Summary: DRBD driver for Linux
 Version: @PACKAGE_VERSION@
-Release: 2@RPM_DIST_TAG@
-Source: http://oss.linbit.com/%{name}/8.3/%{name}-%{version}.tar.gz
+Release: 1@RPM_DIST_TAG@
+Source: http://oss.linbit.com/drbd/drbd-utils-%{version}.tar.gz
 License: GPLv2+
 ExclusiveOS: linux
 Group: System Environment/Kernel
 URL: http://www.drbd.org/
-BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
+BuildRoot: %(mktemp -ud %{_tmppath}/drbd-utils-%{version}-%{release}-XXXXXX)
 BuildRequires: @RPM_BUILDREQ_DEFAULT@
-Requires: %{name}-utils = %{version}
+Requires: drbd-utils = %{version}
 %ifarch %{ix86} x86_64
 %if %{with xen}
-Requires: %{name}-xen = %{version}
+Requires: drbd-xen = %{version}
 %endif
 %endif
 %if %{with udev}
-Requires: %{name}-udev = %{version}
+Requires: drbd-udev = %{version}
 BuildRequires: udev
 %endif
 %if %{with pacemaker}
-Requires: %{name}-pacemaker = %{version}
+Requires: drbd-pacemaker = %{version}
 %endif
 ## %if %{with rgmanager}
 ## ## No.
 ## ## We don't want to annoy the majority of our userbase on pacemaker
 ## ## by pulling in the full rgmanager stack via drbd-rgmanager as well.
-## Requires: %{name}-rgmanager = %{version}
+## Requires: drbd-rgmanager = %{version}
 ## %endif
-%if %{with heartbeat}
-Requires: %{name}-heartbeat = %{version}
-%endif
 %if %{with bashcompletion}
-Requires: %{name}-bash-completion = %{version}
+Requires: drbd-bash-completion = %{version}
 %endif
 
 %description
@@ -81,6 +79,19 @@ This is a virtual package, installing the full DRBD userland suite.
 %package utils
 Summary: Management utilities for DRBD
 Group: System Environment/Kernel
+# Our kernel modules "require" specific drbd-utils versions, not ranges.
+# Which was natural as long as userland and module shared the same repo
+# and source tarball, and would be build together.
+#
+# Now we split the userland part, we "provide" a list of versions here,
+# to be able to use this package with existing module packages.
+#
+# which 9.0 version equivalent this package provides
+@SPEC_PROVIDES_DRBD_UTILS_90@
+%if %{with legacy_utils_84}
+# which 8.4 version equivalent this package provides
+@SPEC_PROVIDES_DRBD_UTILS_84@
+%endif
 # We used to have one monolithic userland package.
 # Since all other packages require drbd-utils,
 # it should be sufficient to add the conflict here.
@@ -99,6 +110,11 @@ This packages includes the DRBD administration tools.
 
 %files utils
 %defattr(755,root,root,-)
+%if %{with sbinsymlinks}
+/sbin/drbdsetup
+/sbin/drbdadm
+/sbin/drbdmeta
+%endif
 %{_sbindir}/drbdsetup
 %{_sbindir}/drbdadm
 %{_sbindir}/drbdmeta
@@ -107,32 +123,35 @@ This packages includes the DRBD administration tools.
 /lib/drbd/drbdsetup-83
 /lib/drbd/drbdadm-83
 %endif
-%{_initddir}/%{name}
+%if %{with legacy_utils_84}
+/lib/drbd/drbdsetup-84
+/lib/drbd/drbdadm-84
+%endif
+%{_initddir}/drbd
 %{_sbindir}/drbd-overview
-%dir %{_prefix}/lib/%{name}
-%{_prefix}/lib/%{name}/outdate-peer.sh
-%{_prefix}/lib/%{name}/snapshot-resync-target-lvm.sh
-%{_prefix}/lib/%{name}/unsnapshot-resync-target-lvm.sh
-%{_prefix}/lib/%{name}/notify-out-of-sync.sh
-%{_prefix}/lib/%{name}/notify-split-brain.sh
-%{_prefix}/lib/%{name}/notify-emergency-reboot.sh
-%{_prefix}/lib/%{name}/notify-emergency-shutdown.sh
-%{_prefix}/lib/%{name}/notify-io-error.sh
-%{_prefix}/lib/%{name}/notify-pri-lost-after-sb.sh
-%{_prefix}/lib/%{name}/notify-pri-lost.sh
-%{_prefix}/lib/%{name}/notify-pri-on-incon-degr.sh
-%{_prefix}/lib/%{name}/notify.sh
+%dir %{_prefix}/lib/drbd
+%{_prefix}/lib/drbd/outdate-peer.sh
+%{_prefix}/lib/drbd/snapshot-resync-target-lvm.sh
+%{_prefix}/lib/drbd/unsnapshot-resync-target-lvm.sh
+%{_prefix}/lib/drbd/notify-out-of-sync.sh
+%{_prefix}/lib/drbd/notify-split-brain.sh
+%{_prefix}/lib/drbd/notify-emergency-reboot.sh
+%{_prefix}/lib/drbd/notify-emergency-shutdown.sh
+%{_prefix}/lib/drbd/notify-io-error.sh
+%{_prefix}/lib/drbd/notify-pri-lost-after-sb.sh
+%{_prefix}/lib/drbd/notify-pri-lost.sh
+%{_prefix}/lib/drbd/notify-pri-on-incon-degr.sh
+%{_prefix}/lib/drbd/notify.sh
 
 %defattr(-,root,root,-)
-%dir %{_var}/lib/%{name}
 %config(noreplace) %{_sysconfdir}/drbd.conf
 %dir %{_sysconfdir}/drbd.d
 %config(noreplace) %{_sysconfdir}/drbd.d/global_common.conf
-%{_mandir}/man8/drbd.8.*
-%{_mandir}/man8/drbdsetup.8.*
-%{_mandir}/man8/drbdadm.8.*
-%{_mandir}/man5/drbd.conf.5.*
-%{_mandir}/man8/drbdmeta.8.*
+%{_mandir}/man8/drbd-*
+%{_mandir}/man8/drbdsetup-*
+%{_mandir}/man8/drbdadm-*
+%{_mandir}/man5/drbd.conf-*
+%{_mandir}/man8/drbdmeta-*
 %doc scripts/drbd.conf.example
 %doc COPYING
 %doc ChangeLog
@@ -143,7 +162,7 @@ This packages includes the DRBD administration tools.
 %package xen
 Summary: Xen block device management script for DRBD
 Group: System Environment/Kernel
-Requires: %{name}-utils = %{version}-%{release}
+Requires: drbd-utils = %{version}-%{release}
 @RPM_REQ_XEN@
 @RPM_SUBPACKAGE_NOARCH@
 
@@ -161,7 +180,7 @@ promoting and demoting DRBD resources as necessary.
 %package udev
 Summary: udev integration scripts for DRBD
 Group: System Environment/Kernel
-Requires: %{name}-utils = %{version}-%{release}, udev
+Requires: drbd-utils = %{version}-%{release}, udev
 @RPM_SUBPACKAGE_NOARCH@
 
 %description udev
@@ -177,7 +196,7 @@ DRBD devices in /dev/drbd/by-res and /dev/drbd/by-disk.
 %package pacemaker
 Summary: Pacemaker resource agent for DRBD
 Group: System Environment/Base
-Requires: %{name}-utils = %{version}-%{release}
+Requires: drbd-utils = %{version}-%{release}
 @RPM_REQ_PACEMAKER@
 License: GPLv2
 @RPM_SUBPACKAGE_NOARCH@
@@ -188,9 +207,9 @@ Pacemaker High Availability cluster manager.
 
 %files pacemaker
 %defattr(755,root,root,-)
-%{_prefix}/lib/%{name}/crm-fence-peer.sh
-%{_prefix}/lib/%{name}/crm-unfence-peer.sh
-%{_prefix}/lib/%{name}/stonith_admin-fence-peer.sh
+%{_prefix}/lib/drbd/crm-fence-peer.sh
+%{_prefix}/lib/drbd/crm-unfence-peer.sh
+%{_prefix}/lib/drbd/stonith_admin-fence-peer.sh
 %{_prefix}/lib/ocf/resource.d/linbit/drbd
 %endif # with pacemaker
 
@@ -219,7 +238,7 @@ Pacemaker High Availability cluster manager.
 %package rgmanager
 Summary: Red Hat Cluster Suite agent for DRBD
 Group: System Environment/Base
-Requires: %{name}-utils = %{version}-%{release}
+Requires: drbd-utils = %{version}-%{release}
 @RPM_SUBPACKAGE_NOARCH@
 
 %description rgmanager
@@ -232,39 +251,17 @@ in the Cluster distribution.
 %files rgmanager
 %defattr(755,root,root,-)
 %{_datadir}/cluster/drbd.sh
-%{_prefix}/lib/%{name}/rhcs_fence
+%{_prefix}/lib/drbd/rhcs_fence
 
 %defattr(-,root,root,-)
 %{_datadir}/cluster/drbd.metadata
 %endif # with rgmanager
 
-%if %{with heartbeat}
-%package heartbeat
-Summary: Heartbeat resource agent for DRBD
-Group: System Environment/Base
-Requires: %{name}-utils = %{version}-%{release}
-@RPM_REQ_HEARTBEAT@
-License: GPLv2
-@RPM_SUBPACKAGE_NOARCH@
-
-%description heartbeat
-This package contains the DRBD resource agents for the Heartbeat cluster
-resource manager (in v1 compatibility mode).
-
-%files heartbeat
-%defattr(755,root,root,-)
-%{_sysconfdir}/ha.d/resource.d/drbddisk
-%{_sysconfdir}/ha.d/resource.d/drbdupper
-
-%defattr(-,root,root,-)
-%{_mandir}/man8/drbddisk.8.*
-%endif # with heartbeat
-
 %if %{with bashcompletion}
 %package bash-completion
 Summary: Programmable bash completion support for drbdadm
 Group: System Environment/Base
-Requires: %{name}-utils = %{version}-%{release}
+Requires: drbd-utils = %{version}-%{release}
 @RPM_REQ_BASH_COMPLETION@
 @RPM_SUBPACKAGE_NOARCH@
 
@@ -279,152 +276,63 @@ management utility.
 
 
 %prep
-%setup -q
+%setup -q -n drbd-utils-%{version}
 
 %build
 %configure \
-    --with-utils \
-    --without-km \
     %{?_without_udev} \
     %{?_without_xen} \
     %{?_without_pacemaker} \
-    %{?_without_heartbeat} \
     %{?_with_rgmanager} \
     %{?_without_bashcompletion} \
     %{?_without_legacy_utils} \
+    %{?_without_legacy_utils_84} \
     --with-initdir=%{_initddir}
 make %{?_smp_mflags}
+make doc
 
 %install
 rm -rf %{buildroot}
-make install DESTDIR=%{buildroot}
+make install DESTDIR=%{buildroot} CREATE_MAN_LINK=no
+
+%if %{with sbinsymlinks}
+# Don't do this if you are already on a /sbin -=> /usr/sbin distro
+# compat: we used to live in /sbin/
+# there may be many hardcoded /sbin/drbd* out there,
+# including variants of our own scripts.
+mkdir %{buildroot}/sbin/
+cd %{buildroot}/sbin/
+ln -sv ..%{_sbindir}/drbdadm .
+ln -sv ..%{_sbindir}/drbdmeta .
+ln -sv ..%{_sbindir}/drbdsetup .
+%endif
 
 %clean
 rm -rf %{buildroot}
 
 %post utils
 chkconfig --add drbd
+for f in drbd drbdadm drbdmeta drbdsetup; do
+    ln -s $f-8.4.8.gz %{_mandir}/man8/$f.8.gz
+done
+ln -s drbd.conf-8.4.5.gz %{_mandir}/man5/drbd.conf.5.gz
 %if %{without udev}
 for i in `seq 0 15` ; do
     test -b /dev/drbd$i || mknod -m 0660 /dev/drbd$i b 147 $i;
 done
 %endif #without udev
 
-# compat: we used to live in /sbin/
-# there may be many hardcoded /sbin/drbd* out there,
-# including variants of our own scripts.
-if ! test /sbin -ef %{_sbindir}; then
-	ln -sf %{_sbindir}/drbdsetup /sbin/
-	ln -sf %{_sbindir}/drbdmeta /sbin/
-	ln -sf %{_sbindir}/drbdadm /sbin/
-fi
-
 %preun utils
+for f in drbd drbdadm drbdmeta drbdsetup; do
+    rm %{_mandir}/man8/$f.8.gz
+done
+rm %{_mandir}/man5/drbd.conf.5.gz
 if [ $1 -eq 0 ]; then
         %{_initrddir}/drbd stop >/dev/null 2>&1
         /sbin/chkconfig --del drbd
-	# remove compat symlinks installed by post
-	if ! test /sbin -ef %{_sbindir}; then
-		rm -f /sbin/drbdsetup
-		rm -f /sbin/drbdmeta
-		rm -f /sbin/drbdadm
-	fi
 fi
 
 %changelog
-* Fri Oct 11 2013 Philipp Reisner <phil@linbit.com> - 8.4.4-1
-- New upstream release.
-
-* Tue Feb  5 2013 Philipp Reisner <phil@linbit.com> - 8.4.3-1
-- New upstream release.
-
-* Thu Sep  6 2012 Philipp Reisner <phil@linbit.com> - 8.4.2-1
-- New upstream release.
-
-* Tue Feb 21 2012 Lars Ellenberg <lars@linbit.com> - 8.4.1-2
-- Build fix for RHEL 6 and ubuntu lucid
-
-* Tue Dec 20 2011 Philipp Reisner <phil@linbit.com> - 8.4.1-1
-- New upstream release.
-
-* Wed Jul 15 2011 Philipp Reisner <phil@linbit.com> - 8.4.0-1
-- New upstream release.
-
-* Fri Jan 28 2011 Philipp Reisner <phil@linbit.com> - 8.3.10-1
-- New upstream release.
-
-* Fri Oct 22 2010 Philipp Reisner <phil@linbit.com> - 8.3.9-1
-- New upstream release.
-
-* Wed Jun  2 2010 Philipp Reisner <phil@linbit.com> - 8.3.8-1
-- New upstream release.
-
-* Thu Jan 13 2010 Philipp Reisner <phil@linbit.com> - 8.3.7-1
-- New upstream release.
-
-* Thu Nov  8 2009 Philipp Reisner <phil@linbit.com> - 8.3.6-1
-- New upstream release.
-
-* Thu Oct 27 2009 Philipp Reisner <phil@linbit.com> - 8.3.5-1
-- New upstream release.
-
-* Wed Oct 21 2009 Florian Haas <florian@linbit.com> - 8.3.4-12
-- Packaging makeover.
-
-* Thu Oct  6 2009 Philipp Reisner <phil@linbit.com> - 8.3.4-1
-- New upstream release.
-
-* Thu Oct  5 2009 Philipp Reisner <phil@linbit.com> - 8.3.3-1
-- New upstream release.
-
-* Fri Jul  3 2009 Philipp Reisner <phil@linbit.com> - 8.3.2-1
-- New upstream release.
-
-* Fri Mar 27 2009 Philipp Reisner <phil@linbit.com> - 8.3.1-1
-- New upstream release.
-
-* Thu Dec 18 2008 Philipp Reisner <phil@linbit.com> - 8.3.0-1
-- New upstream release.
-
-* Thu Nov 12 2008 Philipp Reisner <phil@linbit.com> - 8.2.7-1
-- New upstream release.
-
-* Fri May 30 2008 Philipp Reisner <phil@linbit.com> - 8.2.6-1
-- New upstream release.
-
-* Tue Feb 12 2008 Philipp Reisner <phil@linbit.com> - 8.2.5-1
-- New upstream release.
-
-* Fri Jan 11 2008 Philipp Reisner <phil@linbit.com> - 8.2.4-1
-- New upstream release.
-
-* Wed Jan  9 2008 Philipp Reisner <phil@linbit.com> - 8.2.3-1
-- New upstream release.
-
-* Fri Nov  2 2007 Philipp Reisner <phil@linbit.com> - 8.2.1-1
-- New upstream release.
-
-* Fri Sep 28 2007 Philipp Reisner <phil@linbit.com> - 8.2.0-1
-- New upstream release.
-
-* Mon Sep  3 2007 Philipp Reisner <phil@linbit.com> - 8.0.6-1
-- New upstream release.
-
-* Fri Aug  3 2007 Philipp Reisner <phil@linbit.com> - 8.0.5-1
-- New upstream release.
-
-* Wed Jun 27 2007 Philipp Reisner <phil@linbit.com> - 8.0.4-1
-- New upstream release.
-
-* Mon May 7 2007 Philipp Reisner <phil@linbit.com> - 8.0.3-1
-- New upstream release.
-
-* Fri Apr 6 2007 Philipp Reisner <phil@linbit.com> - 8.0.2-1
-- New upstream release.
-
-* Mon Mar 3 2007 Philipp Reisner <phil@linbit.com> - 8.0.1-1
-- New upstream release.
-
-* Wed Jan 24 2007 Philipp Reisner <phil@linbit.com>  - 8.0.0-1
+* Tue Jun 10 2014 Philipp Reisner <phil@linbit.com> - 8.9.0-1
 - New upstream release.
 
