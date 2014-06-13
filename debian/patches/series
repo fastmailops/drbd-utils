@@ -7,3 +7,4 @@ disable-automatic-user-survey.patch
 #0002-drbdsetup-delay-exiting-due-to-unknown-commands.patch
 add-lsb-description.patch
 fix-drbd.8-manpage-warning.patch
+initscript-remove-path.patch
