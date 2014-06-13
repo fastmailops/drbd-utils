@@ -7,7 +7,13 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.4.4, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.0, [drbd-dev@lists.linbit.com])
+
+AC_SUBST(PACKAGE_VERSION_EQUIVALENT_84, ["8.4.5 8.4.4 8.4.3 8.4.2 8.4.1 8.4.0"])
+AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_84, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_84)"])
+
+AC_SUBST(PACKAGE_VERSION_EQUIVALENT_90, ["9.0.0pre9"])
+AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_90, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_90)"])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -39,29 +45,23 @@ infodir="`eval echo ${infodir}`"
 mandir="`eval echo ${mandir}`"
 docdir="`eval echo ${docdir}`"
 
-dnl "--with-<foo>" options (all except km enabled by default, pass --without-<foo> to disable)
-WITH_UTILS=yes
-WITH_LEGACY_UTILS=yes
-WITH_KM=no
+dnl "--with-<foo>" options (all except legacy and rgm enabled by default, pass --without-<foo> to disable)
+WITH_83_SUPPORT=yes
+WITH_84_SUPPORT=yes
 WITH_UDEV=yes
 WITH_XEN=yes
 WITH_PACEMAKER=yes
-WITH_HEARTBEAT=yes
 WITH_RGMANAGER=no
 WITH_BASHCOMPLETION=yes
 WITH_NOARCH_SUBPACKAGES=no
-AC_ARG_WITH([utils],
-	[AS_HELP_STRING([--with-utils],
-			[Enable management utilities])],
-	[WITH_UTILS=$withval])
-AC_ARG_WITH([legacy_utils],
-	[AS_HELP_STRING([--without-legacy_utils],
-			[Do not include legacy <= 8.3 drbdsetup/drbdadm])],
-	[WITH_LEGACY_UTILS=$withval])
-AC_ARG_WITH([km],
-	[AS_HELP_STRING([--with-km],
-			[Enable kernel module])],
-	[WITH_KM=$withval])
+AC_ARG_WITH([83-support],
+	[AS_HELP_STRING([--without-83-support],
+			[Do not include support for drbd driver/module <= 8.3])],
+	[WITH_83_SUPPORT=$withval])
+AC_ARG_WITH([84-support],
+	[AS_HELP_STRING([--without-84-support],
+			[Do not include support for drbd driver/module 8.4])],
+	[WITH_84_SUPPORT=$withval])
 AC_ARG_WITH([udev],
 	[AS_HELP_STRING([--with-udev],
 			[Enable udev integration])],
@@ -74,10 +74,6 @@ AC_ARG_WITH([pacemaker],
 	[AS_HELP_STRING([--with-pacemaker],
 			[Enable Pacemaker integration])],
 	[WITH_PACEMAKER=$withval])
-AC_ARG_WITH([heartbeat],
-	[AS_HELP_STRING([--with-heartbeat],
-			[Enable Heartbeat integration])],
-	[WITH_HEARTBEAT=$withval])
 AC_ARG_WITH([rgmanager],
 	[AS_HELP_STRING([--with-rgmanager],
 			[Enable Red Hat Cluster Suite integration])],
@@ -104,17 +100,14 @@ AC_ARG_ENABLE([spec],
 	[SPECMODE=$enableval],
 	[SPECMODE=""])
 
-
 AC_SUBST(WITH_UTILS)
-AC_SUBST(WITH_LEGACY_UTILS)
-AC_SUBST(WITH_KM)
+AC_SUBST(WITH_83_SUPPORT)
+AC_SUBST(WITH_84_SUPPORT)
 AC_SUBST(WITH_UDEV)
 AC_SUBST(WITH_XEN)
 AC_SUBST(WITH_PACEMAKER)
-AC_SUBST(WITH_HEARTBEAT)
 AC_SUBST(WITH_RGMANAGER)
 AC_SUBST(WITH_BASHCOMPLETION)
-
 
 dnl Checks for programs
 AC_PROG_CC
@@ -131,18 +124,11 @@ AC_PATH_PROG(UDEVADM, udevadm, [false], [/sbin$PATH_SEPARATOR$PATH])
 AC_PATH_PROG(UDEVINFO, udevinfo, [false], [/sbin$PATH_SEPARATOR$PATH])
 
 if test -z "$CC"; then
-   if test "$WITH_UTILS" = "yes"; then
-      AC_MSG_ERROR([Cannot build utils without a C compiler, either install a compiler or pass the --without-utils option.])
-   fi 
-   if test "$WITH_KM" = "yes"; then
-      AC_MSG_ERROR([Cannot build kernel module without a C compiler, either install a compiler or pass the --without-km option.])
-   fi
+   AC_MSG_ERROR([Cannot build utils without a C compiler.])
 fi
 
 if test -z $FLEX; then
-   if test "$WITH_UTILS" = "yes"; then
-     AC_MSG_ERROR([Cannot build utils without flex, either install flex or pass the --without-utils option.])
-   fi
+   AC_MSG_ERROR([Cannot build utils without flex.])
 fi
 
 if test -z $RPMBUILD; then
@@ -171,15 +157,20 @@ if test $UDEVADM = false && test $UDEVINFO = false; then
    fi
 fi
 
+dnl special header checks
+
+AC_LANG(C)
+AC_COMPILE_IFELSE([AC_LANG_SOURCE[
+#include <linux/genetlink.h>
+static unsigned int dummy = CTRL_CMD_DELMCAST_GRP;
+]], [AC_DEFINE([HAVE_CTRL_CMD_DELMCAST_GRP],1,[Does genetlink provide CTRL_CMD_DELMCAST_GRP already])])
 
 dnl Checks for system services
 
 BASH_COMPLETION_SUFFIX=""
 UDEV_RULE_SUFFIX=""
 RPM_DIST_TAG=""
-RPM_CONFLICTS_KM=""
 RPM_BUILDREQ_DEFAULT="gcc flex glibc-devel make"
-RPM_BUILDREQ_KM=""
 RPM_SUBPACKAGE_NOARCH=""
 RPM_REQ_PACEMAKER=""
 RPM_REQ_HEARTBEAT=""
@@ -202,12 +193,10 @@ case "$DISTRO" in
      redhat)
 	test -z $INITDIR && INITDIR="$sysconfdir/rc.d/init.d"
 	RPM_DIST_TAG="%{?dist}"
-	RPM_CONFLICTS_KM="drbd-kmod <= %{version}_3"
 	dnl Fedora/Red Hat packaging guidelines mandate that packages
 	dnl belonging to the "minimal build system" should not be
 	dnl listed in BuildRequires
 	RPM_BUILDREQ_DEFAULT="flex"
-	RPM_BUILDREQ_KM="kernel-devel"
 	RPM_REQ_CHKCONFIG_POST="Requires(post): chkconfig"
 	RPM_REQ_CHKCONFIG_PREUN="Requires(preun): chkconfig"
 	AC_MSG_NOTICE([configured for Red Hat (includes Fedora, RHEL, CentOS).])
@@ -231,8 +220,6 @@ case "$DISTRO" in
         ;;
      suse)
 	BASH_COMPLETION_SUFFIX=".sh"
-	RPM_CONFLICTS_KM="km_drbd, drbd-kmp <= %{version}_3"
-	RPM_BUILDREQ_KM="kernel-syms"
 	# RPM_REQ_CHKCONFIG_POST="" chkconfig is part of aaa_base on suse
 	# RPM_REQ_CHKCONFIG_PREUN="" chkconfig is part of aaa_base on suse
 	AC_MSG_NOTICE([configured for SUSE (includes openSUSE, SLES).])
@@ -276,9 +263,7 @@ AC_SUBST(INITDIR)
 AC_SUBST(BASH_COMPLETION_SUFFIX)
 AC_SUBST(UDEV_RULE_SUFFIX)
 AC_SUBST(RPM_DIST_TAG)
-AC_SUBST(RPM_CONFLICTS_KM)
 AC_SUBST(RPM_BUILDREQ_DEFAULT)
-AC_SUBST(RPM_BUILDREQ_KM)
 AC_SUBST(RPM_SUBPACKAGE_NOARCH)
 AC_SUBST(RPM_REQ_PACEMAKER)
 AC_SUBST(RPM_REQ_HEARTBEAT)
@@ -298,27 +283,32 @@ AH_TEMPLATE(DRBD_CONFIG_DIR, [Local configuration directory. Commonly
 			   /etc or
 			   /usr/local/etc])
 AH_TEMPLATE(DRBD_LEGACY_83, [Include support for drbd-8.3 kernel code])
+AH_TEMPLATE(DRBD_LEGACY_84, [Include support for drbd-8.4 kernel code])
 
-AC_DEFINE_UNQUOTED(DRBD_LIB_DIR, ["$localstatedir/lib/$PACKAGE_TARNAME"])
-AC_DEFINE_UNQUOTED(DRBD_RUN_DIR, ["$localstatedir/run/$PACKAGE_TARNAME"])
-AC_DEFINE_UNQUOTED(DRBD_LOCK_DIR, ["$localstatedir/lock"])
-AC_DEFINE_UNQUOTED(DRBD_CONFIG_DIR, ["$sysconfdir"])
+AC_SUBST(DRBD_LIB_DIR, [$localstatedir/lib/$PACKAGE_TARNAME])
+AC_SUBST(DRBD_RUN_DIR, [$localstatedir/run/$PACKAGE_TARNAME])
+AC_SUBST(DRBD_LOCK_DIR, [$localstatedir/lock])
+AC_SUBST(DRBD_CONFIG_DIR, [$sysconfdir])
 
-if test "$WITH_LEGACY_UTILS" = "yes"; then
+AC_DEFINE_UNQUOTED(DRBD_LIB_DIR, ["$DRBD_LIB_DIR"])
+AC_DEFINE_UNQUOTED(DRBD_RUN_DIR, ["$DRBD_RUN_DIR"])
+AC_DEFINE_UNQUOTED(DRBD_LOCK_DIR, ["$DRBD_LOCK_DIR"])
+AC_DEFINE_UNQUOTED(DRBD_CONFIG_DIR, ["$DRBD_CONFIG_DIR"])
+
+if test "$WITH_83_SUPPORT" = "yes"; then
    AC_DEFINE(DRBD_LEGACY_83, [1])
+fi
+
+if test "$WITH_84_SUPPORT" = "yes"; then
+   AC_DEFINE(DRBD_LEGACY_84, [1])
 fi
 
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile scripts/Makefile documentation/Makefile)
-   AC_CONFIG_HEADERS(user/config.h user/legacy/config.h)
+   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile user/legacy-84/Makefile scripts/Makefile documentation/Makefile documentation/legacy-83/Makefile documentation/legacy-84/Makefile)
+   AC_CONFIG_HEADERS(user/config.h)
 else
-   if test "$WITH_UTILS" = "yes"; then
-     AC_CONFIG_FILES(drbd.spec)
-   fi
-   if test "$WITH_KM" = "yes"; then
-     AC_CONFIG_FILES(drbd-km.spec drbd-kernel.spec)
-   fi
+   AC_CONFIG_FILES(drbd.spec)
 fi
 
 dnl output

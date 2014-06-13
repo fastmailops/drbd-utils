@@ -40,6 +40,7 @@ struct field_def {
 struct context_def {
 	struct nla_policy *nla_policy;
 	int nla_policy_size;
+	int nla_type;
 	struct field_def fields[];
 };
 
@@ -51,10 +52,12 @@ extern struct context_def detach_cmd_ctx;
 extern struct context_def connect_cmd_ctx;
 extern struct context_def disconnect_cmd_ctx;
 extern struct context_def resize_cmd_ctx;
-extern struct context_def resource_options_cmd_ctx;
+extern struct context_def resource_options_ctx;
 extern struct context_def new_current_uuid_cmd_ctx;
 extern struct context_def verify_cmd_ctx;
-extern struct context_def new_minor_cmd_ctx;
+extern struct context_def device_options_ctx;
+extern struct context_def invalidate_ctx;
+extern struct context_def create_md_ctx;
 
 extern const char *double_quote_string(const char *str);
 

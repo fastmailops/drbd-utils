@@ -32,33 +32,19 @@ RPMBUILD = @RPMBUILD@
 SED = @SED@
 
 # features enabled or disabled by configure
-WITH_UTILS = @WITH_UTILS@
-WITH_KM = @WITH_KM@
 WITH_UDEV = @WITH_UDEV@
 WITH_XEN = @WITH_XEN@
 WITH_PACEMAKER = @WITH_PACEMAKER@
-WITH_HEARTBEAT = @WITH_HEARTBEAT@
 WITH_RGMANAGER = @WITH_RGMANAGER@
 WITH_BASHCOMPLETION = @WITH_BASHCOMPLETION@
-
-# default for KDIR/KVER
-ifndef KVER
- ifndef KDIR
-KVER = `uname -r`
-KDIR = /lib/modules/$(KVER)/build
- else
-KVER := $(shell make -s -C $(KDIR) kernelrelease)
- endif
-endif
-KDIR ?= /lib/modules/$(KVER)/build
 
 # for some reason some of the commands below only work correctly in bash,
 # and not in e.g. dash. I'm too lazy to fix it to be compatible.
 SHELL=/bin/bash
 
-SUBDIRS     = user scripts documentation drbd
+SUBDIRS     = user scripts documentation
 
-REL_VERSION := $(shell $(SED) -ne '/^\#define REL_VERSION/{s/^[^"]*"\([^ "]*\).*/\1/;p;q;}' drbd/linux/drbd_config.h)
+REL_VERSION := $(shell $(SED) -ne '/^AC_INIT/{s/^[^,]*, *\([^,]*\) *,.*/\1/;p;q}' configure.ac)
 ifdef FORCE
 #
 # NOTE to generate a tgz even if too lazy to update the changelogs,
@@ -71,38 +57,17 @@ REL_VERSION := $(REL_VERSION)-$(shell $(GIT) rev-parse HEAD)
 endif
 
 DIST_VERSION := $(REL_VERSION)
-FDIST_VERSION := $(shell test -e .filelist && sed -ne 's,^drbd-\([^/]*\)/.*,\1,p;q' < .filelist)
+FDIST_VERSION := $(shell test -e .filelist && sed -ne 's,^drbd-utils-\([^/]*\)/.*,\1,p;q' < .filelist)
 ifeq ($(FDIST_VERSION),)
 FDIST_VERSION := $(DIST_VERSION)
 endif
 
-all: tools module
-
-.PHONY: check-kdir
-check-kdir:
-ifeq ($(WITH_KM),yes)
-	@if ! test -e $(KDIR)/Makefile ; then \
-		echo "    SORRY, kernel makefile not found." ;\
-	        echo "    You need to tell me a correct KDIR," ;\
-	        echo "    Or install the neccessary kernel source packages." ;\
-	        echo "" ;\
-		false;\
-	fi
-endif
-
-.PHONY: module
-module: check-kdir
-ifeq ($(WITH_KM),yes)
-	@ $(MAKE) -C drbd KVER=$(KVER) KDIR=$(KDIR)
-	@ echo -e "\n\tModule build was successful."
-endif
+all: tools
 
 .PHONY: tools
 tools:
-ifeq ($(WITH_UTILS),yes)
 	@ set -e; for i in $(patsubst drbd,,$(SUBDIRS)); do $(MAKE) -C $$i ; done
 	@ echo -e "\n\tUserland tools build was successful."
-endif
 
 doc:
 	$(MAKE) -C documentation doc
@@ -111,9 +76,6 @@ doc-clean:
 	$(MAKE) -C documentation doc-clean
 
 install: install-tools
-ifeq ($(WITH_KM),yes)
-	$(MAKE) -C drbd install
-endif
 
 install-tools:
 	@ set -e; for i in $(patsubst drbd,,$(SUBDIRS)); do $(MAKE) -C $$i install; done
@@ -123,12 +85,19 @@ clean:
 	rm -f *~
 	rm -rf dist
 
+
+EXTRA_CLEAN += Makefile user/Makefile user/legacy/Makefile user/legacy-84/Makefile scripts/Makefile 
+EXTRA_CLEAN += documentation/Makefile documentation/legacy-83/Makefile documentation/legacy-84/Makefile
+EXTRA_CLEAN += user/config.h drbd.spec
+EXTRA_CLEAN += configure
 distclean:
 	@ set -e; for i in $(SUBDIRS); do $(MAKE) -C $$i distclean; done
 	rm -f *~ .filelist
 	rm -rf dist
+	rm -rf autom4te.cache
 	rm -f config.log
 	rm -f config.status
+	rm -f $(EXTRA_CLEAN)
 
 uninstall:
 	@ set -e; for i in $(SUBDIRS); do $(MAKE) -C $$i uninstall; done
@@ -141,18 +110,6 @@ check_changelogs_up2date:
 	if test -z "$$in_changelog" ; \
 	then \
 	   echo -e "\n\t%changelog in drbd.spec.in needs update"; \
-	   up2date=false; fi; \
-	in_changelog=$$(sed -n -e '0,/^%changelog/d' \
-			     -e '/- '"$$dver_re"'-/p' < drbd-km.spec.in) ; \
-	if test -z "$$in_changelog" ; \
-	then \
-	   echo -e "\n\t%changelog in drbd-km.spec.in needs update"; \
-	   up2date=false; fi; \
-	in_changelog=$$(sed -n -e '0,/^%changelog/d' \
-			     -e '/- '"$$dver_re"'-/p' < drbd-kernel.spec.in) ; \
-	if test -z "$$in_changelog" ; \
-	then \
-	   echo -e "\n\t%changelog in drbd-kernel.spec.in needs update"; \
 	   up2date=false; fi; \
 	if ! grep "^$$dver_re\>" >/dev/null 2>&1 ChangeLog; \
 	then \
@@ -168,26 +125,16 @@ check_changelogs_up2date:
 	   : do not fail the build because of outdated debian/changelog ; fi ; \
 	$$up2date
 
-# XXX this is newly created whenever the toplevel makefile does something.
-# however it is NOT updated when you just do a make in user/ or drbd/ ...
-#
-# update of drbd_buildtag.c is forced:
-.PHONY: drbd/drbd_buildtag.c
-drbd/drbd_buildtag.c:
-	$(MAKE) -C drbd drbd_buildtag.c
-
-# update of .filelist is forced:
-.PHONY: .filelist
+PNAME	:= drbd-utils
 .filelist:
-	@$(GIT) ls-files | sed '$(if $(PRESERVE_DEBIAN),,/^debian/d);s#^#drbd-$(DIST_VERSION)/#' > .filelist
+	@$(GIT) ls-files | sed '$(if $(PRESERVE_DEBIAN),,/^debian/d);s#^#$(PNAME)-$(DIST_VERSION)/#' | grep -v "gitignore" > .filelist
 	@[ -s .filelist ] # assert there is something in .filelist now
 	@find documentation -name "[^.]*.[58]" -o -name "*.html" | \
-	sed "s/^/drbd-$(DIST_VERSION)\//"              >> .filelist ; \
-	echo drbd-$(DIST_VERSION)/drbd_config.h        >> .filelist ; \
-	echo drbd-$(DIST_VERSION)/drbd/drbd_buildtag.c >> .filelist ; \
-	echo drbd-$(DIST_VERSION)/.filelist            >> .filelist ; \
-	echo drbd-$(DIST_VERSION)/configure            >> .filelist ; \
-	echo drbd-$(DIST_VERSION)/user/config.h.in     >> .filelist ; \
+	sed "s/^/$(PNAME)-$(DIST_VERSION)\//"              >> .filelist ; \
+	echo $(PNAME)-$(DIST_VERSION)/user/drbd_buildtag.c >> .filelist ; \
+	echo $(PNAME)-$(DIST_VERSION)/.filelist            >> .filelist ; \
+	echo $(PNAME)-$(DIST_VERSION)/configure            >> .filelist ; \
+	echo $(PNAME)-$(DIST_VERSION)/user/config.h.in     >> .filelist ; \
 	echo "./.filelist updated."
 
 # tgz will no longer automatically update .filelist,
@@ -197,13 +144,12 @@ drbd/drbd_buildtag.c:
 # which will regenerate .filelist
 tgz:
 	test -e .filelist
-	$(LN_S) -f drbd/linux/drbd_config.h drbd_config.h
-	rm -f drbd-$(FDIST_VERSION)
-	$(LN_S) . drbd-$(FDIST_VERSION)
+	rm -f drbd-utils-$(FDIST_VERSION)
+	$(LN_S) . drbd-utils-$(FDIST_VERSION)
 	for f in $$(<.filelist) ; do [ -e $$f ] && continue ; echo missing: $$f ; exit 1; done
 	grep debian .filelist >/dev/null 2>&1 && _DEB=-debian || _DEB="" ; \
-	tar --owner=0 --group=0 -czf - -T .filelist > drbd-$(FDIST_VERSION)$$_DEB.tar.gz
-	rm drbd-$(FDIST_VERSION)
+	tar --owner=0 --group=0 -czf - -T .filelist > drbd-utils-$(FDIST_VERSION)$$_DEB.tar.gz
+	rm drbd-utils-$(FDIST_VERSION)
 
 ifeq ($(FORCE),)
 tgz: check_changelogs_up2date doc
@@ -227,67 +173,26 @@ configure: configure.ac
 tarball: check_all_committed distclean doc configure .filelist
 	$(MAKE) tgz
 
-all module tools doc .filelist: drbd/drbd_buildtag.c
-
-kernel-patch: drbd/drbd_buildtag.c
-	set -o errexit; \
-	kbase=$$(basename $(KDIR)); \
-	d=patch-$$kbase-drbd-$(DIST_VERSION); \
-	test -e $$d && cp -fav --backup=numbered $$d $$d; \
-	bash scripts/patch-kernel $(KDIR) . > $$d
+all module tools doc .filelist:
 
 
 ifdef RPMBUILD
 drbd.spec: drbd.spec.in configure
 	./configure --enable-spec
 
-drbd-km.spec: drbd-km.spec.in configure
-	./configure --enable-spec --without-utils --with-km
-
-drbd-kernel.spec: drbd-kernel.spec.in configure
-	./configure --enable-spec --without-utils --with-km
-
 .PHONY: rpm
 rpm: tgz drbd.spec
-	cp drbd-$(FDIST_VERSION).tar.gz `rpm -E "%_sourcedir"`
+	cp drbd-utils-$(FDIST_VERSION).tar.gz `rpm -E "%_sourcedir"`
 	$(RPMBUILD) -bb \
 	    $(RPMOPT) \
 	    drbd.spec
 	@echo "You have now:" ; find `rpm -E "%_rpmdir"` -name *.rpm
 
-.PHONY: km-rpm
-km-rpm: check-kdir tgz drbd-km.spec
-	cp drbd-$(FDIST_VERSION).tar.gz `rpm -E "%_sourcedir"`
-	$(RPMBUILD) -bb \
-	    --define "kernelversion $(KVER)" \
-	    --define "kdir $(KDIR)" \
-	    $(RPMOPT) \
-	    drbd-km.spec
-	@echo "You have now:" ; find `rpm -E "%_rpmdir"` -name *.rpm
-
-# kernel module package using the system macros.
-# result is kABI aware and uses the weak-updates mechanism.
-# Only define %kernel_version, it it was set outside of this file,
-# i.e. was inherited from environment, or set explicitly on command line.
-# If unset, the macro will figure it out internally, and not depend on
-# uname -r, which may be wrong in a chroot build environment.
-.PHONY: kmp-rpm
-kmp-rpm: tgz drbd-kernel.spec
-	cp drbd-$(FDIST_VERSION).tar.gz `rpm -E "%_sourcedir"`
-	$(RPMBUILD) -bb \
-	    $(if $(filter file,$(origin KVER)), --define "kernel_version $(KVER)") \
-	    $(RPMOPT) \
-	    drbd-kernel.spec
-	@echo "You have now:" ; find `rpm -E "%_rpmdir"` -name *.rpm
-
 .PHONY: srpm
-srpm: tgz drbd.spec drbd-km.spec
+srpm: tgz drbd.spec
 	cp drbd-$(FDIST_VERSION).tar.gz `rpm -E "%_sourcedir"`
 	$(RPMBUILD) -bs \
-	    --define "kernelversion $(KVER)" \
-	    --define "kernel_version $(KVER)" \
-	    --define "kdir $(KDIR)" \
 		$(RPMOPT) \
-		drbd.spec drbd-km.spec drbd-kernel.spec
+		drbd.spec
 	@echo "You have now:" ; find `rpm -E "%_srcrpmdir"` -name *.src.rpm
 endif

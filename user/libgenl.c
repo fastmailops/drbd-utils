@@ -37,7 +37,7 @@ static struct genl_sock *genl_connect(__u32 nl_groups)
 {
 	struct genl_sock *s = calloc(1, sizeof(*s));
 	socklen_t sock_len;
-	int bsz = 2 << 10;
+	int bsz = 1 << 20;
 
 	if (!s)
 		return NULL;
@@ -160,8 +160,13 @@ retry:
 		} else if (errno == EAGAIN) {
 			dbg(3, "recvmsg() returned EAGAIN, aborting\n");
 			return 0;
-		} else
+		} else if (errno == ENOBUFS) {
+			dbg(3, "recvmsg() returned ENOBUFS\n");
+			return -E_RCV_ENOBUFS;
+		} else {
+			dbg(3, "recvmsg() returned %d, errno = %d\n", n, errno);
 			return -E_RCV_FAILED;
+		}
 	}
 
 	if (iov->iov_len < (unsigned)n ||
@@ -203,6 +208,8 @@ int genl_recv_msgs(struct genl_sock *s, struct iovec *iov, char **err_desc, int 
 				? "timed out waiting for reply"
 				: (c == -E_RCV_NO_SOURCE_ADDR)
 				? "no source address!"
+				: ( c == -E_RCV_ENOBUFS)
+			        ? "packets droped, socket receive buffer overrun"
 				: "failed to receive netlink reply";
 		return c;
 	}

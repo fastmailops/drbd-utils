@@ -21,13 +21,13 @@ static void yyunput (int c, register char * yy_bp ) __attribute((unused));
 /* remember to avoid backing up.
  * tell user about bad/unexpected tokens. */
 
-OP		[{};]
+OP		[{};\[\]]
 WS		[ \r\t\n]
 COMMENT		\#[^\n]*
 
 /* 1<<63 is 19 digits. has to be enough.
  * 20 digits would risk overflow of 64bit unsigned int */
-NUM		[0-9]{1,19}
+NUM		-?[0-9]{1,19}
 NUM_TOO_LONG	{NUM}[0-9]
 
 U64		0x[0-9A-Fa-f]{16}
@@ -62,6 +62,14 @@ flags		DP; CP; return TK_FLAGS;
 al-stripes	DP; CP; return TK_AL_STRIPES;
 al-stripe-size-4k	DP; CP; return TK_AL_STRIPE_SIZE_4K;
 la-peer-max-bio-size DP; CP; return TK_LA_BIO_SIZE;
+node-id	DP; CP; return TK_NODE_ID;
+current-uuid	DP; CP; return TK_CURRENT_UUID;
+bitmap		DP; CP; return TK_BITMAP;
+bitmap-uuid	DP; CP; return TK_BITMAP_UUID;
+history-uuids	DP; CP; return TK_HISTORY_UUIDS;
+peer		DP; CP; return TK_PEER;
+hash		DP; CP; return TK_HASH;
+max-peers	DP; CP; return TK_MAX_PEERS;
 
 {INVALID_STRING} CP; bad_token("invalid string"); return TK_INVALID;
 {EMPTY_STRING}	 CP; bad_token("invalid string"); return TK_INVALID;
@@ -76,4 +84,9 @@ static void bad_token(char *msg)
 {
 	fflush(stdout);
 	fprintf(stderr,"line %u: %s: %s ...\n", yylineno, msg, yytext);
+}
+
+int my_yy_unscaned_characters(void)
+{
+	return (yy_n_chars) - ((yy_c_buf_p) - YY_CURRENT_BUFFER->yy_ch_buf);
 }

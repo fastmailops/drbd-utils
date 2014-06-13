@@ -35,24 +35,19 @@ CFLAGS = @CFLAGS@
 XSLTPROC = @XSLTPROC@
 
 # features enabled or disabled by configure
-WITH_UTILS = @WITH_UTILS@
-WITH_KM = @WITH_KM@
+WITH_83_SUPPORT = @WITH_83_SUPPORT@
+WITH_84_SUPPORT = @WITH_84_SUPPORT@
 WITH_UDEV = @WITH_UDEV@
 WITH_XEN = @WITH_XEN@
 WITH_PACEMAKER = @WITH_PACEMAKER@
-WITH_HEARTBEAT = @WITH_HEARTBEAT@
 WITH_RGMANAGER = @WITH_RGMANAGER@
 WITH_BASHCOMPLETION = @WITH_BASHCOMPLETION@
 
 # variables meant to be overridden from the make command line
 DESTDIR ?= /
+CREATE_MAN_LINK ?= yes
 
-ifeq ($(WITH_UTILS),yes)
 MANPAGES       := drbdsetup.8 drbd.conf.5 drbd.8 drbdadm.8 drbdmeta.8
-endif
-ifeq ($(WITH_HEARTBEAT),yes)
-MANPAGES += drbddisk.8
-endif
 SOURCES        := $(wildcard *.xml)
 
 STYLESHEET_PREFIX ?= http://docbook.sourceforge.net/release/xsl/current
@@ -61,6 +56,8 @@ HTML_STYLESHEET ?= $(STYLESHEET_PREFIX)/xhtml/docbook.xsl
 FO_STYLESHEET ?= $(STYLESHEET_PREFIX)/fo/docbook.xsl
 
 XSLTPROC_OPTIONS ?= --xinclude
+XSLTPROC_OPTIONS += --stringparam variablelist.term.break.after 1
+#XSLTPROC_OPTIONS += --stringparam variablelist.term.separator ""
 XSLTPROC_MANPAGES_OPTIONS ?= $(XSLTPROC_OPTIONS)
 XSLTPROC_HTML_OPTIONS ?= $(XSLTPROC_OPTIONS)
 XSLTPROC_FO_OPTIONS ?= $(XSLTPROC_OPTIONS)
@@ -68,10 +65,13 @@ XSLTPROC_FO_OPTIONS ?= $(XSLTPROC_OPTIONS)
 DRBDSETUP_CMDS = new-resource new-minor del-resource del-minor
 DRBDSETUP_CMDS += attach connect disk-options net-options resource-options
 DRBDSETUP_CMDS += disconnect detach primary secondary verify invalidate invalidate-remote
-DRBDSETUP_CMDS += down wait-connect wait-sync role cstate dstate
+DRBDSETUP_CMDS += down role cstate dstate
 DRBDSETUP_CMDS += resize check-resize pause-sync resume-sync
-DRBDSETUP_CMDS += outdate show-gi get-gi show events
-DRBDSETUP_CMDS += suspend-io resume-io new-current-uuid
+DRBDSETUP_CMDS += outdate show-gi get-gi show events2
+DRBDSETUP_CMDS += status suspend-io resume-io new-current-uuid
+DRBDSETUP_CMDS += wait-connect-volume wait-connect-connection wait-connect-resource
+DRBDSETUP_CMDS += wait-sync-volume wait-sync-connection wait-sync-resource
+DRBDSETUP_CMDS += forget-peer
 
 
 all:
@@ -81,8 +81,22 @@ clean:
 	@echo "To clean the documentation: make doc-clean"
 
 doc:	man
+ifeq ($(WITH_83_SUPPORT),yes)
+	$(MAKE) -C legacy-83 doc
+endif
+ifeq ($(WITH_84_SUPPORT),yes)
+	$(MAKE) -C legacy-84 doc
+endif
+
+ifeq ($(WITH_84_SUPPORT),yes)
+MAN_LINK=8.4
+else
+MAN_LINK=9.0
+endif
 
 doc-clean: distclean
+	$(MAKE) -C legacy-83 doc-clean
+	$(MAKE) -C legacy-84 doc-clean
 
 
 ####### Implicit rules
@@ -90,25 +104,19 @@ doc-clean: distclean
 .SUFFIXES: .sgml .5 .8 .html .pdf .ps
 
 %.5 %.8: %.xml
-ifeq ($(WITH_UTILS),yes)
 	$(XSLTPROC) \
 	$(XSLTPROC_MANPAGES_OPTIONS) \
 	$(MANPAGES_STYLESHEET) $<
-endif
 
 %.html: %.xml
-ifeq ($(WITH_UTILS),yes)
 	$(XSLTPROC) -o $@ \
 	$(XSLTPROC_HTML_OPTIONS) \
 	$(HTML_STYLESHEET) $<
-endif
 
 %.fo: %.xml
-ifeq ($(WITH_UTILS),yes)
 	$(XSLTPROC) -o $@ \
 	$(XSLTPROC_FO_OPTIONS) \
 	$(FO_STYLESHEET) $<
-endif
 
 ../user/drbdsetup:
 	(cd ../user; make drbdsetup)
@@ -119,10 +127,19 @@ drbdsetup_xml-help_%.xml: ../user/drbdsetup
 drbdsetup_%.xml: drbdsetup_xml-help_%.xml xml-usage-to-docbook.xsl
 	$(XSLTPROC) -o $@ xml-usage-to-docbook.xsl $<
 
+drbd.conf.xml: drbd.conf.xml.in drbd.conf.xsl drbdsetup-options.xml
+	$(XSLTPROC) -o $@ drbd.conf.xsl $<
+
+drbdsetup.xml: drbdsetup.xml.in drbdsetup.xsl drbdsetup-options.xml
+	$(XSLTPROC) -o $@ drbdsetup.xsl $<
+
 distclean:
 	rm -f *.[58] manpage.links manpage.refs *~ manpage.log
 	rm -f *.ps.gz *.pdf *.ps *.html pod2htm*
 	rm -f drbdsetup_*.xml
+	rm -f drbd.conf.xml drbdsetup.xml
+
+.PRECIOUS: drbd.conf.xml drbdsetup.xml
 
 #######
 
@@ -134,14 +151,33 @@ install:
 	done ; $$ok
 	set -e; for f in $(MANPAGES) ; do \
 		s=$${f##*.}; \
-		install -v -D -m 644 $$f $(DESTDIR)$(mandir)/man$$s/$$f ; \
+		b=$${f%.[0-9]}; \
+		install -v -D -m 644 $$f $(DESTDIR)$(mandir)/man$$s/$$b-9.0.$$s ; \
+		if [ "$(CREATE_MAN_LINK)" = "yes" ]; then \
+			ln -s $$b-$(MAN_LINK).$$s $(DESTDIR)$(mandir)/man$$s/$$f ; \
+		fi \
 	done
+ifeq ($(WITH_83_SUPPORT),yes)
+	$(MAKE) -C legacy-83 install
+endif
+ifeq ($(WITH_84_SUPPORT),yes)
+	$(MAKE) -C legacy-84 install
+endif
 
 uninstall:
 	@ set -e; for f in $(MANPAGES) ; do \
 		s=$${f##*.}; \
+		b=$${f%.[0-9]}; \
+		rm -vf $(DESTDIR)$(mandir)/man$$s/$$b-9.0.$$s ; \
 		rm -vf $(DESTDIR)$(mandir)/man$$s/$$f ; \
 	done
+ifeq ($(WITH_83_SUPPORT),yes)
+	$(MAKE) -C legacy-83 uninstall
+endif
+ifeq ($(WITH_84_SUPPORT),yes)
+	$(MAKE) -C legacy-84 uninstall
+endif
+
 
 html:	$(SOURCES:.xml=.html)
 

@@ -48,23 +48,11 @@
 #define HTTP_HOST "usage.drbd.org"
 #define HTTP_ADDR "212.69.161.111"
 #define NODE_ID_FILE DRBD_LIB_DIR"/node_id"
-#define GIT_HASH_BYTE   20
-#define SRCVERSION_BYTE 12     /* actually 11 and a half. */
-#define SRCVERSION_PAD (GIT_HASH_BYTE - SRCVERSION_BYTE)
-#define SVN_STYLE_OD  16
 
-struct vcs_rel {
-	uint32_t svn_revision;
-	char git_hash[GIT_HASH_BYTE];
-	struct {
-		unsigned major, minor, sublvl;
-	} version;
-	unsigned version_code;
-};
 
 struct node_info {
 	uint64_t node_uuid;
-	struct vcs_rel rev;
+	struct version rev;
 };
 
 struct node_info_od {
@@ -72,227 +60,14 @@ struct node_info_od {
 	struct node_info ni;
 } __packed;
 
-/* For our purpose (finding the revision) SLURP_SIZE is always enough.
- */
-static char* slurp_proc_drbd()
+
+
+void maybe_exec_legacy_drbdadm(char **argv)
 {
-	const int SLURP_SIZE = 4096;
-	char* buffer;
-	int rr, fd;
+	const struct version *driver_version = drbd_driver_version(FALLBACK_TO_UTILS);
 
-	fd = open("/proc/drbd",O_RDONLY);
-	if( fd == -1) return 0;
-
-	buffer = malloc(SLURP_SIZE);
-	if(!buffer) return 0;
-
-	rr = read(fd, buffer, SLURP_SIZE-1);
-	if( rr == -1) {
-		free(buffer);
-		return 0;
-	}
-
-	buffer[rr]=0;
-	close(fd);
-
-	return buffer;
-}
-
-void read_hex(char* dst, char* src, int dst_size, int src_size)
-{
-	int dst_i, u, src_i=0;
-
-	for(dst_i=0;dst_i<dst_size;dst_i++) {
-		if (src[src_i] == 0) break;
-		if (src_size - src_i < 2) {
-			sscanf(src+src_i,"%1x",&u);
-			dst[dst_i]=u<<4;
-		} else {
-			sscanf(src+src_i,"%2x",&u);
-			dst[dst_i]=u;
-		}
-		if(++src_i >= src_size) break;
-		if(src[src_i] == 0) break;
-		if(++src_i >= src_size) break;
-	}
-}
-
-void vcs_ver_from_str(struct vcs_rel *rel, const char *token)
-{
-	char *dot;
-	long maj, min, sub;
-	maj = strtol(token, &dot, 10);
-	if (*dot != '.')
-		return;
-	min = strtol(dot+1, &dot, 10);
-	if (*dot != '.')
-		return;
-	sub = strtol(dot+1, &dot, 10);
-	/* don't check on *dot == 0,
-	 * we may want to add some extraversion tag sometime
-	if (*dot != 0)
-		return;
-	*/
-
-	rel->version.major = maj;
-	rel->version.minor = min;
-	rel->version.sublvl = sub;
-
-	rel->version_code = (maj << 16) + (min << 8) + sub;
-}
-
-void vcs_from_str(struct vcs_rel *rel, const char *text)
-{
-	char token[80];
-	int plus=0;
-	enum { begin, f_ver, f_svn, f_rev, f_git, f_srcv } ex = begin;
-
-	while (sget_token(token, sizeof(token), &text) != EOF) {
-		switch(ex) {
-		case begin:
-			if(!strcmp(token,"version:"))
-				ex = f_ver;
-			if(!strcmp(token,"SVN"))  ex = f_svn;
-			if(!strcmp(token,"GIT-hash:"))  ex = f_git;
-			if(!strcmp(token,"srcversion:"))  ex = f_srcv;
-			break;
-		case f_ver:
-			if(!strcmp(token,"plus"))
-				plus = 1;
-				/* still waiting for version */
-			else {
-				vcs_ver_from_str(rel, token);
-				ex = begin;
-			}
-			break;
-		case f_svn:
-			if(!strcmp(token,"Revision:"))  ex = f_rev;
-			break;
-		case f_rev:
-			rel->svn_revision = atol(token) * 10;
-			if( plus ) rel->svn_revision += 1;
-			memset(rel->git_hash, 0, GIT_HASH_BYTE);
-			return;
-		case f_git:
-			read_hex(rel->git_hash, token, GIT_HASH_BYTE, strlen(token));
-			rel->svn_revision = 0;
-			return;
-		case f_srcv:
-			memset(rel->git_hash, 0, SRCVERSION_PAD);
-			read_hex(rel->git_hash + SRCVERSION_PAD, token, SRCVERSION_BYTE, strlen(token));
-			rel->svn_revision = 0;
-			return;
-		}
-	}
-}
-
-static int current_vcs_is_from_proc_drbd;
-static struct vcs_rel current_vcs_rel;
-static struct vcs_rel userland_version;
-static void vcs_get_current(void)
-{
-	char* version_txt;
-
-	if (current_vcs_rel.version_code)
-		return;
-
-	version_txt = slurp_proc_drbd();
-	if(version_txt) {
-		vcs_from_str(&current_vcs_rel, version_txt);
-		current_vcs_is_from_proc_drbd = 1;
-		free(version_txt);
-	} else {
-		vcs_from_str(&current_vcs_rel, drbd_buildtag());
-		vcs_ver_from_str(&current_vcs_rel, REL_VERSION);
-	}
-}
-
-static void vcs_get_userland(void)
-{
-	if (userland_version.version_code)
-		return;
-	vcs_ver_from_str(&userland_version, REL_VERSION);
-}
-
-int version_code_kernel(void)
-{
-	vcs_get_current();
-	return current_vcs_is_from_proc_drbd
-		? current_vcs_rel.version_code
-		: 0;
-}
-
-int version_code_userland(void)
-{
-	vcs_get_userland();
-	return userland_version.version_code;
-}
-
-static int vcs_eq(struct vcs_rel *rev1, struct vcs_rel *rev2)
-{
-	if( rev1->svn_revision || rev2->svn_revision ) {
-		return rev1->svn_revision == rev2->svn_revision;
-	} else {
-		return !memcmp(rev1->git_hash,rev2->git_hash,GIT_HASH_BYTE);
-	}
-}
-
-static int vcs_ver_cmp(struct vcs_rel *rev1, struct vcs_rel *rev2)
-{
-	return rev1->version_code - rev2->version_code;
-}
-
-void warn_on_version_mismatch(void)
-{
-	char *msg;
-	int cmp;
-
-	/* get the kernel module version from /proc/drbd */
-	vcs_get_current();
-
-	/* get the userland version from REL_VERSION */
-	vcs_get_userland();
-
-	cmp = vcs_ver_cmp(&userland_version, &current_vcs_rel);
-	/* no message if equal */
-	if (cmp == 0)
-		return;
-	if (cmp > 0xffff || cmp < -0xffff)	 /* major version differs! */
-		msg = "mixing different major numbers will not work!";
-	else if (cmp < 0)		/* userland is older. always warn. */
-		msg = "you should upgrade your drbd tools!";
-	else if (cmp & 0xff00)		/* userland is newer minor version */
-		msg = "please don't mix different DRBD series.";
-	else		/* userland is newer, but only differ in sublevel. */
-		msg = "preferably kernel and userland versions should match.";
-
-	fprintf(stderr, "DRBD module version: %u.%u.%u\n"
-			"   userland version: %u.%u.%u\n%s\n",
-			current_vcs_rel.version.major,
-			current_vcs_rel.version.minor,
-			current_vcs_rel.version.sublvl,
-			userland_version.version.major,
-			userland_version.version.minor,
-			userland_version.version.sublvl,
-			msg);
-}
-
-void add_lib_drbd_to_path(void)
-{
-	char *new_path = NULL;
-	char *old_path = getenv("PATH");
-
-	m_asprintf(&new_path, "%s%s%s",
-			old_path,
-			old_path ? ":" : "",
-			"/lib/drbd");
-	setenv("PATH", new_path, 1);
-}
-
-void maybe_exec_drbdadm_83(char **argv)
-{
-	if (current_vcs_rel.version.major == 8 &&
-	    current_vcs_rel.version.minor == 3) {
+	if (driver_version->version.major == 8 &&
+	    driver_version->version.minor == 3) {
 #ifdef DRBD_LEGACY_83
 		/* This drbdadm warned already... */
 		setenv("DRBD_DONT_WARN_ON_VERSION_MISMATCH", "1", 0);
@@ -301,14 +76,30 @@ void maybe_exec_drbdadm_83(char **argv)
 		fprintf(stderr, "execvp() failed to exec %s: %m\n", drbdadm_83);
 #else
 		fprintf(stderr, "This drbdadm was build without support for legacy\n"
-			"drbd kernel code. Consider to rebuild your user land\n"
+			"drbd kernel code (8.3). Consider to rebuild your user land\n"
 			"tools with ./configure --with-legacy-connector\n");
 #endif
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
+	}
+	if (driver_version->version.major == 8 &&
+	    driver_version->version.minor == 4) {
+#ifdef DRBD_LEGACY_84
+		/* This drbdadm warned already... */
+		setenv("DRBD_DONT_WARN_ON_VERSION_MISMATCH", "1", 0);
+		add_lib_drbd_to_path();
+		execvp(drbdadm_84, argv);
+		fprintf(stderr, "execvp() failed to exec %s: %m\n", drbdadm_84);
+#else
+		fprintf(stderr, "This drbdadm was build without support for legacy\n"
+			"drbd kernel code (8.4). Consider to rebuild your user land\n"
+			"tools with and do not give --without-83-support-8.4 on the\n"
+			"commandline\n");
+#endif
+		exit(E_EXEC_ERROR);
 	}
 }
 
-static char *vcs_to_str(struct vcs_rel *rev)
+static char *vcs_to_str(struct version *rev)
 {
 	static char buffer[80]; // Not generic, sufficient for the purpose.
 
@@ -462,6 +253,7 @@ static int make_get_request(char *uri) {
 	FILE *sockfd;
 	int writeit;
 	struct timeval timeout = { .tv_sec = SOCKET_TIMEOUT };
+	struct utsname nodeinfo;
 
 	sock = socket( PF_INET, SOCK_STREAM, 0);
 	if (sock < 0)
@@ -487,15 +279,14 @@ static int make_get_request(char *uri) {
 			host_info->h_length);
 	}
 
-
-	ssprintf(req_buf,
-		"GET %s HTTP/1.0\r\n"
-		"Host: "HTTP_HOST"\r\n"
-		"User-Agent: drbdadm/"REL_VERSION" (%s; %s; %s; %s)\r\n"
-		"\r\n",
-		uri,
-		nodeinfo.sysname, nodeinfo.release,
-		nodeinfo.version, nodeinfo.machine);
+	uname(&nodeinfo);
+	req_buf = ssprintf("GET %s HTTP/1.0\r\n"
+			   "Host: "HTTP_HOST"\r\n"
+			   "User-Agent: drbdadm/"PACKAGE_VERSION" (%s; %s; %s; %s)\r\n"
+			   "\r\n",
+			   uri,
+			   nodeinfo.sysname, nodeinfo.release,
+			   nodeinfo.version, nodeinfo.machine);
 
 	server.sin_family = AF_INET;
 	server.sin_port = htons(HTTP_PORT);
@@ -568,6 +359,7 @@ void uc_node(enum usage_count_type type)
 	char answer[ANSWER_SIZE];
 	char n_comment[ANSWER_SIZE*3];
 	char *r;
+	const struct version *driver_version = drbd_driver_version(FALLBACK_TO_UTILS);
 
 	if( type == UC_NO ) return;
 	if( getuid() != 0 ) return;
@@ -580,16 +372,14 @@ void uc_node(enum usage_count_type type)
 	if (getenv("INIT_VERSION")) return;
 	if (no_tty) return;
 
-	vcs_get_current();
-
 	if( ! read_node_id(&ni) ) {
 		get_random_bytes(&ni.node_uuid,sizeof(ni.node_uuid));
-		ni.rev = current_vcs_rel;
+		ni.rev = *driver_version;
 		send = 1;
 	} else {
 		// read_node_id() was successful
-		if (!vcs_eq(&ni.rev,&current_vcs_rel)) {
-			ni.rev = current_vcs_rel;
+		if (!version_equal(&ni.rev, driver_version)) {
+			ni.rev = *driver_version;
 			update = 1;
 			send = 1;
 		}
@@ -620,15 +410,15 @@ void uc_node(enum usage_count_type type)
 "* If you wish to opt out entirely, simply enter 'no'.\n"
 "* To count this node without comment, just press [RETURN]\n",
 			update ? "an update" : "a new installation",
-			REL_VERSION,ni.node_uuid, vcs_to_str(&ni.rev));
+			PACKAGE_VERSION,ni.node_uuid, vcs_to_str(&ni.rev));
 		r = fgets(answer, ANSWER_SIZE, stdin);
 		if(r && !strcmp(answer,"no\n")) send = 0;
 		url_encode(answer,n_comment);
 	}
 
-	ssprintf(uri,"http://"HTTP_HOST"/cgi-bin/insert_usage.pl?nu="U64"&%s%s%s",
-		 ni.node_uuid, vcs_to_str(&ni.rev),
-		 n_comment[0] ? "&nc=" : "", n_comment);
+	uri = ssprintf("http://"HTTP_HOST"/cgi-bin/insert_usage.pl?nu="U64"&%s%s%s",
+		       ni.node_uuid, vcs_to_str(&ni.rev),
+		       n_comment[0] ? "&nc=" : "", n_comment);
 
 	if (send) {
 		write_node_id(&ni);
@@ -653,7 +443,7 @@ void uc_node(enum usage_count_type type)
 
 /* For our purpose (finding the revision) SLURP_SIZE is always enough.
  */
-static char* run_admm_generic(struct cfg_ctx *ctx, const char *arg_override)
+static char* run_adm_drbdmeta(const struct cfg_ctx *ctx, const char *arg_override)
 {
 	const int SLURP_SIZE = 4096;
 	int rr,pipes[2];
@@ -668,19 +458,21 @@ static char* run_admm_generic(struct cfg_ctx *ctx, const char *arg_override)
 	pid = fork();
 	if(pid == -1) {
 		fprintf(stderr,"Can not fork\n");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 	if(pid == 0) {
+		struct adm_cmd local_cmd = *ctx->cmd;
+		struct cfg_ctx local_ctx = *ctx;
 		// child
 		close(pipes[0]); // close reading end
 		dup2(pipes[1],1); // 1 = stdout
 		close(pipes[1]);
-		/* local modification in child,
-		 * no propagation to parent */
-		ctx->arg = arg_override;
-		rr = _admm_generic(ctx,
+		local_cmd.name = arg_override;
+		local_ctx.cmd = &local_cmd;
+		rr = _adm_drbdmeta(&local_ctx,
 				   SLEEPS_VERY_LONG|SUPRESS_STDERR|
-				   DONT_REPORT_FAILED);
+				   DONT_REPORT_FAILED,
+				   NULL);
 		exit(rr);
 	}
 	close(pipes[1]); // close writing end
@@ -699,8 +491,21 @@ static char* run_admm_generic(struct cfg_ctx *ctx, const char *arg_override)
 	return buffer;
 }
 
-int adm_create_md(struct cfg_ctx *ctx)
+static struct d_name *find_backend_option(const char *opt_name)
 {
+	struct d_name *b_opt;
+	const int str_len = strlen(opt_name);
+
+	STAILQ_FOREACH(b_opt, &backend_options, link) {
+		if (!strncmp(b_opt->name, opt_name, str_len))
+			return b_opt;
+	}
+	return NULL;
+}
+
+int adm_create_md(const struct cfg_ctx *ctx)
+{
+	struct connection *conn;
 	char answer[ANSWER_SIZE];
 	struct node_info ni;
 	uint64_t device_uuid=0;
@@ -709,14 +514,34 @@ int adm_create_md(struct cfg_ctx *ctx)
 	int send=0;
 	char *tb;
 	int rv,fd;
-	char *r;
+	char *r, *max_peers_str = NULL;
+	struct d_name *b_opt;
+	const char *opt_max_peers = "--max-peers=";
 
-	tb = run_admm_generic(ctx, "read-dev-uuid");
+	b_opt = find_backend_option(opt_max_peers);
+	if (b_opt) {
+		max_peers_str = ssprintf("%s", b_opt->name + strlen(opt_max_peers));
+		STAILQ_REMOVE(&backend_options, b_opt, d_name, link);
+		free(b_opt);
+	} else {
+		int max_peers = 0;
+
+		for_each_connection(conn, &ctx->res->connections)
+			if (!conn->ignore)
+				max_peers++;
+
+		if (max_peers == 0)
+			max_peers = 1;
+
+		max_peers_str = ssprintf("%d", max_peers);
+	}
+
+	tb = run_adm_drbdmeta(ctx, "read-dev-uuid");
 	device_uuid = strto_u64(tb,NULL,16);
 	free(tb);
 
 	/* this is "drbdmeta ... create-md" */
-	rv = _admm_generic(ctx, SLEEPS_VERY_LONG);
+	rv = _adm_drbdmeta(ctx, SLEEPS_VERY_LONG, max_peers_str);
 
 	if(rv || dry_run) return rv;
 
@@ -754,28 +579,30 @@ int adm_create_md(struct cfg_ctx *ctx)
 	}
 
 	if (send) {
-		ssprintf(uri,"http://"HTTP_HOST"/cgi-bin/insert_usage.pl?"
-			 "nu="U64"&ru="U64"&rs="U64,
-			 ni.node_uuid, device_uuid, device_size);
+		uri = ssprintf("http://"HTTP_HOST"/cgi-bin/insert_usage.pl?"
+			       "nu="U64"&ru="U64"&rs="U64,
+			       ni.node_uuid, device_uuid, device_size);
 		make_get_request(uri);
 	}
 
 	/* HACK */
 	{
+		struct adm_cmd local_cmd = *ctx->cmd;
 		struct cfg_ctx local_ctx = *ctx;
-		struct setup_option *old_setup_options;
+		struct names old_backend_options;
 		char *opt;
 
-		ssprintf(opt, X64(016), device_uuid);
-		old_setup_options = setup_options;
-		setup_options = NULL;
-		add_setup_option(false, opt);
+		opt = ssprintf(X64(016), device_uuid);
+		old_backend_options = backend_options;
+		STAILQ_INIT(&backend_options);
+		insert_tail(&backend_options, names_from_str(opt));
 
-		local_ctx.arg = "write-dev-uuid";
-		_admm_generic(&local_ctx, SLEEPS_VERY_LONG);
+		local_cmd.name = "write-dev-uuid";
+		local_ctx.cmd = &local_cmd;
+		_adm_drbdmeta(&local_ctx, SLEEPS_VERY_LONG, NULL);
 
-		free(setup_options);
-		setup_options = old_setup_options;
+		free_names(&backend_options);
+		backend_options = old_backend_options;
 	}
 	return rv;
 }

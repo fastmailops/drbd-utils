@@ -54,6 +54,7 @@ enum range_checks
 	R_CONG_FILL,
 	R_CONG_EXTENTS,
 	R_PROTOCOL,
+	R_NODE_ID,
 };
 
 enum yytokentype {
@@ -61,7 +62,6 @@ enum yytokentype {
 	TK_RESOURCE,
 	TK_ON,
 	TK_STACKED,
-	TK_IGNORE,
 	TK_NET,
 	TK_DISK,
 	TK_SKIP,
@@ -77,6 +77,7 @@ enum yytokentype {
 	TK_MINOR,
 	TK_META_DISK,
 	TK_FLEX_META_DISK,
+	TK_NODE_ID,
 	TK_MINOR_COUNT,
 	TK_IPADDR,
 	TK_INTEGER,
@@ -122,7 +123,13 @@ enum yytokentype {
 	TK_DEPRECATED_OPTION,
 	TK_VOLUME,
 	TK_RES_OPTION,
+	TK_RES_FLAG,
 	TK_OPTIONS,
+	TK_CONNECTION,
+	TK_HOST,
+	TK_PORT,
+	TK_CONNECTION_MESH,
+	TK_HOSTS,
 	TK__GROUPING_BASE = 0x1000,
 	TK_SYNCER_OLD_OPT = 0x2000, /* Might be or'ed to TK_[NET|DISK]_[OPTION|SWITCH] */
 	TK_PROXY_GROUP = 0x3000, /* Gets or'ed to some options */

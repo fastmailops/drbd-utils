@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# vim: set sw=4 ts=4 et : 
 
 use strict;
 use warnings;
@@ -13,10 +14,13 @@ $ENV{LANGUAGE} = 'C';
 
 # globals
 my $PROC_DRBD = "/proc/drbd";
+my ($HOSTNAME) = (`uname -n` =~ /(\S+)/);
 my $stderr_to_dev_null = 1;
 my $watch = 0;
 my %drbd;
 my %minor_of_name;
+my $DRBD_VERSION;
+my @DRBD_VERSION;
 
 my %xen_info;
 my %virsh_info;
@@ -91,28 +95,24 @@ sub slurp_proc_drbd_or_exit() {
 		exit 0;
 	}
 
+	$_=<PD>;
+	my ($DRBD_VERSION) = /version: ([\d\.]+)/;
+	@DRBD_VERSION = split(/\./, $DRBD_VERSION);
 	my $minor;
 	while (defined($_ = <PD>)) {
 		chomp;
 		/^ *(\d+):/ and do {
-			# skip unconfigured devices
+# skip unconfigured devices
 			$minor = $1;
 			if (/^ *(\d+): cs:Unconfigured/) {
 				next
-				unless exists $drbd{$minor}
-				   and exists $drbd{$minor}{name};
+					unless exists $drbd{$minor}
+				and exists $drbd{$minor}{name};
 			}
-			# add "-" for protocol, in case it is missing
-	     		s/^(.* cs:.*\S)   ([rs]...)$/$1 - $2/;
-			# strip off what will be in the heading
-			s/^(.* )cs:([^ ]* )(?:st|ro):([^ ]* )ds:([^ ]*)/$1$2$3$4/;
-			s/^(.* )cs:([^ ]* )(?:st|ro):([^ ]* )ld:([^ ]*)/$1$2$3$4/;
-			s/^(.* )cs:([^ ]*)$/$1$2/;
-			# strip off leading minor number
-			s/^ *\d+:\s+//;
-			# add alignment helpers for Unconfigured devices
-			s/Unconfigured$/$& . . . ./;
-			$drbd{$minor}{state} = $_;
+			my $uc = /Unconfigured/ ? "." : undef;
+			($drbd{$minor}{conn})   =  $uc || m{\bcs:(\w+)\b};
+			($drbd{$minor}{role})   =  $uc || m{\bro:(\w+/\w+)\b};
+			($drbd{$minor}{dstate}) =  $uc || m{\bds:(\w+/\w+)\b};
 		};
 		/^\t\[.*sync.ed:/ and do {
 			$drbd{$minor}{sync} = $_;
@@ -122,8 +122,144 @@ sub slurp_proc_drbd_or_exit() {
 		};
 	}
 	close PD;
-	for (values %drbd) { $_->{state} ||= "Unconfigured . . . ."; }
+	for (values %drbd) {
+		$_->{conn} ||= "Unconfigured";
+		$_->{role} ||= ".";
+		$_->{dstate} ||= ".";
+	}
 }
+
+sub abbreviate {
+	my($_, $max) = @_;
+
+	$max //= 15;
+
+# keep UPPERCase and a few lowercase characters.
+	1 while length($_) > $max && s/([a-z]+)[a-z]/$1/g;
+
+	return substr($_, 0, $max);
+}
+
+# taking a sorted list of keys and a hash, produce a short output.
+# eg. Connected(*)/WFConnection(alice)
+sub shorten_list {
+	my ($keys, $hash, $max) = @_;
+	my %vals;
+	my %vl;
+
+	for my $k (@$keys) {
+		$vals{ $hash->{$k} }{ $k }++;
+		$vl{ $hash->{$k} }++;
+	}
+
+
+# only a single value? Fine!
+#	return abbreviate($hash->{$keys->[0]}, 6) . "(*)"
+	return $hash->{$keys->[0]} . "(" . (values %vl)[0] . "*)"
+		if 1 == (keys %vals);
+
+# only 1 or 2 keys, ie. 2 values? Fine, done.
+	return join("/", map { abbreviate($hash->{$_}, 6); } @$keys)
+		if (@$keys <= 2);
+
+# get sorted counts.
+	my @v = sort { $b <=> $a; } values %vl;
+
+#print "=========", Dumper(\@v);
+# use a wildcard if one element is 3 or more times used, and more often than every other.
+	my ($wc_data) =
+		(($v[0] >= 3) && ($v[0] != $v[1])) ?
+		grep($vl{$_} == $v[0], keys %vl) : ();
+
+	my @stg;
+	my %done;
+	push(@stg, abbreviate($wc_data, 4) . "(" . $v[0] . "*)"),
+		$done{$wc_data}++
+			if ($wc_data);
+
+	for my $k (@$keys) {
+		my $v = $hash->{$k};
+		next if $done{$v}++;
+
+		push @stg, abbreviate($v, 4) .
+			"(" . join(",", keys %{$vals{$v}} ) . ")";
+	}
+	return join("/", @stg);
+}
+
+sub slurp_drbdsetup() {
+	unless (open(DS,"drbdsetup events2 --now --statistics |")) {
+		print "drbdsetup not started\n";
+		exit 0;
+	}
+
+    my(%later, $my_role);
+    while (<DS>) {
+        chomp;
+        next unless s/^exists //;
+        last if /^-$/; # EOD
+        s/^([\w.-]+) name:([\w.-]+) //;
+        my $what = $1;
+        my $res = $2;
+        my %f = map { split(/:/, $_, 2); } split(/ +/, $_);
+
+        if ($what eq "resource" &&
+                ($my_role = $f{'role'})) {
+            $later{$res}{peers}{states}{$HOSTNAME} = $my_role;
+            # local node is always connected
+            $later{$res}{peers}{conns}{$HOSTNAME} = "Connected";
+        } elsif ($what eq "connection") {
+            my $p = $f{'conn-name'};
+            my $cs= $f{'connection'};
+            my $r = $f{'role'};
+# Increase difference between "Connecting" and "Connected"
+            $cs =~ s/^Connecting/'ing/;
+            $later{$res}{peers}{states}{$p} = $r;
+            $later{$res}{peers}{conns}{$p}  = $cs;
+            $later{$res}{hosts}{$p}++;
+        } elsif ($what eq "device") {
+            my $minor = $f{minor};
+            my $vol = $f{volume};
+            $later{$res}{vol_minor}{$vol} = $minor;
+            $later{$res}{peers}{dstates}{$HOSTNAME}  = $f{disk};
+        } elsif ($what eq "peer-device") {
+            my $p = $f{"conn-name"};
+            $later{$res}{peers}{dstates}{$p} = $f{"peer-disk"};
+        } else {
+            warn("unknown key $what\n");
+        }
+    }
+
+
+    for my $res (keys %later) {
+        my @h = sort keys %{$later{$res}{hosts}};
+        my @h_incl = ($HOSTNAME, @h);
+        my $vol_minor = $later{$res}{vol_minor};
+        my $peers = $later{$res}{peers};
+
+        for my $vol (keys %$vol_minor) {
+            my $minor = $vol_minor->{$vol};
+
+            my $name = length($vol) ? "$res/$vol" : $res;
+# create hash
+            $drbd{$minor}{name} = $name;
+            my $v = $drbd{$minor};
+
+
+# role with local=first
+            $v->{role} = join("/", $my_role,
+                    shorten_list(\@h, $peers->{states}));
+# role with all mixed together
+            $v->{role} = shorten_list(\@h_incl, $peers->{states});
+
+            $v->{dstate} = shorten_list(\@h_incl, $peers->{dstates});
+            $v->{conn} = shorten_list(\@h_incl, $peers->{conns});
+        }
+    }
+
+	close DS;
+}
+
 
 # sets $drbd{minor}->{pv_info}
 sub get_pv_info()
@@ -216,11 +352,11 @@ sub get_virsh_info()
 		# parent
 		$_ = <V>;
 		close(V) or warn "virsh dumpxml exit code: $?\n";
-		for (m{<disk\ [^>]*>.+?</disk>}gs) {
-			m{<source\ dev='(/dev/drbd([^']+))'/>} or next;
-			my ($path,$dev) = ($1,$2);
+		for (m{<disk\ [^>]*>.*?</disk>}gs) {
+			m{<source\ (?:dev|file)='/dev/drbd([^']+)'/>} or next;
+			my $dev = $1;
 			if ($dev !~ /^\d+$/) {
-				my @stat = stat($path) or next;
+				my @stat = stat("/dev/drbd$dev") or next;
 				$dev = $stat[6] & 0xff;
 			}
 			m{<target\ dev='([^']*)'\s+bus='([^']*)'}xg;
@@ -257,6 +393,7 @@ open STDERR, "/dev/null"
 map_minor_to_resource_names;
 
 slurp_proc_drbd_or_exit;
+slurp_drbdsetup if $DRBD_VERSION[0] >= 9;
 
 get_pv_info;
 get_df_info;
@@ -269,7 +406,10 @@ my @out = [];
 my @maxw = ();
 my $line = 0;
 
-for my $m (sort { $a <=> $b } keys %drbd) {
+my @minors_sorted = sort { $a <=> $b } keys %drbd;
+my $max_minor = $minors_sorted[-1];
+my $minor_width = $max_minor > 10 ? 1+int(log($max_minor)/log(10)) : 2;
+for my $m (@minors_sorted) {
 	my $t = $drbd{$m};
 	my @used_by = exists $t->{xen_info} ? "xen-vbd: $t->{xen_info}"
 		    : exists $t->{pv_info} ? pv_info $t->{pv_info}
@@ -279,9 +419,11 @@ for my $m (sort { $a <=> $b } keys %drbd) {
 		    : ();
 
 	$out[$line] = [
-		sprintf("%3u:%s", $m, $t->{name} || "??not-found??"),
+		sprintf("%*u:%s", $minor_width, $m, $t->{name} || "??not-found??"),
 		defined($t->{ll_dev}) ? "^^$t->{ll_dev}" : "",
-		split(/\s+/, $t->{state}),
+		$t->{conn},
+		$t->{role},
+		$t->{dstate},
 		@used_by
 	];
 	for (my $c = 0; $c <  @{$out[$line]}; $c++) {

@@ -36,43 +36,32 @@ LDFLAGS = @LDFLAGS@
 LN_S = @LN_S@
 
 # features enabled or disabled by configure
-WITH_UTILS = @WITH_UTILS@
-WITH_LEGACY_UTILS = @WITH_LEGACY_UTILS@
-WITH_KM = @WITH_KM@
+WITH_83_SUPPORT = @WITH_83_SUPPORT@
 WITH_UDEV = @WITH_UDEV@
 WITH_XEN = @WITH_XEN@
 WITH_PACEMAKER = @WITH_PACEMAKER@
-WITH_HEARTBEAT = @WITH_HEARTBEAT@
 WITH_RGMANAGER = @WITH_RGMANAGER@
 WITH_BASHCOMPLETION = @WITH_BASHCOMPLETION@
 
 # variables meant to be overridden from the make command line
 DESTDIR ?= /
 
-CFLAGS += -Wall -I. -I../drbd -I../drbd/compat
+CFLAGS += -Wall -I. -I..
 
 drbdadm-obj = drbdadm_scanner.o drbdadm_parser.o drbdadm_main.o \
 	      drbdadm_adjust.o drbdtool_common.o drbdadm_usage_cnt.o \
-	      drbd_buildtag.o drbdadm_minor_table.o
+	      ../drbd_buildtag.o drbdadm_minor_table.o
 
-drbdsetup-obj = drbdsetup.o drbdtool_common.o drbd_buildtag.o \
+drbdsetup-obj = drbdsetup.o drbdtool_common.o ../drbd_buildtag.o \
 	        drbd_strings.o
 
 all: tools
 
-ifeq ($(WITH_LEGACY_UTILS),yes)
+ifeq ($(WITH_83_SUPPORT),yes)
 tools: drbdadm-83 drbdsetup-83
 else
 tools:
 endif
-
-drbd_buildtag.c: ../../drbd/drbd_buildtag.c
-	cp $< $@
-
-drbd_endian.h: ../drbd_endian.h
-	cp $< $@
-
-drbdtool_common.h: drbd_endian.h
 
 drbdadm-83: $(drbdadm-obj)
 	$(LINK.c) $(LDFLAGS) -o $@ $^
@@ -86,14 +75,12 @@ drbdsetup-83: $(drbdsetup-obj)
 clean:
 	rm -f drbdadm_scanner.c
 	rm -f drbdsetup-83 drbdadm-83 *.o
-	rm -f drbd_buildtag.c drbd_endian.h
 	rm -f *~
 
 distclean: clean
 
 install:
-ifeq ($(WITH_UTILS),yes)
-ifeq ($(WITH_LEGACY_UTILS),yes)
+ifeq ($(WITH_83_SUPPORT),yes)
 	install -d $(DESTDIR)$(localstatedir)/lib/drbd
 	install -d $(DESTDIR)$(localstatedir)/lock
 	install -d $(DESTDIR)/lib/drbd/
@@ -104,7 +91,6 @@ ifeq ($(WITH_LEGACY_UTILS),yes)
 		install -m 755 drbdsetup-83 $(DESTDIR)/lib/drbd/ ;		\
 		install -m 755 drbdadm-83 $(DESTDIR)/lib/drbd/ ; 		\
 	fi
-endif
 endif
 
 uninstall:
@@ -119,7 +105,7 @@ drbdsetup.o:       unaligned.h
 drbdtool_common.o: drbdtool_common.h
 drbdadm_main.o:    drbdtool_common.h drbdadm.h
 drbdadm_adjust.o:  drbdtool_common.h drbdadm.h
-drbdadm_parser.o:  drbdtool_common.h drbdadm.h linux/drbd_limits.h drbd_endian.h
+drbdadm_parser.o:  drbdtool_common.h drbdadm.h linux/drbd_limits.h ../drbd_endian.h
 drbdadm_scanner.o: drbdtool_common.h drbdadm.h drbdadm_parser.h
 drbdsetup.o:       drbdtool_common.h           linux/drbd_limits.h
-drbdadm_usage_cnt.o: drbdtool_common.h drbdadm.h drbd_endian.h
+drbdadm_usage_cnt.o: drbdtool_common.h drbdadm.h ../drbd_endian.h
