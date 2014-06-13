@@ -1,9 +1,9 @@
 0002-dpkg-statoverride-instead-of-chgrp-chmod.patch
 udev-rules-name
 disable-version-warning
-disable-buildtags
+#disable-buildtags
 disable-automatic-user-survey.patch
-0001-drbdsetup-use-lib-drbd-drbdsetup-83.patch
-0002-drbdsetup-delay-exiting-due-to-unknown-commands.patch
+#0001-drbdsetup-use-lib-drbd-drbdsetup-83.patch
+#0002-drbdsetup-delay-exiting-due-to-unknown-commands.patch
 add-lsb-description.patch
 fix-drbd.8-manpage-warning.patch
