@@ -3,7 +3,9 @@ Author: Apollon Oikonomopoulos <apoikos@gmail.com>
 Bug-Debian: http://bugs.debian.org/711352
 --- a/scripts/global_common.conf
 +++ b/scripts/global_common.conf
-@@ -1,5 +1,5 @@
+@@ -3,7 +3,7 @@
+ # feature requests visit http://www.linbit.com
+ 
  global {
 -	usage-count yes;
 +	usage-count no;

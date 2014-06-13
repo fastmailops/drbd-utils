@@ -2,13 +2,41 @@ From: Philipp Hug <philipp@hug.cx>
 Date: Tue, 20 Mar 2012 14:57:25 +0100
 Subject: dpkg-statoverride instead of chgrp/chmod
 
+Last-Update: 2014-06-13
+Forwarded: no
 ---
  user/drbdadm_main.c |    4 +---
  1 file changed, 1 insertion(+), 3 deletions(-)
 
---- a/user/drbdadm_main.c
-+++ b/user/drbdadm_main.c
-@@ -3176,9 +3176,7 @@
+--- a/user/drbdadm_postparse.c
++++ b/user/drbdadm_postparse.c
+@@ -972,9 +972,7 @@
+ 				"  You need to fix this with these commands:\n");
+ 		did_header = 1;
+ 		fprintf(stderr,
+-			"  chgrp haclient %s\n"
+-			"  chmod o-x %s\n"
+-			"  chmod u+s %s\n\n", cmd_name, cmd_name, cmd_name);
++			"  dpkg-statoverride --add --update root haclient 4750 %s\n\n", cmd_name);
+ 	}
+ 	return 1;
+ }
+--- a/user/legacy-84/drbdadm_main.c
++++ b/user/legacy-84/drbdadm_main.c
+@@ -3205,9 +3205,7 @@
+ 				"  You need to fix this with these commands:\n");
+ 		did_header = 1;
+ 		fprintf(stderr,
+-			"  chgrp haclient %s\n"
+-			"  chmod o-x %s\n"
+-			"  chmod u+s %s\n\n", cmd_name, cmd_name, cmd_name);
++			"  dpkg-statoverride --add --update root haclient 4750 %s\n\n", cmd_name);
+ 	}
+ 	return 1;
+ }
+--- a/user/legacy/drbdadm_main.c
++++ b/user/legacy/drbdadm_main.c
+@@ -2694,9 +2694,7 @@
  				"  You need to fix this with these commands:\n");
  		did_header = 1;
  		fprintf(stderr,

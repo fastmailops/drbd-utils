@@ -2,9 +2,23 @@ Description: Disable module version warning for sublevel missmatch
 Author: Bastian Blank <waldi@debian.org>
 Bug-Debian: http://bugs.debian.org/659353
 
+Last-Update: 2014-06-13
+Forwarded: no
 ---
---- drbd8-8.3.13.orig/user/drbdadm_usage_cnt.c
-+++ drbd8-8.3.13/user/drbdadm_usage_cnt.c
+--- a/user/legacy-84/drbdadm_usage_cnt.c
++++ b/user/legacy-84/drbdadm_usage_cnt.c
+@@ -264,7 +264,7 @@ void warn_on_version_mismatch(void)
+ 	else if (cmp & 0xff00)		/* userland is newer minor version */
+ 		msg = "please don't mix different DRBD series.";
+ 	else		/* userland is newer, but only differ in sublevel. */
+-		msg = "preferably kernel and userland versions should match.";
++		return;
+ 
+ 	fprintf(stderr, "DRBD module version: %u.%u.%u\n"
+ 			"   userland version: %u.%u.%u\n%s\n",
+
+--- a/user/legacy/drbdadm_usage_cnt.c
++++ b/user/legacy/drbdadm_usage_cnt.c
 @@ -264,7 +264,7 @@ void warn_on_version_mismatch(void)
  	else if (cmp & 0xff00)		/* userland is newer minor version */
  		msg = "please don't mix different DRBD series.";
