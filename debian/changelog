@@ -8,8 +8,6 @@ drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
       drbd-utils.
     + Drop the epoch from the source and drbd-utils version, retain it in
       drbd8-utils for upgrades to work.
-  * Use alternatives to specify the default system drbd-utils version. Default
-    version is currently set to 8.4 for compatibility with Debian kernels.
   * debian/watch look for the drbd-utils releases
   * systemd: load module on boot
   * New patches:

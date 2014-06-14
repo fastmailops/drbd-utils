@@ -23,11 +23,6 @@ override_dh_auto_install:
 override_dh_install:
 	dh_install --fail-missing
 
-	mv $(CURDIR)/debian/drbd-utils/sbin/drbdadm $(CURDIR)/debian/drbd-utils/lib/drbd/drbdadm-90
-	mv $(CURDIR)/debian/drbd-utils/sbin/drbdsetup $(CURDIR)/debian/drbd-utils/lib/drbd/drbdsetup-90
-
-	find $(CURDIR)/debian/drbd-utils/usr/share/man -name 'drbd*' -type l -delete
-
 	# Move udev rule to /lib/udev/rules.d (Fixes lintian warning)
 	mv $(CURDIR)/debian/drbd-utils/etc/udev/rules.d/* $(CURDIR)/debian/drbd-utils/lib/udev/rules.d/
 	rm -r $(CURDIR)/debian/drbd-utils/etc/udev
