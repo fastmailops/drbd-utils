@@ -3,7 +3,7 @@
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
-PKG_VERSION=$(shell dpkg-parsechangelog -Sversion)
+PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
 
 %:
 	dh $@ --with systemd
