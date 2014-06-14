@@ -1,1 +1,3 @@
 debian/drbd.service /lib/systemd/system
+debian/drbddisk /etc/ha.d/resource.d
+debian/drbdupper /etc/ha.d/resource.d

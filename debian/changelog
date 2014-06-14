@@ -8,6 +8,9 @@ drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
       drbd-utils.
     + Drop the epoch from the source and drbd-utils version, retain it in
       drbd8-utils for upgrades to work.
+  * Import the drbddisk and drbdupper heartbeat v1 resource scripts from the
+    previous package version; upstream has dropped them for DRBD 9, but they
+    are still useful with our kernel module version.
   * debian/watch look for the drbd-utils releases
   * systemd: load module on boot
   * New patches:

@@ -3,6 +3,8 @@ Upstream-Name: drbd
 Source: http://oss.linbit.com/drbd
 
 Files: *
+       debian/drbddisk
+       debian/drbdupper
 Copyright: Copyright (C) 2001-2008, LINBIT Information Technologies GmbH
            Copyright (C) 1999-2008, Philipp Reisner <philipp.reisner@linbit.com>
            Copyright (C) 2001-2008, Lars Ellenberg <lars.ellenberg@linbit.com>
