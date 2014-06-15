@@ -1,6 +1,6 @@
 drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
 
-  * New upstream release (closes: #751475)
+  * New upstream release (closes: #751475, #749441)
     + Unified codebase for DRBD 8.3, 8.4 and 9.0 userspace utilities.
     + Fixes a data-loss issue when offline resizing with drbdmeta.
   * Rename source and package to drbd-utils
@@ -11,13 +11,14 @@ drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
   * Import the drbddisk and drbdupper heartbeat v1 resource scripts from the
     previous package version; upstream has dropped them for DRBD 9, but they
     are still useful with our kernel module version.
-  * debian/watch look for the drbd-utils releases
-  * systemd: load module on boot
+  * debian/watch: use new upstream name (drbd-utils).
+  * systemd: load module on boot.
   * New patches:
-    + Add LSB description to the initscript (fixes lintian warning)
-    + Allow wrapping the synopsis line of drbd(8)
-    + Drop unnecessary PATH from the initscript
-  * Update debian/copyright
+    + Add LSB description to the initscript (fixes lintian warning).
+    + Allow wrapping the synopsis line of drbd(8).
+    + Drop unnecessary PATH from the initscript (fixes bogus lintian warning
+      on missing dependency against $remote_fs).
+  * Update debian/copyright.
 
  -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 13 Jun 2014 17:41:26 +0300
 
