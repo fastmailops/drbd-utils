@@ -16,7 +16,7 @@ Package: drbd-utils
 Architecture: linux-any
 Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
 Breaks: drbd8-utils (<< 2:8.9.0)
-Replaces: drbd8-utils (<< 2:8.9.0), drbd
+Replaces: drbd8-utils (<< 2:8.9.0)
 Suggests: heartbeat
 Recommends: heirloom-mailx|mailx
 Description: RAID 1 over TCP/IP for Linux (user utilities)
