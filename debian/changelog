@@ -16,7 +16,7 @@ drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
   * New patches:
     + Add LSB description to the initscript (fixes lintian warning).
     + Allow wrapping the synopsis line of drbd(8).
-    + Drop unnecessary PATH from the initscript (fixes bogus lintian warning
+    + Drop /usr/bin from the initscript's PATH (fixes bogus lintian warning
       on missing dependency against $remote_fs).
   * Update debian/copyright.
 
