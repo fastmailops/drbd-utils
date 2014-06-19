@@ -1,0 +1,4 @@
+# Since we have changed the source name, we have also stripped the epoch
+# from the version number. This is a new source and a new package, just
+# maintaining the version history from the previous source.
+latest-debian-changelog-entry-without-new-version
