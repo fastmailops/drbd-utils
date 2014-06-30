@@ -1,4 +1,4 @@
-drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
+drbd-utils (8.9.0-1) unstable; urgency=medium
 
   * New upstream release (closes: #751475, #749441)
     + Unified codebase for DRBD 8.3, 8.4 and 9.0 userspace utilities.
@@ -11,16 +11,26 @@ drbd-utils (8.9.0-1) UNRELEASED; urgency=medium
   * Import the drbddisk and drbdupper heartbeat v1 resource scripts from the
     previous package version; upstream has dropped them for DRBD 9, but they
     are still useful with our kernel module version.
+  * Provide our own udev rules, compatible with both 8.4 and 9.0. Upstream's
+    depends on 9.0 and breaks symlink creation on 8.3/8.4.
   * debian/watch: use new upstream name (drbd-utils).
   * systemd: load module on boot.
+  * Drop obsolete patches, not needed in 8.9.0:
+    + disable-buildtags
+    + 0001-drbdsetup-use-lib-drbd-drbdsetup-83.patch
+    + 0002-drbdsetup-delay-exiting-due-to-unknown-commands.patch
   * New patches:
     + Add LSB description to the initscript (fixes lintian warning).
     + Allow wrapping the synopsis line of drbd(8).
     + Drop /usr/bin from the initscript's PATH (fixes bogus lintian warning
       on missing dependency against $remote_fs).
+    + Fix the block-drbd script to work with Xen's xl stack (closes: #743977).
+    + Search for drbdadm under /sbin in the udev rules.
+    + Fix promotion to primary during startup, broken upstream after 8.4.4.
+    + Properly handle legacy binary chainloading with empty PATH.
   * Update debian/copyright.
 
- -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 13 Jun 2014 17:41:26 +0300
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Mon, 30 Jun 2014 15:51:53 +0300
 
 drbd8 (2:8.4.4-1) unstable; urgency=low
 
