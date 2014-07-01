@@ -23,9 +23,8 @@ override_dh_auto_install:
 override_dh_install:
 	dh_install --fail-missing
 
-	# Move udev rule to /lib/udev/rules.d (Fixes lintian warning)
-	mv $(CURDIR)/debian/drbd-utils/etc/udev/rules.d/* $(CURDIR)/debian/drbd-utils/lib/udev/rules.d/
-	rm -r $(CURDIR)/debian/drbd-utils/etc/udev
+	# Drop upstream's udev rules
+	rm -rf $(CURDIR)/debian/drbd-utils/etc/udev
 
 	# Move drbd-overview to /usr/sbin
 	mv $(CURDIR)/debian/drbd-utils/sbin/drbd-overview $(CURDIR)/debian/drbd-utils/usr/sbin/
@@ -48,7 +47,10 @@ override_dh_gencontrol:
 override_dh_strip:
 	dh_strip --dbg-package=drbd-utils-dbg
 
+override_dh_installudev:
+	dh_installudev --priority=65
+
 .PHONY: override_dh_auto_configure override_dh_install \
 	override_dh_auto_clean override_dh_installinit \
 	override_dh_gencontrol override_dh_auto_install \
-	override_dh_strip
+	override_dh_strip override_dh_installudev
