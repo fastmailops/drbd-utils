@@ -1,4 +1,0 @@
-# Since we have changed the source name, we have also stripped the epoch
-# from the version number. This has been taken care of in drbd8-utils, by
-# explicitly adding the epoch with dpkg-gencontrol -v.
-latest-debian-changelog-entry-without-new-version
