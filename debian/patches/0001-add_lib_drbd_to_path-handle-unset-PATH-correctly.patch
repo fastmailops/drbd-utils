@@ -1,0 +1,45 @@
+From 1df50603fe185519ae466bef96f8f7b9f4a61a21 Mon Sep 17 00:00:00 2001
+From: Apollon Oikonomopoulos <apoikos@debian.org>
+Date: Tue, 1 Jul 2014 12:32:55 +0300
+Subject: [PATCH] add_lib_drbd_to_path: handle unset PATH correctly
+
+The current implementation of add_lib_drbd_to_path will always use the
+value of the existing PATH variable, even if it is unset. In the case
+of an unset PATH, the constructed PATH will be "(null)/lib/drbd", which
+will not work as expected.
+
+We fix this by setting PATH explicitly to "/lib/drbd" if it was unset.
+
+Signed-off-by: Apollon Oikonomopoulos <apoikos@debian.org>
+---
+ user/drbdtool_common.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/user/drbdtool_common.c b/user/drbdtool_common.c
+index 269afb4..52a3eb2 100644
+--- a/user/drbdtool_common.c
++++ b/user/drbdtool_common.c
+@@ -1037,11 +1037,15 @@ void add_lib_drbd_to_path(void)
+ 	char *new_path = NULL;
+ 	char *old_path = getenv("PATH");
+ 
+-	m_asprintf(&new_path, "%s%s%s",
+-			old_path,
+-			old_path ? ":" : "",
+-			"/lib/drbd");
+-	setenv("PATH", new_path, 1);
++	if (old_path) {
++		m_asprintf(&new_path, "%s%s%s",
++				old_path,
++				old_path ? ":" : "",
++				"/lib/drbd");
++		setenv("PATH", new_path, 1);
++	} else {
++		setenv("PATH", "/lib/drbd", 1);
++	}
+ }
+ 
+ /* from linux/crypto/crc32.c */
+-- 
+2.0.0
+
