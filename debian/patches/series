@@ -3,8 +3,4 @@ udev-rules-name
 disable-version-warning
 disable-automatic-user-survey.patch
 add-lsb-description.patch
-fix-drbd.8-manpage-warning.patch
 initscript-remove-path.patch
-fix-block-drbd-with-xl-stack.patch
-fix-promotion-on-startup.patch
-0001-add_lib_drbd_to_path-handle-unset-PATH-correctly.patch
