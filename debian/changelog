@@ -1,3 +1,21 @@
+drbd-utils (8.9.1+git0.f861210b-1) unstable; urgency=medium
+
+  * New upstream version.
+    + Include all changes up to upstream's 4th maintenance release of 8.9.1
+      (8.9.1-4, git commit f861210b).
+    + Drop patches merged upstream:
+      o fix-block-drbd-with-xl-stack.patch
+      o fix-drbd.8-manpage-warning.patch
+      o fix-promotion-on-startup.patch
+      o 0001-add_lib_drbd_to_path-handle-unset-PATH-correctly.patch
+    + Use upstream's udev rules file.
+    + Use upstream's drbd-overview manpage.
+    + Refresh d/patches/udev-rules-name to reflect upstream changes.
+  * d/control: remove B-D on git, as it not used anymore.
+  * d/copyright: mark debian/* license as "permissive"; fixes lintian warning.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 29 Aug 2014 22:50:45 -0700
+
 drbd-utils (8.9.0-1) unstable; urgency=medium
 
   * New upstream release (closes: #751475, #749441)
