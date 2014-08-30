@@ -5,12 +5,12 @@ Bug-Debian: http://bugs.debian.org/679266
 ---
 --- a/scripts/Makefile.in
 +++ b/scripts/Makefile.in
-@@ -114,7 +114,7 @@
+@@ -131,7 +131,7 @@
  install-udev:
  ifeq ($(WITH_UDEV),yes)
- 	mkdir -p $(DESTDIR)$(sysconfdir)/udev/rules.d
--	install -m 644 drbd.rules $(DESTDIR)$(sysconfdir)/udev/rules.d/65-drbd.rules$(UDEV_RULE_SUFFIX)
-+	install -m 644 drbd.rules $(DESTDIR)$(sysconfdir)/udev/rules.d/65-drbd.rules
+ 	mkdir -p $(DESTDIR)$(udevrulesdir)
+-	install -m 644 drbd.rules $(DESTDIR)$(udevrulesdir)/65-drbd.rules$(UDEV_RULE_SUFFIX)
++	install -m 644 drbd.rules $(DESTDIR)$(udevrulesdir)/65-drbd.rules
  endif
  
  install-bashcompletion:
