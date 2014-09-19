@@ -1,5 +1,5 @@
 '\" t
-.\"     Title: drbd
+.\"     Title: drbd-overview
 .\"    Author: [see the "Author" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
 .\"      Date: 24 June 2014
@@ -7,7 +7,7 @@
 .\"    Source: DRBD 9.0.0
 .\"  Language: English
 .\"
-.TH "DRBD" "8" "24 June 2014" "DRBD 9.0.0" "System Administration"
+.TH "DRBD\-OVERVIEW" "8" "24 June 2014" "DRBD 9.0.0" "System Administration"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -28,38 +28,28 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-drbd \- The start and stop script for DRBD
+drbd-overview \- Overview of all configured DRBD resources
 .SH "SYNOPSIS"
-.HP \w'\fB/etc/init\&.d/drbd\fR\ 'u
-\fB/etc/init\&.d/drbd\fR {start | stop | status | reload | restart | force\-reload}
-.SH "INTRODUCTION"
+.HP \w'\fBdrbd\-overview\fR\ 'u
+\fBdrbd\-overview\fR
+.SH "DESCRIPTION"
 .PP
-The
-\fB/etc/init\&.d/drbd\fR
-script is used to start and stop drbd on a system V style init system\&.
-.PP
-When using a cluster resource manger such as Pacemaker, DRBD should usually
-\fInot\fR
-be started by the init system, but should typically be exclusively controlled by the cluster manager\&. You should not use, and disable, the init script in this case\&.
-\fBchmod \-x /etc/init\&.d/drbd\fR
-has proven most effective for this\&.
-.PP
-In order to use
-\fB/etc/init\&.d/drbd\fR, define a drbd configuration\&. See
-\fBdrbd.conf\fR(5)
-for details\&.
-.SH "VERSION"
-.sp
-This document was revised for version 9\&.0\&.0 of the DRBD distribution\&.
+drbd\-overview offers an overview of the state of all configured DRBD resources\&. It provides information about the connection status of each DRBD resource\&. It will also use auxiliary information provided by
+\fBdf\fR(1),
+\fBlvm\fR(8),
+\fBxm\fR(1)
+and
+\fBvirsh\fR(1)
+for DRBD resources used as mounted filesystems, LVM physical volumes, Xen domain backing disks and libvirt instance disks respectively\&.
 .SH "AUTHOR"
 .sp
-Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>\&.
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>\&. Initial man\-page contributed by Apollon Oikonomopoulos <apoikos@gmail\&.com>\&.
 .SH "REPORTING BUGS"
 .sp
 Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
 .SH "COPYRIGHT"
 .sp
-Copyright 2001\-2014 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+Copyright 2008\-2014 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
 .SH "SEE ALSO"
 .PP
 \fBdrbd.conf\fR(5),

@@ -104,7 +104,8 @@ static int enum_usage(struct field_def *field, char *str, int size)
 	}
 	assert (sep != '{');
 	l = snprintf(str+len, size, "}]");
-	len += l; size -= l;
+	len += l;
+   /* size -= l; */
 	return len;
 }
 
@@ -631,8 +632,11 @@ const char *read_balancing_map[] = {
           .unit = "bytes" },								\
 	{ "congestion-extents", NUMERIC(cong_extents, CONG_EXTENTS) },			\
 	{ "csums-alg", STRING(csums_alg) },						\
+	{ "csums-after-crash-only", BOOLEAN(csums_after_crash_only,			\
+						CSUMS_AFTER_CRASH_ONLY) },		\
 	{ "verify-alg", STRING(verify_alg) },						\
 	{ "use-rle", BOOLEAN(use_rle, USE_RLE) },					\
+	{ "socket-check-timeout", NUMERIC(sock_check_timeo, SOCKET_CHECK_TIMEO) },	\
 	{ "fencing", ENUM(fencing_policy, FENCING) },					\
 	{ "_name", STRING(name) }
 

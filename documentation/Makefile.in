@@ -48,6 +48,10 @@ DESTDIR ?= /
 CREATE_MAN_LINK ?= yes
 
 MANPAGES       := drbdsetup.8 drbd.conf.5 drbd.8 drbdadm.8 drbdmeta.8
+MANPAGES       += drbd-overview.8
+ifeq ($(WITH_HEARTBEAT),yes)
+MANPAGES += drbddisk.8
+endif
 SOURCES        := $(wildcard *.xml)
 
 STYLESHEET_PREFIX ?= http://docbook.sourceforge.net/release/xsl/current
@@ -73,9 +77,14 @@ DRBDSETUP_CMDS += wait-connect-volume wait-connect-connection wait-connect-resou
 DRBDSETUP_CMDS += wait-sync-volume wait-sync-connection wait-sync-resource
 DRBDSETUP_CMDS += forget-peer
 
+make_doc := $(shell $(XSLTPROC)				\
+	$(XSLTPROC_MANPAGES_OPTIONS)			\
+	$(MANPAGES_STYLESHEET) < /dev/null && echo doc )
 
-all:
+all: $(make_doc)
+ifneq ($(make_doc),doc)
 	@echo "To (re)make the documentation: make doc"
+endif
 
 clean:
 	@echo "To clean the documentation: make doc-clean"
@@ -134,7 +143,9 @@ drbdsetup.xml: drbdsetup.xml.in drbdsetup.xsl drbdsetup-options.xml
 	$(XSLTPROC) -o $@ drbdsetup.xsl $<
 
 distclean:
+ifeq ($(make_doc),doc)
 	rm -f *.[58] manpage.links manpage.refs *~ manpage.log
+endif
 	rm -f *.ps.gz *.pdf *.ps *.html pod2htm*
 	rm -f drbdsetup_*.xml
 	rm -f drbd.conf.xml drbdsetup.xml
@@ -154,7 +165,7 @@ install:
 		b=$${f%.[0-9]}; \
 		install -v -D -m 644 $$f $(DESTDIR)$(mandir)/man$$s/$$b-9.0.$$s ; \
 		if [ "$(CREATE_MAN_LINK)" = "yes" ]; then \
-			ln -s $$b-$(MAN_LINK).$$s $(DESTDIR)$(mandir)/man$$s/$$f ; \
+			ln -sf $$b-$(MAN_LINK).$$s $(DESTDIR)$(mandir)/man$$s/$$f ; \
 		fi \
 	done
 ifeq ($(WITH_83_SUPPORT),yes)

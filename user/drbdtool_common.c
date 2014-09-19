@@ -797,7 +797,6 @@ void fprintf_hex(FILE *fp, off_t file_offset, const void *buf, unsigned len)
 		       );
 	}
 	if (skipped) {
-		skipped = 0;
 		fprintf(fp, "*\n");
 	}
 	if (o < len) {
@@ -1031,17 +1030,35 @@ int version_equal(const struct version *rev1, const struct version *rev2)
 		return !memcmp(rev1->git_hash,rev2->git_hash,GIT_HASH_BYTE);
 	}
 }
+void config_help_legacy(const char * const tool,
+		const struct version * const driver_version)
+{
+	fprintf(stderr,
+			"This %s was build without support for legacy\n"
+			"drbd kernel code (%d.%d). Consider to rebuild your user land\n"
+			"tools and do not give --without-%d%d-support on the\n"
+			"commandline\n", tool, driver_version->version.major,
+			driver_version->version.minor, driver_version->version.major,
+			driver_version->version.minor);
+}
 
 void add_lib_drbd_to_path(void)
 {
 	char *new_path = NULL;
 	char *old_path = getenv("PATH");
+	static const char lib_drbd[]="/lib/drbd";
 
-	m_asprintf(&new_path, "%s%s%s",
-			old_path,
-			old_path ? ":" : "",
-			"/lib/drbd");
-	setenv("PATH", new_path, 1);
+	if (!old_path)
+		setenv("PATH", lib_drbd, 1);
+	else {
+		m_asprintf(&new_path, "%s%s%s",
+				old_path,
+				(*old_path &&
+				 old_path[strlen(old_path) -1] != ':')
+				? ":" : "",
+				lib_drbd);
+		setenv("PATH", new_path, 1);
+	}
 }
 
 /* from linux/crypto/crc32.c */

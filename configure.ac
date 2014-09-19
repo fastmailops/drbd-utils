@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.0, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.1, [drbd-dev@lists.linbit.com])
 
 AC_SUBST(PACKAGE_VERSION_EQUIVALENT_84, ["8.4.5 8.4.4 8.4.3 8.4.2 8.4.1 8.4.0"])
 AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_84, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_84)"])
@@ -100,7 +100,6 @@ AC_ARG_ENABLE([spec],
 	[SPECMODE=$enableval],
 	[SPECMODE=""])
 
-AC_SUBST(WITH_UTILS)
 AC_SUBST(WITH_83_SUPPORT)
 AC_SUBST(WITH_84_SUPPORT)
 AC_SUBST(WITH_UDEV)
@@ -108,6 +107,64 @@ AC_SUBST(WITH_XEN)
 AC_SUBST(WITH_PACEMAKER)
 AC_SUBST(WITH_RGMANAGER)
 AC_SUBST(WITH_BASHCOMPLETION)
+
+dnl Do we know where systemd unit files go?
+PKG_PROG_PKG_CONFIG
+AC_ARG_WITH([systemdunitdir],
+	[AC_HELP_STRING([--with-systemdunitdir=DIR],
+        	        [Directory for systemd service files [Auto]])],
+	[WITH_SYSTEMD_UNIT_DIR=$withval])
+if test x"$with_systemdunitdir" = x || \
+   test x"$with_systemdunitdir" = xyes ; then
+	if test x"$PKG_CONFIG" != x; then
+		systemdunitdir=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)
+	fi
+	if test x"$systemdunitdir" = x; then
+		AC_MSG_NOTICE([Could not detect systemd unit directory])
+	fi
+else
+	systemdunitdir=$with_systemdunitdir
+fi
+AC_SUBST(systemdunitdir)
+AC_MSG_RESULT([Using systemd unit directory: $systemdunitdir])
+
+# set default early
+default_udevdir=/lib/udev
+if test x"$with_udev" = x || \
+   test x"$with_udev" = xyes ; then
+	if test x"$PKG_CONFIG" != x; then
+		udevdir=$($PKG_CONFIG --variable=udevdir udev)
+	fi
+	if test x"$udevdir" = x; then
+		AC_MSG_NOTICE([Could not detect udev rules directory, using default])
+		udevdir=$default_udevdir
+	fi
+	AC_MSG_RESULT([Using udev rules directory: $udevdir])
+else
+	udevdir=$default_udevdir
+fi
+dnl always replace, even if not used
+AC_SUBST(udevdir)
+udevrulesdir=$udevdir/rules.d
+AC_SUBST(udevrulesdir)
+
+AC_ARG_WITH([initscripttype],
+	    [AS_HELP_STRING([--with-initscripttype=INIT_SCRIPT_TYPE],
+			    [Type of init script to install (sysv|systemd|both). [auto]])
+	    ])
+case "$with_initscripttype" in
+	"")
+		if grep -ql systemd /sbin/init ; then
+			initscripttype=systemd
+		else
+			initscripttype=sysv
+		fi ;;
+	sysv|systemd|both)
+		initscripttype=$with_initscripttype ;;
+	*)
+		AC_MSG_ERROR([Illegal value -$with_initscripttype- for option --with-initscripttype]) ;;
+esac
+AC_SUBST(initscripttype)
 
 dnl Checks for programs
 AC_PROG_CC
@@ -305,7 +362,7 @@ fi
 
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile user/legacy-84/Makefile scripts/Makefile documentation/Makefile documentation/legacy-83/Makefile documentation/legacy-84/Makefile)
+   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile user/legacy-84/Makefile scripts/Makefile documentation/Makefile documentation/legacy-83/Makefile documentation/legacy-84/Makefile scripts/drbd.rules)
    AC_CONFIG_HEADERS(user/config.h)
 else
    AC_CONFIG_FILES(drbd.spec)

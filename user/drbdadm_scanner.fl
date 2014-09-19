@@ -59,6 +59,7 @@ no			{ DP; return TK_NO;			}
 net			{ DP; return TK_NET;			}
 yes			{ DP; return TK_YES;			}
 ask			{ DP; return TK_ASK;			}
+via			{ DP; return TK_VIA;			}
 skip			{ DP; return TK_SKIP;			}
 disk			{ DP; return TK_DISK;			}
 host			{ DP; return TK_HOST;			}
@@ -127,6 +128,7 @@ ping-timeout 		{ DP; CP; return TK_NET_OPTION | TK_PROXY_GROUP;}
 unplug-watermark	{ DP; CP; return TK_NET_OPTION;         }
 data-integrity-alg	{ DP; CP; return TK_NET_OPTION;         }
 on-congestion		{ DP; CP; return TK_NET_OPTION;         }
+socket-check-timeout	{ DP; CP; return TK_NET_OPTION;         }
 congestion-fill		{ DP; CP; RC(CONG_FILL); return TK_NET_OPTION;   }
 congestion-extents	{ DP; CP; RC(CONG_EXTENTS); return TK_NET_OPTION;}
 allow-two-primaries	{ DP; CP; return TK_NET_FLAG;		}
@@ -140,6 +142,7 @@ after			{ DP; CP; return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;	}
 resync-after		{ DP; CP; return TK_DISK_OPTION;	}
 verify-alg              { DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_OPTION;      }
 csums-alg               { DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_OPTION;      }
+csums-after-crash-only  { DP; CP; return TK_NET_FLAG; }
 al-extents		{ DP; CP; RC(AL_EXTENTS); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;}
 al-updates		{ DP; CP; return TK_DISK_FLAG; 	}
 cpu-mask		{ DP; CP; return TK_SYNCER_OLD_OPT | TK_RES_OPTION;	}

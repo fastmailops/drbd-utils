@@ -1682,7 +1682,7 @@ void include_stmt(char *str)
 
 	/* in order to allow relative paths in include statements we change
 	   directory to the location of the current configuration file. */
-	cwd_fd = open(".", O_RDONLY);
+	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 	if (cwd_fd < 0) {
 		fprintf(stderr, "open(\".\") failed: %m\n");
 		exit(E_usage);
@@ -1701,7 +1701,7 @@ void include_stmt(char *str)
 	r = glob(str, 0, NULL, &glob_buf);
 	if (r == 0) {
 		for (i=0; i<glob_buf.gl_pathc; i++) {
-			f = fopen(glob_buf.gl_pathv[i], "r");
+			f = fopen(glob_buf.gl_pathv[i], "re");
 			if (f) {
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
 				fclose(f);
@@ -1729,6 +1729,7 @@ void include_stmt(char *str)
 		fprintf(stderr, "fchdir() failed: %m\n");
 		exit(E_usage);
 	}
+	close(cwd_fd);
 }
 
 void my_parse(void)

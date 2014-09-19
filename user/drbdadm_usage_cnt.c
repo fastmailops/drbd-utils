@@ -75,9 +75,7 @@ void maybe_exec_legacy_drbdadm(char **argv)
 		execvp(drbdadm_83, argv);
 		fprintf(stderr, "execvp() failed to exec %s: %m\n", drbdadm_83);
 #else
-		fprintf(stderr, "This drbdadm was build without support for legacy\n"
-			"drbd kernel code (8.3). Consider to rebuild your user land\n"
-			"tools with ./configure --with-legacy-connector\n");
+		config_help_legacy("drbdadm", driver_version);
 #endif
 		exit(E_EXEC_ERROR);
 	}
@@ -90,10 +88,7 @@ void maybe_exec_legacy_drbdadm(char **argv)
 		execvp(drbdadm_84, argv);
 		fprintf(stderr, "execvp() failed to exec %s: %m\n", drbdadm_84);
 #else
-		fprintf(stderr, "This drbdadm was build without support for legacy\n"
-			"drbd kernel code (8.4). Consider to rebuild your user land\n"
-			"tools with and do not give --without-83-support-8.4 on the\n"
-			"commandline\n");
+		config_help_legacy("drbdadm", driver_version);
 #endif
 		exit(E_EXEC_ERROR);
 	}
@@ -436,7 +431,8 @@ void uc_node(enum usage_count_type type)
 "to ask you for confirmation as long as 'usage-count' is at its default\n"
 "value of 'ask'.\n\n"
 "Just press [RETURN] to continue: ");
-			r = fgets(answer, 9, stdin);
+			if (fgets(answer, 9, stdin) == NULL)
+				fprintf(stderr, "Could not read answer\n");
 		}
 	}
 }

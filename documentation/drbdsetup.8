@@ -254,7 +254,7 @@ parameter\&.
 .PP
 \fB\-\-on\-io\-error \fR\fB\fIhandler\fR\fR
 .RS 4
-Configure how DRBD reacts to an I/O errors on a lower\-level device\&. The following policies are defined:
+Configure how DRBD reacts to I/O errors on a lower\-level device\&. The following policies are defined:
 .PP
 \fBpass_on\fR
 .RS 4
@@ -510,6 +510,15 @@ can be set to one of the secure hash algorithms supported by the kernel; see the
 is unset\&.
 .RE
 .PP
+\fB\-\-csums\-after\-crash\-only\fR
+.RS 4
+Enabling this option (and csums\-alg, above) makes it possible to use the checksum based resync only for the first resync after primary crash, but not for later "network hickups"\&.
+.sp
+In most cases, block that are marked as need\-to\-be\-resynced are in fact changed, so calculating checksums, and both reading and writing the blocks on the resync target is all effective overhead\&.
+.sp
+The advantage of checksum based resync is mostly after primary crash recovery, where the recovery marked larger areas (those covered by the activity log) as need\-to\-be\-resynced, just in case\&. Introduced in 8\&.4\&.5\&.
+.RE
+.PP
 \fB\-\-data\-integrity\-alg \fR \fIalg\fR
 .RS 4
 DRBD normally relies on the data integrity checks built into the TCP/IP protocol, but if a data integrity algorithm is configured, it will additionally use this algorithm to make sure that the data received over the network match what the sender has sent\&. If a data integrity error is detected, DRBD will close the network connection and reconnect, which will trigger a resync\&.
@@ -584,6 +593,21 @@ seconds, DRBD will send a keep\-alive packet to make sure that a failed peer or 
 .RS 4
 Define the timeout for replies to keep\-alive packets\&. If the peer does not reply within
 \fBping\-timeout\fR, DRBD will close and try to reestablish the connection\&. The default value is 0\&.5 seconds, with a minimum of 0\&.1 seconds and a maximum of 3 seconds\&. The unit is tenths of a second\&.
+.RE
+.PP
+\fB\-\-socket\-check\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+In setups involving a DRBD\-proxy and connections that experience a lot of buffer\-bloat it might be necessary to set
+\fBping\-timeout\fR
+to an unusual high value\&. By default DRBD uses the same value to wait if a newly established TCP\-connection is stable\&. Since the DRBD\-proxy is usually located in the same data center such a long wait time may hinder DRBD\*(Aqs connect process\&.
+.sp
+In such setups
+\fBsocket\-check\-timeout\fR
+should be set to at least to the round trip time between DRBD and DRBD\-proxy\&. I\&.e\&. in most cases to 1\&.
+.sp
+The default unit is tenths of a second, the default value is 0 (which causes DRBD to use the value of
+\fBping\-timeout\fR
+instead)\&. Introduced in 8\&.4\&.5\&.
 .RE
 .PP
 \fB\-\-protocol \fR\fB\fIname\fR\fR
@@ -1352,6 +1376,7 @@ Copyright 2001\-2012 LINBIT Information Technologies, Philipp Reisner, Lars Elle
 .PP
 \fBdrbd.conf\fR(5),
 \fBdrbd\fR(8),
+\fBdrbddisk\fR(8),
 \fBdrbdadm\fR(8),
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,
 \m[blue]\fBDRBD Web Site\fR\m[]\&\s-2\u[2]\d\s+2

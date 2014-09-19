@@ -10,6 +10,12 @@
 #include "sys_queue.h"
 #include <stdint.h>
 #include <stdarg.h>
+#include <fcntl.h>
+
+#ifndef O_CLOEXEC
+#warning "O_CLOEXEC undefined, redefining to 0"
+#define O_CLOEXEC 0
+#endif
 
 #include "config.h"
 
@@ -148,7 +154,7 @@ struct d_host_info
 	struct names on_hosts;
 	struct volumes volumes;
 	struct d_address address;
-	struct d_proxy_info *proxy;
+	struct d_proxy_info *proxy_compat_only; /* parsed here, only for 8.4 compatibility */
 	STAILQ_ENTRY(d_host_info) link;
 	struct d_resource* lower;  /* for device stacking */
 	char *lower_name;          /* for device stacking, before bind_stacked_res() */
@@ -168,6 +174,7 @@ struct hname_address
 	char *name;			/* parsed */
 	int config_line;		/* parsed here */
 	struct d_address address;	/* parsed */
+	struct d_proxy_info *proxy;     /* parsed here */
 	struct d_host_info *host_info;	/* determined in post_parse */
 	unsigned int used_as_me:1;
 	unsigned int faked_hostname;
@@ -189,6 +196,8 @@ struct connection
 	struct d_address *my_address; /* determined in set_me_in_resource() */
 	struct d_address *peer_address;
 	struct d_address *connect_to;
+	struct d_proxy_info *my_proxy;
+	struct d_proxy_info *peer_proxy;
 
 	struct options net_options; /* parsed here, inherited from res, used here */
 	unsigned int ignore:1;
@@ -388,7 +397,7 @@ extern char *_proxy_connection_name(char *conn_name, const struct cfg_ctx *ctx);
 	_proxy_connection_name(alloca(_proxy_connect_name_len(RES)), RES)
 extern struct d_resource *res_by_name(const char *name);
 extern struct d_host_info *find_host_info_by_name(struct d_resource* res, char *name);
-int parse_proxy_options_section(struct d_resource *res);
+int parse_proxy_options_section(struct d_proxy_info **proxy);
 /* conn_name is optional and mostly for compatibility with dcmd */
 int do_proxy_conn_up(const struct cfg_ctx *ctx);
 int do_proxy_conn_down(const struct cfg_ctx *ctx);

@@ -31,6 +31,9 @@ datarootdir = @datarootdir@
 datadir = @datadir@
 sbindir = @sbindir@
 sysconfdir = @sysconfdir@
+systemdunitdir = @systemdunitdir@
+udevrulesdir = @udevrulesdir@
+initscripttype = @initscripttype@
 BASH_COMPLETION_SUFFIX = @BASH_COMPLETION_SUFFIX@
 UDEV_RULE_SUFFIX = @UDEV_RULE_SUFFIX@
 INITDIR = @INITDIR@
@@ -52,8 +55,15 @@ all:
 install: install-utils install-udev install-xen install-pacemaker install-rgmanager install-bashcompletion
 
 install-utils:
+ifneq ($(initscripttype),systemd)	# "sysv" or "both"
 	install -d $(DESTDIR)$(INITDIR)
 	install -m 755 drbd $(DESTDIR)$(INITDIR)/
+endif
+# yes, debian apparently allows installing both types from the same package
+ifneq ($(initscripttype),sysv)		# "systemd" or "both"
+	install -d $(DESTDIR)$(systemdunitdir)
+	install -m 755 drbd.service $(DESTDIR)$(systemdunitdir)/
+endif
 	@ if [ ! -e $(DESTDIR)$(sysconfdir)/drbd.conf ]; then \
 		install -d $(DESTDIR)$(sysconfdir)/; \
 		install -m 644 drbd.conf $(DESTDIR)$(sysconfdir)/; \
@@ -81,6 +91,13 @@ ifeq ($(DISTRO),debian)
 	@ echo "Don't forget to run update-rc.d"
 else
 	@ echo "Don't forget to run chkconfig"
+endif
+
+install-heartbeat:
+ifeq ($(WITH_HEARTBEAT),yes)
+	mkdir -p $(DESTDIR)$(sysconfdir)/ha.d/resource.d
+	install -m 755 drbddisk $(DESTDIR)$(sysconfdir)/ha.d/resource.d
+	install -m 755 drbdupper $(DESTDIR)$(sysconfdir)/ha.d/resource.d
 endif
 
 # Do not use $(prefix) for the resource agent. The OCF standard
@@ -113,8 +130,8 @@ endif
 
 install-udev:
 ifeq ($(WITH_UDEV),yes)
-	mkdir -p $(DESTDIR)$(sysconfdir)/udev/rules.d
-	install -m 644 drbd.rules $(DESTDIR)$(sysconfdir)/udev/rules.d/65-drbd.rules$(UDEV_RULE_SUFFIX)
+	mkdir -p $(DESTDIR)$(udevrulesdir)
+	install -m 644 drbd.rules $(DESTDIR)$(udevrulesdir)/65-drbd.rules$(UDEV_RULE_SUFFIX)
 endif
 
 install-bashcompletion:
@@ -130,7 +147,14 @@ clean:
 distclean: clean
 
 uninstall:
+ifneq ($(initscripttype),systemd)	# "sysv" or "both"
 	rm -f $(DESTDIR)$(INITDIR)/drbd
+endif
+ifneq ($(initscripttype),sysv)		# "systemd" or "both"
+	rm -f $(DESTDIR)$(systemdunitdir)/drbd.service
+endif
+	rm -f $(DESTDIR)$(sysconfdir)/ha.d/resource.d/drbddisk
+	rm -f $(DESTDIR)$(sysconfdir)/ha.d/resource.d/drbdupper
 	rm -f $(DESTDIR)$(sysconfdir)/xen/scripts/block-drbd
 	rm -f $(DESTDIR)$(sysconfdir)/bash_completion.d/drbdadm$(BASH_COMPLETION_SUFFIX)
 	rm -f $(DESTDIR)$(sbindir)/drbd-overview
