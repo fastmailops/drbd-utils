@@ -133,7 +133,7 @@ static int confirmed(const char *text)
 	    printf("[need to type '%s' to confirm] ", yes);
 	    ok = getline(&answer,&n,stdin) == N &&
 		strncmp(answer,yes,N-1) == 0;
-	    if (answer) free(answer);
+	    free(answer);
 	    printf("\n");
 	}
 	return ok;
@@ -2116,6 +2116,7 @@ int replay_al_84(struct format *cfg, uint32_t *hot_extent)
 		/* not even one transaction was valid.
 		 * Has this ever been initialized correctly? */
 		fprintf(stderr, "No usable activity log found. Do you need to create-md?\n");
+		free(al_cpu);
 		return -ENODATA;
 	}
 
@@ -2468,7 +2469,7 @@ static void fprintf_bm(FILE *f, struct format *cfg, int peer_nr, const char* ind
 	off_t bm_on_disk_off = cfg->bm_offset;
 	le_u32 const *bm = on_disk_buffer;
 	le_u32 cw; /* current word for rl encoding */
-	le_u32 lw; /* low word for 64 bit output */
+	le_u32 lw = {0}; /* low word for 64 bit output */
 	const unsigned int n = cfg->bm_bytes/sizeof(*bm);
 	unsigned int max_peers = cfg->md.max_peers;
 	unsigned int count = 0;
@@ -2583,7 +2584,7 @@ static void clip_effective_size_and_bm_bytes(struct format *cfg)
 int v07_style_md_open(struct format *cfg)
 {
 	struct stat sb;
-	unsigned long hard_sect_size = 0;
+	unsigned int hard_sect_size = 0;
 	int ioctl_err;
 	int open_flags = O_RDWR | O_DIRECT;
 
@@ -4901,7 +4902,8 @@ int meta_chk_offline_resize(struct format *cfg, char **argv, int argc)
 		       (unsigned long long)cfg->md_offset, cfg->md_device_name);
 		*/
 		/* create, delete or update the last known info */
-		err = lk_bdev_load(cfg->minor, &cfg->lk_bd);
+		if (lk_bdev_load(cfg->minor, &cfg->lk_bd) < 0)
+				return -1;
 		if (cfg->md_index != DRBD_MD_INDEX_FLEX_INT)
 			lk_bdev_delete(cfg->minor);
 		else if (cfg->lk_bd.bd_size != cfg->bd_size ||

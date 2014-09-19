@@ -915,8 +915,7 @@ static void free_config()
 		free_options(&common->handlers);
 		free(common);
 	}
-	if (ifreq_list)
-		free(ifreq_list);
+	free(ifreq_list);
 }
 
 static void find_drbdcmd(char **cmd, char **pathes)
@@ -983,12 +982,13 @@ void m__system(char **argv, int flags, const char *res_name, pid_t *kid, int *fd
 	if (adjust_with_progress && !(flags & RETURN_STDERR_FD))
 		flags |= SUPRESS_STDERR;
 
-	if (flags & (RETURN_STDOUT_FD | RETURN_STDERR_FD)) {
-		if (pipe(pipe_fds) < 0) {
-			perror("pipe");
-			fprintf(stderr, "Error in pipe, giving up.\n");
-			exit(E_EXEC_ERROR);
-		}
+	/* create the pipe in any case:
+	 * it helps the analyzer and later we have:
+	 * '*fd = pipe_fds[0];' */
+	if (pipe(pipe_fds) < 0) {
+		perror("pipe");
+		fprintf(stderr, "Error in pipe, giving up.\n");
+		exit(E_EXEC_ERROR);
 	}
 
 	pid = fork();
@@ -1007,7 +1007,8 @@ void m__system(char **argv, int flags, const char *res_name, pid_t *kid, int *fd
 		}
 		if (flags & SUPRESS_STDERR)
 			fclose(stderr);
-		execvp(argv[0], argv);
+		if (argv[0])
+			execvp(argv[0], argv);
 		fprintf(stderr, "Can not exec\n");
 		exit(E_EXEC_ERROR);
 	}
@@ -1358,8 +1359,11 @@ static int adm_drbdsetup(const struct cfg_ctx *ctx)
 static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx)
 {
 	char buffer[4096];
-	int fd, status, rv = 0, rr, s = 0;
+	int fd, status, rv = 0;
 	pid_t pid;
+	ssize_t rr;
+	ssize_t rw __attribute((unused));
+	size_t s = 0;
 
 	__adm_drbdsetup(ctx, SLEEPS_SHORT | RETURN_STDERR_FD, &pid, &fd, NULL);
 
@@ -1377,7 +1381,7 @@ static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx)
 		}
 
 		close(fd);
-		rr = waitpid(pid, &status, 0);
+		(void) waitpid(pid, &status, 0);
 		alarm(0);
 
 		if (WIFEXITED(status))
@@ -1391,7 +1395,7 @@ static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx)
 	 *  11: some unspecific state change error. (ignore for invalidate)
 	 *  17: SS_NO_UP_TO_DATE_DISK */
 	if ((strcmp(ctx->cmd->name, "invalidate") && rv == 11) || rv == 17)
-		rr = write(fileno(stderr), buffer, s);
+		rw = write(fileno(stderr), buffer, s);
 
 	return rv;
 }
@@ -1611,30 +1615,27 @@ void free_opt(struct d_option *item)
 
 int _proxy_connect_name_len(const struct cfg_ctx *ctx)
 {
-	struct d_resource *res = ctx->res;
 	struct connection *conn = ctx->conn;
 
-	return strlen(res->name) +
-		strlen(names_to_str_c(&conn->peer->proxy->on_hosts, '_')) +
-		strlen(names_to_str_c(&res->me->proxy->on_hosts, '_')) +
+	return strlen(ctx->res->name) +
+		strlen(names_to_str_c(&conn->peer_proxy->on_hosts, '_')) +
+		strlen(names_to_str_c(&conn->my_proxy->on_hosts, '_')) +
 		3 /* for the two dashes and the trailing 0 character */;
 }
 
 char *_proxy_connection_name(char *conn_name, const struct cfg_ctx *ctx)
 {
-	struct d_resource *res = ctx->res;
 	struct connection *conn = ctx->conn;
 
 	sprintf(conn_name, "%s-%s-%s",
-		res->name,
-		names_to_str_c(&conn->peer->proxy->on_hosts, '_'),
-		names_to_str_c(&res->me->proxy->on_hosts, '_'));
+		ctx->res->name,
+		names_to_str_c(&conn->peer_proxy->on_hosts, '_'),
+		names_to_str_c(&conn->my_proxy->on_hosts, '_'));
 	return conn_name;
 }
 
 int do_proxy_conn_up(const struct cfg_ctx *ctx)
 {
-	struct d_resource *res = ctx->res;
 	struct connection *conn = ctx->conn;
 	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL };
 	char *conn_name;
@@ -1645,22 +1646,22 @@ int do_proxy_conn_up(const struct cfg_ctx *ctx)
 	argv[2] = ssprintf(
 		 "add connection %s %s:%s %s:%s %s:%s %s:%s",
 		 conn_name,
-		 res->me->proxy->inside.addr,
-		 res->me->proxy->inside.port,
-		 conn->peer->proxy->outside.addr,
-		 conn->peer->proxy->outside.port,
-		 res->me->proxy->outside.addr,
-		 res->me->proxy->outside.port,
-		 res->me->address.addr,
-		 res->me->address.port);
+		 conn->my_proxy->inside.addr,
+		 conn->my_proxy->inside.port,
+		 conn->peer_proxy->outside.addr,
+		 conn->peer_proxy->outside.port,
+		 conn->my_proxy->outside.addr,
+		 conn->my_proxy->outside.port,
+		 conn->my_address->addr,
+		 conn->my_address->port);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
+	rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
 	return rv;
 }
 
 int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 {
-	struct d_resource *res = ctx->res;
+	struct connection *conn = ctx->conn;
 	char *argv[MAX_ARGS];
 	char *conn_name;
 	int argc = 0;
@@ -1671,7 +1672,7 @@ int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 
 	argc = 0;
 	argv[NA(argc)] = drbd_proxy_ctl;
-	STAILQ_FOREACH(opt, &res->me->proxy->options, link) {
+	STAILQ_FOREACH(opt, &conn->my_proxy->options, link) {
 		argv[NA(argc)] = "-c";
 		argv[NA(argc)] = ssprintf("set %s %s %s",
 			 opt->name, conn_name, opt->value);
@@ -1680,8 +1681,8 @@ int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 	counter = 0;
 	/* Don't send the "set plugin ... END" line if no plugins are defined
 	 * - that's incompatible with the drbd proxy version 1. */
-	if (!STAILQ_EMPTY(&res->me->proxy->plugins)) {
-		STAILQ_FOREACH(opt, &res->me->proxy->plugins, link) {
+	if (!STAILQ_EMPTY(&conn->my_proxy->plugins)) {
+		STAILQ_FOREACH(opt, &conn->my_proxy->plugins, link) {
 			argv[NA(argc)] = "-c";
 			argv[NA(argc)] = ssprintf("set plugin %s %d %s",
 					conn_name, counter, opt->name);
@@ -1692,7 +1693,7 @@ int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 
 	argv[NA(argc)] = 0;
 	if (argc > 2)
-		return m_system_ex(argv, SLEEPS_SHORT, res->name);
+		return m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
 
 	return 0;
 }
@@ -1713,32 +1714,37 @@ int do_proxy_conn_down(const struct cfg_ctx *ctx)
 
 static int check_proxy(const struct cfg_ctx *ctx, int do_up)
 {
-	struct d_resource *res = ctx->res;
 	struct connection *conn = ctx->conn;
 	int rv;
 
-	if (!res->me->proxy) {
+	if (!conn->my_proxy) {
 		if (all_resources)
 			return 0;
 		fprintf(stderr,
-			"There is no proxy config for host %s in resource %s.\n",
-			hostname, res->name);
+			"%s:%d: In resource '%s',no proxy config for connection %sfrom '%s' to '%s'%s.\n",
+			ctx->res->config_file,
+			conn->config_line,
+			ctx->res->name,
+			conn->name ? ssprintf("'%s' (", conn->name) : "",
+			hostname,
+			names_to_str(&conn->peer->on_hosts),
+			conn->name ? ")" : "");
 		exit(E_CONFIG_INVALID);
 	}
 
-	if (!hostname_in_list(hostname, &res->me->proxy->on_hosts)) {
+	if (!hostname_in_list(hostname, &conn->my_proxy->on_hosts)) {
 		if (all_resources)
 			return 0;
 		fprintf(stderr,
 			"The proxy config in resource %s is not for %s.\n",
-			res->name, hostname);
+			ctx->res->name, hostname);
 		exit(E_CONFIG_INVALID);
 	}
 
-	if (!conn->peer->proxy) {
+	if (!conn->peer_proxy) {
 		fprintf(stderr,
 			"There is no proxy config for the peer in resource %s.\n",
-			res->name);
+			ctx->res->name);
 		if (all_resources)
 			return 0;
 		exit(E_CONFIG_INVALID);
@@ -2064,7 +2070,9 @@ int gets_timeout(pid_t * pids, char *s, int size, int timeout)
 		}
 	} while (pr == -1);
 
-	if (pr == 1) {		// Input available.
+	if (pr == 1 && s) {		// Input available and s not NULL.
+      /* TODO: what should happen if s == NULL? is this correct?
+       * at least we check here and do not nullptr deref */
 		rr = read(fileno(stdin), s, size - 1);
 		if (rr == -1) {
 			perror("read");
@@ -2591,7 +2599,7 @@ char *canonify_path(char *path)
 
 	if (last_slash) {
 		*last_slash++ = '\0';
-		cwd_fd = open(".", O_RDONLY);
+		cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 		if (cwd_fd < 0) {
 			fprintf(stderr, "open(\".\") failed: %m\n");
 			exit(E_USAGE);
@@ -2621,6 +2629,7 @@ char *canonify_path(char *path)
 			fprintf(stderr, "fchdir() failed: %m\n");
 			exit(E_USAGE);
 		}
+		close(cwd_fd);
 	}
 
 	return abs_path;
@@ -2725,8 +2734,7 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 
 	STAILQ_INIT(&backend_options_check);
 	*cmd = NULL;
-	*resource_names = malloc(sizeof(char **));
-	(*resource_names)[0] = NULL;
+	*resource_names = calloc(argc + 1, sizeof(char *));
 
 	opterr = 1;
 	optind = 0;
@@ -2858,14 +2866,10 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 	for (; optind < argc; optind++) {
 		optarg = argv[optind];
 		if (*cmd) {
-			int n;
-			for (n = 0; (*resource_names)[n]; n++)
-				/* do nothing */ ;
-			*resource_names = realloc(*resource_names,
-						  (n + 2) * sizeof(char **));
-			(*resource_names)[n++] = optarg;
-			(*resource_names)[n] = NULL;
-		} else if (!strcmp(optarg, "help"))
+			static int last_idx = 0;
+			(*resource_names)[last_idx++] = optarg;
+		}
+		else if (!strcmp(optarg, "help"))
 			help = true;
 		else {
 			*cmd = find_cmd(optarg);
@@ -3273,7 +3277,7 @@ int main(int argc, char **argv)
 					fprintf(stderr,
 						"'%s' ignored, since this host (%s) is not mentioned with an 'on' keyword.\n",
 						ctx.res->name, hostname);
-					rv = E_USAGE;
+					/* rv = E_USAGE; rc in for scope and (re)set at beginning */
 					continue;
 				}
 				if (is_drbd_top != ctx.res->stacked && !is_dump) {
@@ -3283,13 +3287,13 @@ int main(int argc, char **argv)
 						ctx.res->stacked ? "stacked" : "normal",
 						is_drbd_top ? "stacked" :
 						"normal");
-					rv = E_USAGE;
+					/* rv = E_USAGE; rc in for scope and (re)set at beginning */
 					continue;
 				}
 				verify_ips(ctx.res);
 				if (!is_dump && !config_valid)
 					exit(E_CONFIG_INVALID);
-				rv = call_cmd(cmd, &ctx, EXIT_ON_FAIL);	/* does exit for rv >= 20! */
+				(void) call_cmd(cmd, &ctx, EXIT_ON_FAIL);	/* does exit for rv >= 20! */
 			}
 		}
 	} else {		// Commands which do not need a resource name

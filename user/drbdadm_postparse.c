@@ -122,6 +122,20 @@ static struct d_host_info *find_host_info_by_address(struct d_resource* res, str
 	return NULL;
 }
 
+static bool generate_implicit_node_id(int *addr_hash, struct d_host_info **host_info_array)
+{
+	if (addr_hash[0] > addr_hash[1]) {
+		host_info_array[0]->node_id = strdup("0");
+		host_info_array[1]->node_id = strdup("1");
+	} else if (addr_hash[0] < addr_hash[1]) {
+		host_info_array[0]->node_id = strdup("1");
+		host_info_array[1]->node_id = strdup("0");
+	} else {
+		return false;
+	}
+	return true;
+}
+
 static void set_host_info_in_host_address_pairs(struct d_resource *res, struct connection *con)
 {
 	struct hname_address *ha;
@@ -194,17 +208,49 @@ static void set_host_info_in_host_address_pairs(struct d_resource *res, struct c
 
 	if (con->implicit && i == 2 && !host_info_array[0]->node_id && !host_info_array[1]->node_id) {
 		/* This is drbd-8.3 / drbd-8.4 compatibility, auto created node-id */
-		if (addr_hash[0] > addr_hash[1]) {
-			host_info_array[0]->node_id = strdup("0");
-			host_info_array[1]->node_id = strdup("1");
-		} else if (addr_hash[0] < addr_hash[1]) {
-			host_info_array[0]->node_id = strdup("1");
-			host_info_array[1]->node_id = strdup("0");
-		} else {
+		bool have_node_ids;
+
+		have_node_ids = generate_implicit_node_id(addr_hash, host_info_array);
+
+		if (!have_node_ids) {
+			/* That might be a config with equal node addresses, since it is
+			  127.0.0.1:xxx with a proxy... */
+			i = 0;
+			STAILQ_FOREACH(ha, &con->hname_address_pairs, link) {
+				if (!ha->host_info)
+					continue;
+
+				if (!ha->proxy)
+					break;
+
+				addr_hash[i++] = crc32c(0x1a656f21,
+							(void *)ha->proxy->outside.addr,
+							strlen(ha->proxy->outside.addr));
+			}
+			have_node_ids = generate_implicit_node_id(addr_hash, host_info_array);
+		}
+		if (!have_node_ids) {
 			fprintf(stderr, "BAD LUCK, equal hashes\n");
 			exit(20);
 		}
 	}
+}
+
+static bool test_proxy_on_host(struct d_resource* res, struct d_host_info *host)
+{
+	struct connection *conn;
+	for_each_connection(conn, &res->connections) {
+		struct hname_address *ha;
+
+		STAILQ_FOREACH(ha, &conn->hname_address_pairs, link) {
+			if (!ha->proxy)
+				continue;
+			if (ha->host_info == host) {
+				return hostname_in_list(hostname, &ha->proxy->on_hosts);
+			}
+		}
+	}
+	return false;
 }
 
 void set_me_in_resource(struct d_resource* res, int match_on_proxy)
@@ -216,7 +262,7 @@ void set_me_in_resource(struct d_resource* res, int match_on_proxy)
 	for_each_host(host, &res->all_hosts) {
 		/* do we match  this host? */
 		if (match_on_proxy) {
-		       if (!host->proxy || !hostname_in_list(hostname, &host->proxy->on_hosts))
+			if (!test_proxy_on_host(res, host))
 			       continue;
 		} else if (host->by_address) {
 			if (!have_ip(host->address.af, host->address.addr) &&
@@ -279,6 +325,7 @@ void set_me_in_resource(struct d_resource* res, int match_on_proxy)
 		if (h) {
 			h->used_as_me = 1;
 			conn->my_address = h->address.addr ? &h->address : &res->me->address;
+			conn->my_proxy = h->proxy;
 		} else {
 			conn->ignore = 1;
 		}
@@ -327,7 +374,8 @@ static void set_peer_in_connection(struct d_resource* res, struct connection *co
 		host_info = find_host_info_by_name(res, candidate->name);
 		conn->peer = host_info;
 		conn->peer_address = candidate->address.addr ? &candidate->address : &host_info->address;
-		conn->connect_to = host_info->proxy ? &host_info->proxy->inside : conn->peer_address;
+		conn->peer_proxy = candidate->proxy;
+		conn->connect_to = conn->my_proxy ? &conn->my_proxy->inside : conn->peer_address;
 		return;
 	}
 
@@ -620,6 +668,7 @@ static void create_implicit_connections(struct d_resource *res)
 		if (host_info->address.af && host_info->address.addr && host_info->address.port) {
 			ha = alloc_hname_address();
 			ha->host_info = host_info;
+			ha->proxy = host_info->proxy_compat_only;
 			if (!host_info->lower) {
 				ha->name = STAILQ_FIRST(&host_info->on_hosts)->name;
 			} else {
@@ -919,11 +968,6 @@ void expand_common(void)
 		for_each_host(h, &res->all_hosts) {
 			for_each_volume(vol, &h->volumes)
 				expand_opts(&res->disk_options, &vol->disk_options);
-
-			if (h->proxy) {
-				expand_opts(&res->proxy_options, &h->proxy->options);
-				expand_opts(&res->proxy_plugins, &h->proxy->plugins);
-			}
 		}
 
 		/* now from all volume/disk-options on resource level to host level */
@@ -937,6 +981,18 @@ void expand_common(void)
 		/* inherit network options from resource objects into connection objects */
 		for_each_connection(conn, &res->connections)
 			expand_opts(&res->net_options, &conn->net_options);
+
+		/* inherit proxy options from resource to the proxies in the connections */
+		for_each_connection(conn, &res->connections) {
+			struct hname_address *ha;
+			STAILQ_FOREACH(ha, &conn->hname_address_pairs, link) {
+				if (!ha->proxy)
+					continue;
+
+				expand_opts(&res->proxy_options, &ha->proxy->options);
+				expand_opts(&res->proxy_plugins, &ha->proxy->plugins);
+			}
+		}
 	}
 }
 
@@ -1070,11 +1126,12 @@ static bool host_name_known(struct d_resource *res, char *name)
 static void ensure_proxy_sections(struct d_resource *res)
 {
 	struct d_host_info *host;
+	struct connection *conn;
 	enum { INIT, HAVE, MISSING } proxy_sect = INIT, prev_proxy_sect;
 
 	for_each_host(host, &res->all_hosts) {
 		prev_proxy_sect = proxy_sect;
-		proxy_sect = host->proxy ? HAVE : MISSING;
+		proxy_sect = host->proxy_compat_only ? HAVE : MISSING;
 		if (prev_proxy_sect == INIT)
 			continue;
 		if (prev_proxy_sect != proxy_sect) {
@@ -1083,6 +1140,25 @@ static void ensure_proxy_sections(struct d_resource *res)
 				"Either all 'on' sections must contain a proxy subsection, or none.\n",
 				res->config_file, res->start_line, res->name);
 			config_valid = 0;
+		}
+	}
+
+	for_each_connection(conn, &res->connections) {
+		struct hname_address *ha;
+		proxy_sect = INIT;
+
+		STAILQ_FOREACH(ha, &conn->hname_address_pairs, link) {
+			prev_proxy_sect = proxy_sect;
+			proxy_sect = ha->proxy ? HAVE : MISSING;
+			if (prev_proxy_sect == INIT)
+				continue;
+			if (prev_proxy_sect != proxy_sect) {
+				fprintf(stderr,
+					"%s:%d: in connection in resource %s:\n"
+					"Either all 'host' statements must have a proxy subsection, or none.\n",
+					res->config_file, conn->config_line, res->name);
+				config_valid = 0;
+			}
 		}
 	}
 }

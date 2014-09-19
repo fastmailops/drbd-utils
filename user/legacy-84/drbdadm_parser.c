@@ -278,13 +278,11 @@ void range_check(const enum range_checks what, const char *name,
 
 struct d_option *new_opt(char *name, char *value)
 {
-	struct d_option *cn = malloc(sizeof(struct d_option));
+	struct d_option *cn = calloc(1, sizeof(struct d_option));
 
 	/* fprintf(stderr,"%s:%d: %s = %s\n",config_file,line,name,value); */
 	cn->name = name;
 	cn->value = value;
-	cn->mentioned = 0;
-	cn->is_escaped = 0;
 
 	return cn;
 }
@@ -1336,6 +1334,19 @@ void parse_host_section(struct d_resource *res,
 			parse_address(on_hosts, &host->address, &host->port, &host->address_family);
 			range_check(R_PORT, "port", host->port);
 			break;
+		case TK_ALT_ADDRESS:
+			if (host->by_address) {
+				fprintf(stderr,
+					"%s:%d: address statement not allowed for floating {} host sections\n",
+					config_file, fline);
+				config_valid = 0;
+				exit(E_config_invalid);
+			}
+			for_each_host(h, on_hosts)
+				check_upr("alt-address statement", "%s:%s:alt-address", res->name, h->name);
+			parse_address(on_hosts, &host->alt_address, &host->alt_port, &host->alt_address_family);
+			range_check(R_PORT, "port", host->alt_port);
+			break;
 		case TK_PROXY:
 			parse_proxy_section(host);
 			break;
@@ -1442,6 +1453,12 @@ void parse_stacked_section(struct d_resource* res)
 			for_each_host(h, host->on_hosts)
 				check_upr("address statement", "%s:%s:address", res->name, h->name);
 			parse_address(NULL, &host->address, &host->port, &host->address_family);
+			range_check(R_PORT, "port", yylval.txt);
+			break;
+		case TK_ALT_ADDRESS:
+			for_each_host(h, host->on_hosts)
+				check_upr("alt-address statement", "%s:%s:alt-address", res->name, h->name);
+			parse_address(NULL, &host->alt_address, &host->alt_port, &host->alt_address_family);
 			range_check(R_PORT, "port", yylval.txt);
 			break;
 		case TK_PROXY:
@@ -2087,7 +2104,7 @@ void include_stmt(char *str)
 
 	/* in order to allow relative paths in include statements we change
 	   directory to the location of the current configuration file. */
-	cwd_fd = open(".", O_RDONLY);
+	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 	if (cwd_fd < 0) {
 		fprintf(stderr, "open(\".\") failed: %m\n");
 		exit(E_usage);
@@ -2106,7 +2123,7 @@ void include_stmt(char *str)
 	r = glob(str, 0, NULL, &glob_buf);
 	if (r == 0) {
 		for (i=0; i<glob_buf.gl_pathc; i++) {
-			f = fopen(glob_buf.gl_pathv[i], "r");
+			f = fopen(glob_buf.gl_pathv[i], "re");
 			if (f) {
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
 				fclose(f);
@@ -2134,6 +2151,8 @@ void include_stmt(char *str)
 		fprintf(stderr, "fchdir() failed: %m\n");
 		exit(E_usage);
 	}
+
+	close(cwd_fd);
 }
 
 void my_parse(void)

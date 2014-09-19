@@ -1,7 +1,7 @@
 '\" t
 .\"     Title: drbdmeta
 .\"    Author: [see the "Author" section]
-.\" Generator: DocBook XSL Stylesheets v1.76.1 <http://docbook.sf.net/>
+.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
 .\"      Date: 15 Oct 2008
 .\"    Manual: System Administration
 .\"    Source: DRBD 8.3.2
@@ -63,11 +63,9 @@ If you will use the resource before it is connected to its peer for the first ti
 option\&. For DRBD versions of the peer use up to these values: <8\&.3\&.7 \-> 4k, 8\&.3\&.8 \-> 32k, 8\&.3\&.9 \-> 128k, 8\&.4\&.0 \-> 1M\&.
 .sp
 If you want to use more than 6433 activity log extents, or live on top of a spriped RAID, you may specify the number of stripes (\fB\-\-al\-stripes\fR, default 1), and the stripe size (\fB\-\-al\-stripe\-size\-kB\fR, default 32)\&. To just use a larger linear on\-disk ring\-buffer, leave the number of stripes at 1, and increase the size only:
-
 \fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripe\-size 1M\fR
 .sp
 To avoid a single "spindle" from becoming a bottleneck, increase the number of stripes, to achieve an interleaved layout of the on\-disk activity\-log transactions\&. What you give as "stripe\-size" should be what is a\&.k\&.a\&. "chunk size" or "granularity" or "strip unit": the minimum skip to the next "spindle"\&.
-
 \fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripes 7 \-\-al\-stripe\-size 64k\fR
 .RE
 .PP
@@ -130,14 +128,13 @@ and writes it to the meta data\&.
 This document was revised for version 8\&.3\&.2 of the DRBD distribution\&.
 .SH "AUTHOR"
 .sp
-Written by Philipp Reisner philipp\&.reisner@linbit\&.com and Lars Ellenberg lars\&.ellenberg@linbit\&.com\&.
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>\&.
 .SH "REPORTING BUGS"
 .sp
-Report bugs to drbd\-user@lists\&.linbit\&.com\&.
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
 .SH "COPYRIGHT"
 .sp
 Copyright 2001\-2008 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
 .SH "SEE ALSO"
 .PP
-
 \fBdrbdadm\fR(8)

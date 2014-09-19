@@ -687,6 +687,7 @@ resource
         <pick_drbdsetup_option name="connect-int"/>
         <pick_drbdsetup_option name="cram-hmac-alg"/>
         <pick_drbdsetup_option name="csums-alg"/>
+        <pick_drbdsetup_option name="csums-after-crash-only"/>
         <pick_drbdsetup_option name="data-integrity-alg"/>
         <pick_drbdsetup_option name="ko-count"/>
         <pick_drbdsetup_option name="max-buffers"/>
@@ -694,6 +695,7 @@ resource
         <pick_drbdsetup_option name="on-congestion"/>
         <pick_drbdsetup_option name="ping-int"/>
         <pick_drbdsetup_option name="ping-timeout"/>
+        <pick_drbdsetup_option name="socket-check-timeout"/>
         <pick_drbdsetup_option name="protocol"/>
         <pick_drbdsetup_option name="rcvbuf-size"/>
         <pick_drbdsetup_option name="rr-conflict"/>
@@ -826,8 +828,6 @@ resource
       <variablelist>
         <varlistentry>
           <term><option>device /dev/drbd<replaceable>minor-number</replaceable></option></term>
-          <term><option>device <replaceable><optional>name</optional></replaceable> <optional>minor
-                <replaceable>minor-number</replaceable></optional></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -837,14 +837,8 @@ resource
               </indexterm> Define the device name and minor number of a
               replicated block device.  This is the device that applications
               are supposed to access; in most cases, the device is not used
-	      directly, but as a file system.  This parameter is
-	      required.</para>
-
-            <para>The first form of this parameter assumes the standard
-              device naming convention.  The second form supports arbitrary
-              device names: if the device name is omitted, the standard device
-              naming convention is used; if the minor number is omitted, one of
-              the available minor numbers is used.</para>
+              directly, but as a file system. This parameter is required and
+              the standard device naming convention is assumed.</para>
 
             <para>In addition to this device, udev will create
               <option>/dev/drbd/by-res/<replaceable>resource</replaceable>/<replaceable>volume</replaceable></option>
@@ -983,6 +977,10 @@ resource
 
     <para><citerefentry>
         <refentrytitle>drbd</refentrytitle>
+
+        <manvolnum>8</manvolnum>
+      </citerefentry>, <citerefentry>
+        <refentrytitle>drbddisk</refentrytitle>
 
         <manvolnum>8</manvolnum>
       </citerefentry>, <citerefentry>

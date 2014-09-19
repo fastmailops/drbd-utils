@@ -498,6 +498,7 @@ int call_cmd_fn(int (*function) (struct cfg_ctx *),
 int call_cmd(struct adm_cmd *cmd, struct cfg_ctx *ctx,
 	     enum on_error on_error)
 {
+	struct cfg_ctx tmp_ctx = *ctx;
 	struct d_resource *res = ctx->res;
 	struct d_volume *vol;
 	int ret;
@@ -506,11 +507,11 @@ int call_cmd(struct adm_cmd *cmd, struct cfg_ctx *ctx,
 		set_peer_in_resource(res, cmd->need_peer);
 
 	if (!cmd->iterate_volumes || ctx->vol != NULL)
-		return call_cmd_fn(cmd->function, ctx, on_error);
+		return call_cmd_fn(cmd->function, &tmp_ctx, on_error);
 
 	for_each_volume(vol, res->me->volumes) {
-		ctx->vol = vol;
-		ret = call_cmd_fn(cmd->function, ctx, on_error);
+		tmp_ctx.vol = vol;
+		ret = call_cmd_fn(cmd->function, &tmp_ctx, on_error);
 		/* FIXME: Do we want to keep running?
 		 * When?
 		 * How would we determine which return value to return? */
@@ -857,6 +858,8 @@ static void dump_host_info(struct d_host_info *hi)
 
 	if (!hi->by_address)
 		dump_address("address", hi->address, hi->port, hi->address_family);
+	if (hi->alt_address)
+		dump_address("alternate-link-address", hi->alt_address, hi->alt_port, hi->alt_address_family);
 	if (hi->proxy)
 		dump_proxy_info(hi->proxy);
 	--indent;
@@ -2154,6 +2157,13 @@ static int adm_connect_or_net_options(struct cfg_ctx *ctx, bool do_connect, bool
 	if (err)
 		return err;
 
+	if (do_connect && res->me->alt_address) {
+		ssprintf(argv[NA(argc)], "--alternate-address");
+		make_address(res->me->alt_address, res->me->alt_port, res->me->alt_address_family);
+		ssprintf(argv[NA(argc)], "--alternate-peer-address");
+		make_address(res->peer->alt_address, res->peer->alt_port, res->peer->alt_address_family);
+	}
+
 	if (reset)
 		argv[NA(argc)] = "--set-defaults";
 	if (reset || do_connect) {
@@ -3433,7 +3443,7 @@ char *canonify_path(char *path)
 
 	if (last_slash) {
 		*last_slash++ = '\0';
-		cwd_fd = open(".", O_RDONLY);
+		cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 		if (cwd_fd < 0) {
 			fprintf(stderr, "open(\".\") failed: %m\n");
 			exit(E_usage);
@@ -3463,6 +3473,7 @@ char *canonify_path(char *path)
 			fprintf(stderr, "fchdir() failed: %m\n");
 			exit(E_usage);
 		}
+		close(cwd_fd);
 	}
 
 	return abs_path;

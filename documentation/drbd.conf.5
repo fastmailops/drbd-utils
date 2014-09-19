@@ -608,7 +608,7 @@ parameter\&.
 \fBon\-io\-error \fR\fB\fIhandler\fR\fR
 .RS 4
 .\" drbd.conf: on-io-error
-Configure how DRBD reacts to an I/O errors on a lower\-level device\&. The following policies are defined:
+Configure how DRBD reacts to I/O errors on a lower\-level device\&. The following policies are defined:
 .PP
 \fBpass_on\fR
 .RS 4
@@ -918,6 +918,16 @@ can be set to one of the secure hash algorithms supported by the kernel; see the
 is unset\&.
 .RE
 .PP
+\fBcsums\-after\-crash\-only\fR
+.RS 4
+.\" drbd.conf: csums-after-crash-only
+Enabling this option (and csums\-alg, above) makes it possible to use the checksum based resync only for the first resync after primary crash, but not for later "network hickups"\&.
+.sp
+In most cases, block that are marked as need\-to\-be\-resynced are in fact changed, so calculating checksums, and both reading and writing the blocks on the resync target is all effective overhead\&.
+.sp
+The advantage of checksum based resync is mostly after primary crash recovery, where the recovery marked larger areas (those covered by the activity log) as need\-to\-be\-resynced, just in case\&. Introduced in 8\&.4\&.5\&.
+.RE
+.PP
 \fBdata\-integrity\-alg \fR \fIalg\fR
 .RS 4
 .\" drbd.conf: data-integrity-alg
@@ -998,6 +1008,21 @@ seconds, DRBD will send a keep\-alive packet to make sure that a failed peer or 
 .\" drbd.conf: ping-timeout
 Define the timeout for replies to keep\-alive packets\&. If the peer does not reply within
 \fBping\-timeout\fR, DRBD will close and try to reestablish the connection\&. The default value is 0\&.5 seconds, with a minimum of 0\&.1 seconds and a maximum of 3 seconds\&. The unit is tenths of a second\&.
+.RE
+.PP
+\fBsocket\-check\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+.\" drbd.conf: socket-check-timeoutIn setups involving a DRBD\-proxy and connections that experience a lot of buffer\-bloat it might be necessary to set
+\fBping\-timeout\fR
+to an unusual high value\&. By default DRBD uses the same value to wait if a newly established TCP\-connection is stable\&. Since the DRBD\-proxy is usually located in the same data center such a long wait time may hinder DRBD\*(Aqs connect process\&.
+.sp
+In such setups
+\fBsocket\-check\-timeout\fR
+should be set to at least to the round trip time between DRBD and DRBD\-proxy\&. I\&.e\&. in most cases to 1\&.
+.sp
+The default unit is tenths of a second, the default value is 0 (which causes DRBD to use the value of
+\fBping\-timeout\fR
+instead)\&. Introduced in 8\&.4\&.5\&.
 .RE
 .PP
 \fBprotocol \fR\fB\fIname\fR\fR
@@ -1309,14 +1334,10 @@ parameter\&.
 .RE
 .SS "Section volume Parameters"
 .PP
-\fBdevice /dev/drbd\fR\fB\fIminor\-number\fR\fR, 
-.br
-\fBdevice \fR\fB\fI[name]\fR\fR\fB \fR\fB[minor \fIminor\-number\fR]\fR
+\fBdevice /dev/drbd\fR\fB\fIminor\-number\fR\fR
 .RS 4
 .\" drbd.conf: device
-Define the device name and minor number of a replicated block device\&. This is the device that applications are supposed to access; in most cases, the device is not used directly, but as a file system\&. This parameter is required\&.
-.sp
-The first form of this parameter assumes the standard device naming convention\&. The second form supports arbitrary device names: if the device name is omitted, the standard device naming convention is used; if the minor number is omitted, one of the available minor numbers is used\&.
+Define the device name and minor number of a replicated block device\&. This is the device that applications are supposed to access; in most cases, the device is not used directly, but as a file system\&. This parameter is required and the standard device naming convention is assumed\&.
 .sp
 In addition to this device, udev will create
 \fB/dev/drbd/by\-res/\fR\fB\fIresource\fR\fR\fB/\fR\fB\fIvolume\fR\fR
@@ -1396,6 +1417,7 @@ Copyright 2001\-2012 LINBIT Information Technologies, Philipp Reisner, Lars Elle
 .SH "SEE ALSO"
 .PP
 \fBdrbd\fR(8),
+\fBdrbddisk\fR(8),
 \fBdrbdsetup\fR(8),
 \fBdrbdadm\fR(8),
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,

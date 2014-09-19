@@ -7,6 +7,12 @@
 #include <net/if.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <fcntl.h>
+
+#ifndef O_CLOEXEC
+#warning "O_CLOEXEC undefined, redefining to 0"
+#define O_CLOEXEC 0
+#endif
 
 #include "config.h"
 
@@ -125,6 +131,9 @@ struct d_host_info
   char* address;
   char* port;
   char* address_family;
+  char* alt_address;
+  char* alt_port;
+  char* alt_address_family;
   struct d_proxy_info *proxy;
   struct d_host_info* next;
   struct d_resource* lower;  /* for device stacking */

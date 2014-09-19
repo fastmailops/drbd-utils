@@ -297,13 +297,12 @@ void pdperror(char *text)
 	exit(E_CONFIG_INVALID);
 }
 
-static void pperror(struct d_host_info *host, struct d_proxy_info *proxy, char *text)
+static void pperror(struct d_proxy_info *proxy, char *text)
 {
 	config_valid = 0;
-	fprintf(stderr, "%s:%d: in section: on %s { proxy on %s { ... } }:"
+	fprintf(stderr, "%s:%d: in section: proxy on %s { ... } }:"
 		" '%s' keyword missing.\n",
-		config_file, c_section_start, names_to_str(&host->on_hosts),
-		names_to_str(&proxy->on_hosts), text);
+		config_file, c_section_start, names_to_str(&proxy->on_hosts), text);
 }
 
 #define typecheck(type,x) \
@@ -804,13 +803,12 @@ static void parse_hosts(struct names *hosts, char delimeter)
 	}
 }
 
-static void parse_proxy_section(struct d_host_info *host)
+static struct d_proxy_info *parse_proxy_section(void)
 {
 	struct d_proxy_info *proxy;
 
 	proxy = calloc(1, sizeof(struct d_proxy_info));
 	STAILQ_INIT(&proxy->on_hosts);
-	host->proxy = proxy;
 
 	EXP(TK_ON);
 	parse_hosts(&proxy->on_hosts, '{');
@@ -835,12 +833,12 @@ static void parse_proxy_section(struct d_host_info *host)
 
  break_loop:
 	if (!proxy->inside.addr)
-		pperror(host, proxy, "inside");
+		pperror(proxy, "inside");
 
 	if (!proxy->outside.addr)
-		pperror(host, proxy, "outside");
+		pperror(proxy, "outside");
 
-	return;
+	return proxy;
 }
 
 void parse_meta_disk(struct d_volume *vol)
@@ -1181,7 +1179,7 @@ static void parse_host_section(struct d_resource *res,
 			range_check(R_PORT, "port", host->address.port);
 			break;
 		case TK_PROXY:
-			parse_proxy_section(host);
+			host->proxy_compat_only = parse_proxy_section();
 			break;
 		case TK_VOLUME:
 			EXP(TK_INTEGER);
@@ -1278,7 +1276,7 @@ void parse_stacked_section(struct d_resource* res)
 			range_check(R_PORT, "port", yylval.txt);
 			break;
 		case TK_PROXY:
-			parse_proxy_section(host);
+			host->proxy_compat_only = parse_proxy_section();
 			break;
 		case TK_VOLUME:
 			EXP(TK_INTEGER);
@@ -1399,21 +1397,19 @@ static int parse_proxy_options(struct options *proxy_options, struct options *pr
 	return 0;
 }
 
-int parse_proxy_options_section(struct d_resource *res)
+int parse_proxy_options_section(struct d_proxy_info **pp)
 {
 	int token;
-	struct d_resource dummy_res = { "dummy", };
+	struct d_proxy_info *proxy;
 
+	proxy = *pp ? *pp : calloc(1, sizeof(struct d_proxy_info));
 	token = yylex();
 	if (token != TK_PROXY) {
 		yyrestart(yyin); /* flushes flex's buffers */
 		return 1;
 	}
 
-	if (!res)
-		res = &dummy_res;
-
-	return parse_proxy_options(&res->proxy_options, &res->proxy_plugins);
+	return parse_proxy_options(&proxy->options, &proxy->plugins);
 }
 
 static struct hname_address *parse_hname_address_pair(struct connection *conn, int prev_token)
@@ -1452,13 +1448,23 @@ static struct hname_address *parse_hname_address_pair(struct connection *conn, i
 	parse_address:
 		__parse_address(&ha->address);
 		ha->parsed_address = 1;
-		EXP(';');
-		break;
+		goto parse_optional_via;
 	case TK_PORT:
 		EXP(TK_INTEGER);
 		ha->address.port = yylval.txt;
 		ha->parsed_port = 1;
-		EXP(';');
+
+	parse_optional_via:
+		token = yylex();
+		if (token == TK_VIA) {
+			EXP(TK_PROXY);
+			ha->proxy = parse_proxy_section();
+		} else if (token != ';')
+			pe_expected_got( "via | ; ", token);
+		break;
+	case TK_VIA:
+		EXP(TK_PROXY);
+		ha->proxy = parse_proxy_section();
 		break;
 	case ';':
 		break;
@@ -1789,7 +1795,7 @@ void include_stmt(char *str)
 
 	/* in order to allow relative paths in include statements we change
 	   directory to the location of the current configuration file. */
-	cwd_fd = open(".", O_RDONLY);
+	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 	if (cwd_fd < 0) {
 		fprintf(stderr, "open(\".\") failed: %m\n");
 		exit(E_USAGE);
@@ -1808,7 +1814,7 @@ void include_stmt(char *str)
 	r = glob(str, 0, NULL, &glob_buf);
 	if (r == 0) {
 		for (i=0; i<glob_buf.gl_pathc; i++) {
-			f = fopen(glob_buf.gl_pathv[i], "r");
+			f = fopen(glob_buf.gl_pathv[i], "re");
 			if (f) {
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
 				fclose(f);
@@ -1836,6 +1842,8 @@ void include_stmt(char *str)
 		fprintf(stderr, "fchdir() failed: %m\n");
 		exit(E_USAGE);
 	}
+
+	close(cwd_fd);
 }
 
 void my_parse(void)
