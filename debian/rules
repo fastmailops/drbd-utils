@@ -19,6 +19,8 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 	dh_auto_install --destdir debian/drbd-utils
+	# Shipped with dh_installman, upstream creates a dangling symlink
+	rm debian/drbd-utils/usr/share/man/man8/drbd-overview.8
 
 override_dh_install:
 	dh_install --fail-missing
