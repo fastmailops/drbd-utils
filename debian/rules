@@ -15,7 +15,8 @@ override_dh_auto_clean:
 override_dh_auto_configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
 		--sbindir=/sbin --with-utils --with-udev --with-xen \
-		--with-pacemaker --with-rgmanager --with-bashcompletion
+		--with-pacemaker --with-rgmanager --with-bashcompletion \
+		--with-initscripttype=sysv
 
 override_dh_auto_install:
 	dh_auto_install --destdir debian/drbd-utils
