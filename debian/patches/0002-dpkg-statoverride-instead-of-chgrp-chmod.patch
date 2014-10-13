@@ -8,9 +8,9 @@ Forwarded: no
  user/drbdadm_main.c |    4 +---
  1 file changed, 1 insertion(+), 3 deletions(-)
 
---- a/user/drbdadm_postparse.c
-+++ b/user/drbdadm_postparse.c
-@@ -972,9 +972,7 @@
+--- a/user/v9/drbdadm_postparse.c
++++ b/user/v9/drbdadm_postparse.c
+@@ -1023,9 +1023,7 @@
  				"  You need to fix this with these commands:\n");
  		did_header = 1;
  		fprintf(stderr,
@@ -21,9 +21,9 @@ Forwarded: no
  	}
  	return 1;
  }
---- a/user/legacy-84/drbdadm_main.c
-+++ b/user/legacy-84/drbdadm_main.c
-@@ -3205,9 +3205,7 @@
+--- a/user/v84/drbdadm_main.c
++++ b/user/v84/drbdadm_main.c
+@@ -3058,9 +3058,7 @@
  				"  You need to fix this with these commands:\n");
  		did_header = 1;
  		fprintf(stderr,
@@ -34,9 +34,9 @@ Forwarded: no
  	}
  	return 1;
  }
---- a/user/legacy/drbdadm_main.c
-+++ b/user/legacy/drbdadm_main.c
-@@ -2694,9 +2694,7 @@
+--- a/user/v83/drbdadm_main.c
++++ b/user/v83/drbdadm_main.c
+@@ -2538,9 +2538,7 @@
  				"  You need to fix this with these commands:\n");
  		did_header = 1;
  		fprintf(stderr,
