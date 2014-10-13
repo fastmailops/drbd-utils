@@ -99,7 +99,6 @@ GENL_struct(DRBD_NLA_CFG_CONTEXT, 2, drbd_cfg_context,
 	__str_field(2, DRBD_GENLA_F_MANDATORY,	ctx_resource_name, 128)
 	__bin_field(3, DRBD_GENLA_F_MANDATORY,	ctx_my_addr, 128)
 	__bin_field(4, DRBD_GENLA_F_MANDATORY,	ctx_peer_addr, 128)
-	__str_field_def(5, 0, ctx_conn_name, SHARED_SECRET_MAX)
 )
 
 GENL_struct(DRBD_NLA_DISK_CONF, 3, disk_conf,
@@ -109,10 +108,12 @@ GENL_struct(DRBD_NLA_DISK_CONF, 3, disk_conf,
 
 	/* use the resize command to try and change the disk_size */
 	__u64_field(4, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	disk_size)
-	/*__u32_field(5, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	max_bio_bvecs)*/
+	/* we could change the max_bio_bvecs,
+	 * but it won't propagate through the stack */
+	__u32_field(5, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	max_bio_bvecs)
 
 	__u32_field_def(6, DRBD_GENLA_F_MANDATORY,	on_io_error, DRBD_ON_IO_ERROR_DEF)
-	/*__u32_field_def(7, DRBD_GENLA_F_MANDATORY,	fencing_policy, DRBD_FENCING_DEF)*/
+	__u32_field_def(7, DRBD_GENLA_F_MANDATORY,	fencing, DRBD_FENCING_DEF)
 
 	__u32_field_def(8,	DRBD_GENLA_F_MANDATORY,	resync_rate, DRBD_RESYNC_RATE_DEF)
 	__s32_field_def(9,	DRBD_GENLA_F_MANDATORY,	resync_after, DRBD_MINOR_NUMBER_DEF)
@@ -128,20 +129,14 @@ GENL_struct(DRBD_NLA_DISK_CONF, 3, disk_conf,
 	__flg_field_def(18, DRBD_GENLA_F_MANDATORY,	disk_drain, DRBD_DISK_DRAIN_DEF)
 	__flg_field_def(19, DRBD_GENLA_F_MANDATORY,	md_flushes, DRBD_MD_FLUSHES_DEF)
 	__u32_field_def(20,	DRBD_GENLA_F_MANDATORY,	disk_timeout, DRBD_DISK_TIMEOUT_DEF)
-	__u32_field_def(21, DRBD_GENLA_F_MANDATORY,     read_balancing, DRBD_READ_BALANCING_DEF)
-	__u32_field_def(22,	DRBD_GENLA_F_MANDATORY,	unplug_watermark, DRBD_UNPLUG_WATERMARK_DEF)
+	__u32_field_def(21,	0 /* OPTIONAL */,       read_balancing, DRBD_READ_BALANCING_DEF)
+	/* 9: __u32_field_def(22,	DRBD_GENLA_F_MANDATORY,	unplug_watermark, DRBD_UNPLUG_WATERMARK_DEF) */
 	__flg_field_def(23,     0 /* OPTIONAL */,	al_updates, DRBD_AL_UPDATES_DEF)
 )
 
 GENL_struct(DRBD_NLA_RESOURCE_OPTS, 4, res_opts,
-	__str_field_def(1,	DRBD_GENLA_F_MANDATORY,	cpu_mask,       DRBD_CPU_MASK_SIZE)
+	__str_field_def(1,	DRBD_GENLA_F_MANDATORY,	cpu_mask,       32)
 	__u32_field_def(2,	DRBD_GENLA_F_MANDATORY,	on_no_data, DRBD_ON_NO_DATA_DEF)
-	__flg_field_def(3,	DRBD_GENLA_F_MANDATORY,	auto_promote, DRBD_AUTO_PROMOTE_DEF)
-	__u32_field(4,		DRBD_F_REQUIRED | DRBD_F_INVARIANT,	node_id)
-	__u32_field_def(5,	DRBD_GENLA_F_MANDATORY,	peer_ack_window, DRBD_PEER_ACK_WINDOW_DEF)
-	__u32_field_def(6,	DRBD_GENLA_F_MANDATORY,	twopc_timeout, DRBD_TWOPC_TIMEOUT_DEF)
-	__u32_field_def(7,	DRBD_GENLA_F_MANDATORY, twopc_retry_timeout, DRBD_TWOPC_RETRY_TIMEOUT_DEF)
-	__u32_field_def(8,	0 /* OPTIONAL */,	peer_ack_delay, DRBD_PEER_ACK_DELAY_DEF)
 )
 
 GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
@@ -159,7 +154,9 @@ GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
 	__u32_field_def(11,	DRBD_GENLA_F_MANDATORY,	sndbuf_size, DRBD_SNDBUF_SIZE_DEF)
 	__u32_field_def(12,	DRBD_GENLA_F_MANDATORY,	rcvbuf_size, DRBD_RCVBUF_SIZE_DEF)
 	__u32_field_def(13,	DRBD_GENLA_F_MANDATORY,	ko_count, DRBD_KO_COUNT_DEF)
+	__u32_field_def(14,	DRBD_GENLA_F_MANDATORY,	max_buffers, DRBD_MAX_BUFFERS_DEF)
 	__u32_field_def(15,	DRBD_GENLA_F_MANDATORY,	max_epoch_size, DRBD_MAX_EPOCH_SIZE_DEF)
+	__u32_field_def(16,	DRBD_GENLA_F_MANDATORY,	unplug_watermark, DRBD_UNPLUG_WATERMARK_DEF)
 	__u32_field_def(17,	DRBD_GENLA_F_MANDATORY,	after_sb_0p, DRBD_AFTER_SB_0P_DEF)
 	__u32_field_def(18,	DRBD_GENLA_F_MANDATORY,	after_sb_1p, DRBD_AFTER_SB_1P_DEF)
 	__u32_field_def(19,	DRBD_GENLA_F_MANDATORY,	after_sb_2p, DRBD_AFTER_SB_2P_DEF)
@@ -173,11 +170,13 @@ GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
 	__flg_field_def(27, DRBD_GENLA_F_MANDATORY,	always_asbp, DRBD_ALWAYS_ASBP_DEF)
 	__flg_field(28, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	tentative)
 	__flg_field_def(29,	DRBD_GENLA_F_MANDATORY,	use_rle, DRBD_USE_RLE_DEF)
-	__u32_field_def(30,	DRBD_GENLA_F_MANDATORY,	fencing_policy, DRBD_FENCING_DEF)
-	__str_field_def(31,	DRBD_GENLA_F_MANDATORY, name, SHARED_SECRET_MAX)
-	__u32_field(32,		DRBD_F_REQUIRED | DRBD_F_INVARIANT,	peer_node_id)
+	/* 9: __u32_field_def(30,	DRBD_GENLA_F_MANDATORY,	fencing_policy, DRBD_FENCING_DEF) */
+	/* 9: __str_field_def(31,     DRBD_GENLA_F_MANDATORY, name, SHARED_SECRET_MAX) */
+	/* 9: __u32_field(32,         DRBD_F_REQUIRED | DRBD_F_INVARIANT,     peer_node_id) */
 	__flg_field_def(33, 0 /* OPTIONAL */,	csums_after_crash_only, DRBD_CSUMS_AFTER_CRASH_ONLY_DEF)
 	__u32_field_def(34, 0 /* OPTIONAL */, sock_check_timeo, DRBD_SOCKET_CHECK_TIMEO_DEF)
+	__bin_field(35, 0 /* OPTIONAL */, my_addr2, 128)
+	__bin_field(36, 0 /* OPTIONAL */, peer_addr2, 128)
 )
 
 GENL_struct(DRBD_NLA_SET_ROLE_PARMS, 6, set_role_parms,
@@ -190,6 +189,46 @@ GENL_struct(DRBD_NLA_RESIZE_PARMS, 7, resize_parms,
 	__flg_field(3, DRBD_GENLA_F_MANDATORY,	no_resync)
 	__u32_field_def(4, 0 /* OPTIONAL */, al_stripes, DRBD_AL_STRIPES_DEF)
 	__u32_field_def(5, 0 /* OPTIONAL */, al_stripe_size, DRBD_AL_STRIPE_SIZE_DEF)
+)
+
+GENL_struct(DRBD_NLA_STATE_INFO, 8, state_info,
+	/* the reason of the broadcast,
+	 * if this is an event triggered broadcast. */
+	__u32_field(1, DRBD_GENLA_F_MANDATORY,	sib_reason)
+	__u32_field(2, DRBD_F_REQUIRED,	current_state)
+	__u64_field(3, DRBD_GENLA_F_MANDATORY,	capacity)
+	__u64_field(4, DRBD_GENLA_F_MANDATORY,	ed_uuid)
+
+	/* These are for broadcast from after state change work.
+	 * prev_state and new_state are from the moment the state change took
+	 * place, new_state is not neccessarily the same as current_state,
+	 * there may have been more state changes since.  Which will be
+	 * broadcasted soon, in their respective after state change work.  */
+	__u32_field(5, DRBD_GENLA_F_MANDATORY,	prev_state)
+	__u32_field(6, DRBD_GENLA_F_MANDATORY,	new_state)
+
+	/* if we have a local disk: */
+	__bin_field(7, DRBD_GENLA_F_MANDATORY,	uuids, (UI_SIZE*sizeof(__u64)))
+	__u32_field(8, DRBD_GENLA_F_MANDATORY,	disk_flags)
+	__u64_field(9, DRBD_GENLA_F_MANDATORY,	bits_total)
+	__u64_field(10, DRBD_GENLA_F_MANDATORY,	bits_oos)
+	/* and in case resync or online verify is active */
+	__u64_field(11, DRBD_GENLA_F_MANDATORY,	bits_rs_total)
+	__u64_field(12, DRBD_GENLA_F_MANDATORY,	bits_rs_failed)
+
+	/* for pre and post notifications of helper execution */
+	__str_field(13, DRBD_GENLA_F_MANDATORY,	helper, 32)
+	__u32_field(14, DRBD_GENLA_F_MANDATORY,	helper_exit_code)
+
+	__u64_field(15,                      0, send_cnt)
+	__u64_field(16,                      0, recv_cnt)
+	__u64_field(17,                      0, read_cnt)
+	__u64_field(18,                      0, writ_cnt)
+	__u64_field(19,                      0, al_writ_cnt)
+	__u64_field(20,                      0, bm_writ_cnt)
+	__u32_field(21,                      0, ap_bio_cnt)
+	__u32_field(22,                      0, ap_pending_cnt)
+	__u32_field(23,                      0, rs_pending_cnt)
 )
 
 GENL_struct(DRBD_NLA_START_OV_PARMS, 9, start_ov_parms,
@@ -213,16 +252,12 @@ GENL_struct(DRBD_NLA_DETACH_PARMS, 13, detach_parms,
 	__flg_field(1, DRBD_GENLA_F_MANDATORY,	force_detach)
 )
 
-GENL_struct(DRBD_NLA_DEVICE_CONF, 14, device_conf,
-	__u32_field_def(1, DRBD_F_REQUIRED | DRBD_F_INVARIANT,	max_bio_size, DRBD_MAX_BIO_SIZE_DEF)
-	__u32_field_def(2, DRBD_F_REQUIRED | DRBD_F_INVARIANT,	max_buffers, DRBD_MAX_BUFFERS_DEF)
-)
-
 GENL_struct(DRBD_NLA_RESOURCE_INFO, 15, resource_info,
 	__u32_field(1, 0, res_role)
 	__flg_field(2, 0, res_susp)
 	__flg_field(3, 0, res_susp_nod)
 	__flg_field(4, 0, res_susp_fen)
+	/* __flg_field(5, 0, res_weak) */
 )
 
 GENL_struct(DRBD_NLA_DEVICE_INFO, 16, device_info,
@@ -287,24 +322,39 @@ GENL_struct(DRBD_NLA_HELPER, 24, drbd_helper_info,
 	__u32_field(2, DRBD_GENLA_F_MANDATORY, helper_status)
 )
 
-GENL_struct(DRBD_NLA_INVALIDATE_PARMS, 25, invalidate_parms,
-	__s32_field_def(1, DRBD_GENLA_F_MANDATORY, sync_from_peer_node_id, DRBD_SYNC_FROM_NID_DEF)
-)
-
-GENL_struct(DRBD_NLA_FORGET_PEER_PARMS, 26, forget_peer_parms,
-	__s32_field_def(1, DRBD_GENLA_F_MANDATORY, forget_peer_node_id, DRBD_SYNC_FROM_NID_DEF)
-)
-
 /*
  * Notifications and commands (genlmsghdr->cmd)
  */
 GENL_mc_group(events)
 
-	/* add DRBD minor devices as volumes to resources */
-GENL_op(DRBD_ADM_NEW_MINOR, 5, GENL_doit(drbd_adm_new_minor),
+	/* kernel -> userspace announcement of changes */
+GENL_notification(
+	DRBD_EVENT, 1, events,
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
-	GENL_tla_expected(DRBD_NLA_DEVICE_CONF, DRBD_GENLA_F_MANDATORY))
-GENL_op(DRBD_ADM_DEL_MINOR, 6, GENL_doit(drbd_adm_del_minor),
+	GENL_tla_expected(DRBD_NLA_STATE_INFO, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_NET_CONF, DRBD_GENLA_F_MANDATORY)
+	GENL_tla_expected(DRBD_NLA_DISK_CONF, DRBD_GENLA_F_MANDATORY)
+	GENL_tla_expected(DRBD_NLA_SYNCER_CONF, DRBD_GENLA_F_MANDATORY)
+)
+
+	/* query kernel for specific or all info */
+GENL_op(
+	DRBD_ADM_GET_STATUS, 2,
+	GENL_op_init(
+		.doit = drbd_adm_get_status,
+		.dumpit = drbd_adm_get_status_all,
+		/* anyone may ask for the status,
+		 * it is broadcasted anyways */
+	),
+	/* To select the object .doit.
+	 * Or a subset of objects in .dumpit. */
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_GENLA_F_MANDATORY)
+)
+
+	/* add DRBD minor devices as volumes to resources */
+GENL_op(DRBD_ADM_NEW_MINOR, 5, GENL_doit(drbd_adm_add_minor),
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED))
+GENL_op(DRBD_ADM_DEL_MINOR, 6, GENL_doit(drbd_adm_delete_minor),
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED))
 
 	/* add or delete resources */
@@ -387,9 +437,7 @@ GENL_op(DRBD_ADM_DETACH,	18, GENL_doit(drbd_adm_detach),
 	GENL_tla_expected(DRBD_NLA_DETACH_PARMS, DRBD_GENLA_F_MANDATORY))
 
 GENL_op(DRBD_ADM_INVALIDATE,	19, GENL_doit(drbd_adm_invalidate),
-	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
-	GENL_tla_expected(DRBD_NLA_INVALIDATE_PARMS, DRBD_F_REQUIRED))
-
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED))
 GENL_op(DRBD_ADM_INVAL_PEER,	20, GENL_doit(drbd_adm_invalidate_peer),
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED))
 GENL_op(DRBD_ADM_PAUSE_SYNC,	21, GENL_doit(drbd_adm_pause_sync),
@@ -485,7 +533,3 @@ GENL_notification(
 GENL_notification(
 	DRBD_INITIAL_STATE_DONE, 41, events,
 	GENL_tla_expected(DRBD_NLA_NOTIFICATION_HEADER, DRBD_F_REQUIRED))
-
-GENL_op(DRBD_ADM_FORGET_PEER,		42, GENL_doit(drbd_adm_forget_peer),
-	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
-	GENL_tla_expected(DRBD_NLA_FORGET_PEER_PARMS, DRBD_F_REQUIRED))

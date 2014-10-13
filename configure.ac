@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.1, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.2rc1, [drbd-dev@lists.linbit.com])
 
 AC_SUBST(PACKAGE_VERSION_EQUIVALENT_84, ["8.4.5 8.4.4 8.4.3 8.4.2 8.4.1 8.4.0"])
 AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_84, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_84)"])
@@ -45,12 +45,13 @@ infodir="`eval echo ${infodir}`"
 mandir="`eval echo ${mandir}`"
 docdir="`eval echo ${docdir}`"
 
-dnl "--with-<foo>" options (all except legacy and rgm enabled by default, pass --without-<foo> to disable)
+dnl "--with-<foo>" options (all except rgm enabled by default, pass --without-<foo> to disable)
 WITH_83_SUPPORT=yes
 WITH_84_SUPPORT=yes
 WITH_UDEV=yes
 WITH_XEN=yes
 WITH_PACEMAKER=yes
+WITH_HEARTBEAT=yes
 WITH_RGMANAGER=no
 WITH_BASHCOMPLETION=yes
 WITH_NOARCH_SUBPACKAGES=no
@@ -74,6 +75,10 @@ AC_ARG_WITH([pacemaker],
 	[AS_HELP_STRING([--with-pacemaker],
 			[Enable Pacemaker integration])],
 	[WITH_PACEMAKER=$withval])
+AC_ARG_WITH([heartbeat],
+	[AS_HELP_STRING([--with-heartbeat],
+			[Enable Heartbeat v1 haresources integration scripts])],
+	[WITH_HEARTBEAT=$withval])
 AC_ARG_WITH([rgmanager],
 	[AS_HELP_STRING([--with-rgmanager],
 			[Enable Red Hat Cluster Suite integration])],
@@ -105,6 +110,7 @@ AC_SUBST(WITH_84_SUPPORT)
 AC_SUBST(WITH_UDEV)
 AC_SUBST(WITH_XEN)
 AC_SUBST(WITH_PACEMAKER)
+AC_SUBST(WITH_HEARTBEAT)
 AC_SUBST(WITH_RGMANAGER)
 AC_SUBST(WITH_BASHCOMPLETION)
 
@@ -362,8 +368,8 @@ fi
 
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/Makefile user/legacy/Makefile user/legacy-84/Makefile scripts/Makefile documentation/Makefile documentation/legacy-83/Makefile documentation/legacy-84/Makefile scripts/drbd.rules)
-   AC_CONFIG_HEADERS(user/config.h)
+   AC_CONFIG_FILES(Makefile user/shared/Makefile user/v9/Makefile user/v83/Makefile user/v84/Makefile scripts/Makefile documentation/v9/Makefile documentation/v83/Makefile documentation/v84/Makefile scripts/drbd.rules)
+   AC_CONFIG_HEADERS(user/shared/config.h)
 else
    AC_CONFIG_FILES(drbd.spec)
 fi
