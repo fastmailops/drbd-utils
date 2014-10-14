@@ -7,7 +7,7 @@ Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
  Philipp Hug <debian@hug.cx>,
  Apollon Oikonomopoulos <apoikos@debian.org>
 Build-Depends: debhelper (>= 9), flex, xsltproc, dh-systemd (>= 1.5)
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 Homepage: http://www.drbd.org/
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd-utils.git
 Vcs-Git: git://anonscm.debian.org/debian-ha/drbd-utils/
