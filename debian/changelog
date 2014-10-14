@@ -1,3 +1,20 @@
+drbd-utils (8.9.2~rc1-1) unstable; urgency=medium
+
+  * New upstream release candidate.
+  * d/rules: call ./configure with initscripttype=sysv. Fixes FTBS when
+    /sbin/init is systemd (Closes: #765116).
+  * Refresh patches to reflect upstream directory moves.
+  * Bump standards to 3.9.6; no changes needed.
+  * d/copyright: update sys_queue.h location.
+  * Build-depend on docbook-xsl and (re-)build the manpages, as 8.4 manpages
+    are not shipped pre-built.
+  * Backport upstream commits 7185623a and 1e4a6a68, fixing 8.4 manpage builds.
+  * Link drbddisk-8.4.8 manpage to drbddisk.8.
+  * Upstream is shipping the heartbeat resource scripts again; dropped our own
+    copies.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Mon, 13 Oct 2014 23:38:15 +0300
+
 drbd-utils (8.9.1+git0.f861210b-1) unstable; urgency=medium
 
   * New upstream version.
