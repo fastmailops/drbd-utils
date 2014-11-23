@@ -1,3 +1,12 @@
+drbd-utils (8.9.2~rc1-2) unstable; urgency=medium
+
+  * Build-Depend on docbook-xml to avoid fetching the docbook DTDs from the
+    internet (closes: #768881).
+  * Build-Depend on udev to avoid shipping a disabled rules file in case the
+    build system does not find udevadm or udevinfo.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Sun, 23 Nov 2014 17:30:02 +0200
+
 drbd-utils (8.9.2~rc1-1) unstable; urgency=medium
 
   * New upstream release candidate.
