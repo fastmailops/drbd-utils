@@ -5,3 +5,4 @@ disable-automatic-user-survey.patch
 add-lsb-description.patch
 initscript-remove-path.patch
 fix-8.4-manpages
+reproducible-build

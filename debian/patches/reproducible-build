@@ -1,0 +1,36 @@
+Author: Apollon Oikonomopoulos <apoikos@debian.org>
+Description: Ensure reproducible build
+ .
+ Upstream creates build stamp using the git commit hash, build host,
+ build date and user. While the commit hash is fixed, the rest of the
+ parameters are not, resulting in a non-reproducible build. In order to
+ fix these, we choose the following values for these parameters:
+ .   
+  - <user>@<host>: debian-ha-maintainers@lists.alioth.debian.org.
+  - <builddate>: the date of the current Debian changelog entry.
+
+Forwarded: not-needed
+Last-Update: 2015-02-24
+
+--- a/user/shared/Makefile.in
++++ b/user/shared/Makefile.in
+@@ -58,6 +58,10 @@
+ 
+ CFLAGS += -Wall -I../../common -I.. -I.
+ 
++# Debian reproducible build
++DEBU=debian-ha-maintainers@lists.alioth.debian.org
++DEBD=$(shell dpkg-parsechangelog -l../../debian/changelog -SDate)
++
+ .PHONY: drbd_buildtag.c
+ 
+ all: drbdmeta_scanner.c drbd_buildtag.c
+@@ -83,7 +87,7 @@
+ 	else									\
+ 		grep return $@ ;						\
+ 	fi ;									\
+-	echo -e "\t\t\" build by $$USER@$$HOSTNAME, `date "+%F %T"`\";\n}";	\
++	echo -e "\t\t\" build by $(DEBU), $$(date -d "$(DEBD)" "+%F %T")\";\n}";\
+ 	mv --force $@.new $@
+ 
+ drbdmeta_scanner.c: drbdmeta_scanner.fl drbdmeta_parser.h
