@@ -10,5 +10,5 @@ Bug-Debian: http://bugs.debian.org/711352
 -	usage-count yes;
 +	usage-count no;
  	# minor-count dialog-refresh disable-ip-verification
+ 	# cmd-timeout-short 5; cmd-timeout-medium 121; cmd-timeout-long 600;
  }
- 

@@ -16,7 +16,7 @@ Last-Update: 2015-02-24
 +++ b/user/shared/Makefile.in
 @@ -58,6 +58,10 @@
  
- CFLAGS += -Wall -I../../common -I.. -I.
+ CFLAGS += -Wall -I../../drbd-headers -I.. -I.
  
 +# Debian reproducible build
 +DEBU=debian-ha-maintainers@lists.alioth.debian.org
