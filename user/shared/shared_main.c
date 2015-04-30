@@ -52,11 +52,20 @@
 #include <time.h>
 
 #include "drbd_endian.h"
+#include "shared_main.h"
 #include "shared_tool.h"
 
 extern struct ifreq *ifreq_list;
 
+struct d_globals global_options = {
 
+	.cmd_timeout_short = CMD_TIMEOUT_SHORT_DEF,
+	.cmd_timeout_medium = CMD_TIMEOUT_MEDIUM_DEF,
+	.cmd_timeout_medium = CMD_TIMEOUT_LONG_DEF,
+
+	.dialog_refresh = 1,
+	.usage_count = UC_ASK,
+};
 
 void chld_sig_hand(int __attribute((unused)) unused)
 {
@@ -185,7 +194,7 @@ int have_ip_ipv6(const char *ip)
 
 	while (fscanf
 	       (if_inet6,
-		X32(08) X32(08) X32(08) X32(08) " %*02x %*02x %*02x %*02x %s",
+		X32(08) X32(08) X32(08) X32(08) " %*x %*x %*x %*x %s",
 		b, b + 1, b + 2, b + 3, name) > 0) {
 		for (i = 0; i < 4; i++)
 			addr6.s6_addr32[i] = cpu_to_be32(b[i]);
@@ -218,4 +227,169 @@ void substitute_deprecated_cmd(char **c, char *deprecated,
 			progname, deprecated, progname, substitution);
 		*c = substitution;
 	}
+}
+
+void m__system(char **argv, int flags, const char *res_name, pid_t *kid, int *fd, int *ex)
+{
+	pid_t pid;
+	int status, rv = -1;
+	int timeout = 0;
+	char **cmdline = argv;
+	int pipe_fds[2];
+
+	struct sigaction so;
+	struct sigaction sa;
+
+	if (flags & (RETURN_STDERR_FD | RETURN_STDOUT_FD))
+		assert(fd);
+
+	sa.sa_handler = &alarm_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+
+	if (dry_run || verbose) {
+		if (sh_varname && *cmdline)
+			printf("%s=%s\n", sh_varname,
+					res_name ? shell_escape(res_name) : "");
+		while (*cmdline) {
+			printf("%s ", shell_escape(*cmdline++));
+		}
+		printf("\n");
+		if (dry_run) {
+			if (kid)
+				*kid = -1;
+			if (fd)
+				*fd = -1;
+			if (ex)
+				*ex = 0;
+			return;
+		}
+	}
+
+	/* flush stdout and stderr, so output of drbdadm
+	 * and helper binaries is reported in order! */
+	fflush(stdout);
+	fflush(stderr);
+
+	if (adjust_with_progress && !(flags & RETURN_STDERR_FD))
+		flags |= SUPRESS_STDERR;
+
+	/* create the pipe in any case:
+	 * it helps the analyzer and later we have:
+	 * '*fd = pipe_fds[0];' */
+	if (pipe(pipe_fds) < 0) {
+		perror("pipe");
+		fprintf(stderr, "Error in pipe, giving up.\n");
+		exit(E_EXEC_ERROR);
+	}
+
+	pid = fork();
+	if (pid == -1) {
+		fprintf(stderr, "Can not fork\n");
+		exit(E_EXEC_ERROR);
+	}
+	if (pid == 0) {
+		/* Child: close reading end. */
+		close(pipe_fds[0]);
+		if (flags & RETURN_STDOUT_FD) {
+			dup2(pipe_fds[1], STDOUT_FILENO);
+		}
+		if (flags & RETURN_STDERR_FD) {
+			dup2(pipe_fds[1], STDERR_FILENO);
+		}
+		close(pipe_fds[1]);
+
+		if (flags & SUPRESS_STDERR)
+			fclose(stderr);
+		if (argv[0])
+			execvp(argv[0], argv);
+		fprintf(stderr, "Can not exec\n");
+		exit(E_EXEC_ERROR);
+	}
+
+	/* Parent process: close writing end. */
+	close(pipe_fds[1]);
+
+	if (flags & SLEEPS_FINITE) {
+		sigaction(SIGALRM, &sa, &so);
+		alarm_raised = 0;
+		switch (flags & SLEEPS_MASK) {
+		case SLEEPS_SHORT:
+			timeout = global_options.cmd_timeout_short;
+			break;
+		case SLEEPS_LONG:
+			timeout = global_options.cmd_timeout_medium;
+			break;
+		case SLEEPS_VERY_LONG:
+			timeout = global_options.cmd_timeout_long;
+			break;
+		default:
+			fprintf(stderr, "logic bug in %s:%d\n", __FILE__,
+				__LINE__);
+			exit(E_THINKO);
+		}
+		alarm(timeout);
+	}
+
+	if (kid)
+		*kid = pid;
+
+	if (flags & (RETURN_STDOUT_FD | RETURN_STDERR_FD)
+			||  flags == RETURN_PID) {
+		if (fd)
+			*fd = pipe_fds[0];
+
+		return;
+	}
+
+	while (1) {
+		if (waitpid(pid, &status, 0) == -1) {
+			if (errno != EINTR)
+				break;
+			if (alarm_raised) {
+				alarm(0);
+				sigaction(SIGALRM, &so, NULL);
+				rv = 0x100;
+				break;
+			} else {
+				fprintf(stderr, "logic bug in %s:%d\n",
+					__FILE__, __LINE__);
+				exit(E_EXEC_ERROR);
+			}
+		} else {
+			if (WIFEXITED(status)) {
+				rv = WEXITSTATUS(status);
+				break;
+			}
+		}
+	}
+
+	/* Do not close earlier, else the child gets EPIPE. */
+	close(pipe_fds[0]);
+
+	if (flags & SLEEPS_FINITE) {
+		if (rv >= 10
+		    && !(flags & (DONT_REPORT_FAILED | SUPRESS_STDERR))) {
+			fprintf(stderr, "Command '");
+			for (cmdline = argv; *cmdline; cmdline++) {
+				fprintf(stderr, "%s", *cmdline);
+				if (cmdline[1])
+					fputc(' ', stderr);
+			}
+			if (alarm_raised) {
+				fprintf(stderr,
+					"' did not terminate within %u seconds\n",
+					timeout);
+				exit(E_EXEC_ERROR);
+			} else {
+				fprintf(stderr,
+					"' terminated with exit code %d\n", rv);
+			}
+		}
+	}
+	fflush(stdout);
+	fflush(stderr);
+
+	if (ex)
+		*ex = rv;
 }

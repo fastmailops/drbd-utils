@@ -49,7 +49,13 @@ uses
 .PP
 This utility can only be used on devices which are not currently in use by the kernel\&.
 .PP
-The first argument (\fIdevice\fR) specifies the lower\-level device of a volume\&. The second argument specifies the metadata version to use (v06, v07, v08, v09)\&. In most metadata versions, the third argument (\fImeta_dev\fR) specifies the device which contains the metadata; this argument can be the same as
+The first argument (\fIdevice\fR) specifies the drbd device associated with a volume, or
+\(lq\-\(rq
+if no device is associated with that volume\&. If the drbd device is specified, the
+\fBdrbdmeta\fR
+utility makes sure that the drbd device does not currently have a volume attached to prevent meta\-data of an active volume from being destroyed\&.
+.PP
+The second argument specifies the metadata version to use (v06, v07, v08, v09)\&. In most metadata versions, the third argument (\fImeta_dev\fR) specifies the device which contains the metadata; this argument can be the same as
 \fIdevice\fR\&. The fourth argument (\fIindex\fR) can be one of the keywords
 \fBinternal\fR
 (for internal metadata),

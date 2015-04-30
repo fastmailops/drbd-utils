@@ -7,13 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.2rc1, [drbd-dev@lists.linbit.com])
-
-AC_SUBST(PACKAGE_VERSION_EQUIVALENT_84, ["8.4.5 8.4.4 8.4.3 8.4.2 8.4.1 8.4.0"])
-AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_84, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_84)"])
-
-AC_SUBST(PACKAGE_VERSION_EQUIVALENT_90, ["9.0.0pre9"])
-AC_SUBST(SPEC_PROVIDES_DRBD_UTILS_90, ["$(printf "Provides: drbd-utils = %s\n" $PACKAGE_VERSION_EQUIVALENT_90)"])
+AC_INIT(DRBD, 8.9.2, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -55,12 +49,12 @@ WITH_HEARTBEAT=yes
 WITH_RGMANAGER=no
 WITH_BASHCOMPLETION=yes
 WITH_NOARCH_SUBPACKAGES=no
-AC_ARG_WITH([83-support],
-	[AS_HELP_STRING([--without-83-support],
+AC_ARG_WITH([83support],
+	[AS_HELP_STRING([--without-83support],
 			[Do not include support for drbd driver/module <= 8.3])],
 	[WITH_83_SUPPORT=$withval])
-AC_ARG_WITH([84-support],
-	[AS_HELP_STRING([--without-84-support],
+AC_ARG_WITH([84support],
+	[AS_HELP_STRING([--without-84support],
 			[Do not include support for drbd driver/module 8.4])],
 	[WITH_84_SUPPORT=$withval])
 AC_ARG_WITH([udev],
@@ -133,6 +127,12 @@ else
 fi
 AC_SUBST(systemdunitdir)
 AC_MSG_RESULT([Using systemd unit directory: $systemdunitdir])
+
+AC_ARG_WITH(tmpfilesdir,
+	AC_HELP_STRING([--with-tmpfilesdir=DIR],
+		[install configuration files for management of volatile files and directories in DIR [[PREFIX/lib/tmpfiles.d]]]),
+		tmpfilesdir=$withval, tmpfilesdir='${prefix}/lib/tmpfiles.d')
+AC_SUBST(tmpfilesdir)
 
 # set default early
 default_udevdir=/lib/udev

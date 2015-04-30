@@ -167,7 +167,6 @@ char ss_buffer[1024];
 struct utsname nodeinfo;
 int line = 1;
 int fline;
-struct d_globals global_options = { 0, 0, 0, 1, UC_ASK };
 
 char *config_file = NULL;
 char *config_save = NULL;
@@ -186,6 +185,7 @@ int config_valid = 1;
 int no_tty;
 int dry_run = 0;
 int verbose = 0;
+int adjust_with_progress = 0;
 int do_verify_ips = 0;
 int do_register_minor = 1;
 /* whether drbdadm was called with "all" instead of resource name(s) */
@@ -356,7 +356,7 @@ void schedule_dcmd(int (*function) (struct d_resource *, const char *),
 	d = calloc(1, sizeof(struct deferred_cmd));
 	if (d == NULL) {
 		perror("calloc");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 
 	d->function = function;
@@ -389,7 +389,7 @@ static int test_if_resource_is_down(struct d_resource *res)
 
 	if (dry_run) {
 		fprintf(stderr, "Logic bug: should not be dry-running here.\n");
-		exit(E_thinko);
+		exit(E_THINKO);
 	}
 	if (verbose == 1)
 		verbose = 0;
@@ -399,7 +399,7 @@ static int test_if_resource_is_down(struct d_resource *res)
 
 	if (fd < 0) {
 		fprintf(stderr, "Strange: got negative fd.\n");
-		exit(E_thinko);
+		exit(E_THINKO);
 	}
 
 	while (1) {
@@ -454,7 +454,7 @@ enum do_register if_conf_differs_confirm_or_abort(struct d_resource *res)
 	if (!confirmed("Do you want to proceed "
 		       "and register the current config file?")) {
 		printf("Operation canceled.\n");
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 	return DO_REGISTER;
 }
@@ -526,88 +526,6 @@ int run_dcmds(void)
 }
 
 /*** These functions are used to the print the config ***/
-
-static char *esc(char *str)
-{
-	static char buffer[1024];
-	char *ue = str, *e = buffer;
-
-	if (!str || !str[0]) {
-		return "\"\"";
-	}
-	if (strchr(str, ' ') || strchr(str, '\t') || strchr(str, '\\')) {
-		*e++ = '"';
-		while (*ue) {
-			if (*ue == '"' || *ue == '\\') {
-				*e++ = '\\';
-			}
-			if (e - buffer >= 1022) {
-				fprintf(stderr, "string too long.\n");
-				exit(E_syntax);
-			}
-			*e++ = *ue++;
-			if (e - buffer >= 1022) {
-				fprintf(stderr, "string too long.\n");
-				exit(E_syntax);
-			}
-		}
-		*e++ = '"';
-		*e++ = '\0';
-		return buffer;
-	}
-	return str;
-}
-
-static char *esc_xml(char *str)
-{
-	static char buffer[1024];
-	char *ue = str, *e = buffer;
-
-	if (!str || !str[0]) {
-		return "";
-	}
-	if (strchr(str, '"') || strchr(str, '\'') || strchr(str, '<') ||
-	    strchr(str, '>') || strchr(str, '&') || strchr(str, '\\')) {
-		while (*ue) {
-			if (*ue == '"' || *ue == '\\') {
-				*e++ = '\\';
-				if (e - buffer >= 1021) {
-					fprintf(stderr, "string too long.\n");
-					exit(E_syntax);
-				}
-				*e++ = *ue++;
-			} else if (*ue == '\'' || *ue == '<' || *ue == '>'
-				   || *ue == '&') {
-				if (*ue == '\'' && e - buffer < 1017) {
-					strcpy(e, "&apos;");
-					e += 6;
-				} else if (*ue == '<' && e - buffer < 1019) {
-					strcpy(e, "&lt;");
-					e += 4;
-				} else if (*ue == '>' && e - buffer < 1019) {
-					strcpy(e, "&gt;");
-					e += 4;
-				} else if (*ue == '&' && e - buffer < 1018) {
-					strcpy(e, "&amp;");
-					e += 5;
-				} else {
-					fprintf(stderr, "string too long.\n");
-					exit(E_syntax);
-				}
-				ue++;
-			} else {
-				*e++ = *ue++;
-				if (e - buffer >= 1022) {
-					fprintf(stderr, "string too long.\n");
-					exit(E_syntax);
-				}
-			}
-		}
-		*e++ = '\0';
-		return buffer;
-	}
-	return str;
-}
 
 static void dump_options2(char *name, struct d_option *opts,
 		void(*within)(void*), void *ctx)
@@ -1028,12 +946,12 @@ static int sh_lres(struct d_resource *res,
 	if (!is_drbd_top) {
 		fprintf(stderr,
 			"sh-lower-resource only available in stacked mode\n");
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 	if (!res->stacked) {
 		fprintf(stderr, "'%s' is not stacked on this host (%s)\n",
 			res->name, nodeinfo.nodename);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 	printf("%s\n", res->me->lower->name);
 
@@ -1239,162 +1157,12 @@ static void find_drbdcmd(char **cmd, char **pathes)
 	}
 
 	fprintf(stderr, "Can not find command (drbdsetup/drbdmeta)\n");
-	exit(E_exec_error);
-}
-
-
-void m__system(char **argv, int flags, struct d_resource *res, pid_t *kid, int *fd, int *ex)
-{
-	pid_t pid;
-	int status, rv = -1;
-	int timeout = 0;
-	char **cmdline = argv;
-	int pipe_fds[2];
-
-	struct sigaction so;
-	struct sigaction sa;
-
-	sa.sa_handler = &alarm_handler;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-
-	if (dry_run || verbose) {
-		if (sh_varname && *cmdline)
-			printf("%s=%s\n", sh_varname, shell_escape(res->name));
-		while (*cmdline) {
-			printf("%s ", shell_escape(*cmdline++));
-		}
-		printf("\n");
-		if (dry_run) {
-			if (kid)
-				*kid = -1;
-			if (fd)
-				*fd = 0;
-			if (ex)
-				*ex = 0;
-			return;
-		}
-	}
-
-	/* flush stdout and stderr, so output of drbdadm
-	 * and helper binaries is reported in order! */
-	fflush(stdout);
-	fflush(stderr);
-
-	if (flags & (RETURN_STDOUT_FD | RETURN_STDERR_FD)) {
-		if (pipe(pipe_fds) < 0) {
-			perror("pipe");
-			fprintf(stderr, "Error in pipe, giving up.\n");
-			exit(E_exec_error);
-		}
-	}
-
-	pid = fork();
-	if (pid == -1) {
-		fprintf(stderr, "Can not fork\n");
-		exit(E_exec_error);
-	}
-	if (pid == 0) {
-		if (flags & RETURN_STDOUT_FD) {
-			close(pipe_fds[0]);
-			dup2(pipe_fds[1], 1);
-		}
-		if (flags & RETURN_STDERR_FD) {
-			close(pipe_fds[0]);
-			dup2(pipe_fds[1], 2);
-		}
-		if (flags & SUPRESS_STDERR)
-			fclose(stderr);
-		execvp(argv[0], argv);
-		fprintf(stderr, "Can not exec\n");
-		exit(E_exec_error);
-	}
-
-	if (flags & (RETURN_STDOUT_FD | RETURN_STDERR_FD))
-		close(pipe_fds[1]);
-
-	if (flags & SLEEPS_FINITE) {
-		sigaction(SIGALRM, &sa, &so);
-		alarm_raised = 0;
-		switch (flags & SLEEPS_MASK) {
-		case SLEEPS_SHORT:
-			timeout = 5;
-			break;
-		case SLEEPS_LONG:
-			timeout = COMM_TIMEOUT + 1;
-			break;
-		case SLEEPS_VERY_LONG:
-			timeout = 600;
-			break;
-		default:
-			fprintf(stderr, "logic bug in %s:%d\n", __FILE__,
-				__LINE__);
-			exit(E_thinko);
-		}
-		alarm(timeout);
-	}
-
-	if (kid)
-		*kid = pid;
-	if (fd)
-		*fd = pipe_fds[0];
-
-	if (flags & (RETURN_STDOUT_FD | RETURN_STDERR_FD)
-	||  flags == RETURN_PID)
-		return;
-
-	while (1) {
-		if (waitpid(pid, &status, 0) == -1) {
-			if (errno != EINTR)
-				break;
-			if (alarm_raised) {
-				alarm(0);
-				sigaction(SIGALRM, &so, NULL);
-				rv = 0x100;
-				break;
-			} else {
-				fprintf(stderr, "logic bug in %s:%d\n",
-					__FILE__, __LINE__);
-				exit(E_exec_error);
-			}
-		} else {
-			if (WIFEXITED(status)) {
-				rv = WEXITSTATUS(status);
-				break;
-			}
-		}
-	}
-
-	if (flags & SLEEPS_FINITE) {
-		if (rv >= 10
-		    && !(flags & (DONT_REPORT_FAILED | SUPRESS_STDERR))) {
-			fprintf(stderr, "Command '");
-			for (cmdline = argv; *cmdline; cmdline++) {
-				fprintf(stderr, "%s", *cmdline);
-				if (cmdline[1])
-					fputc(' ', stderr);
-			}
-			if (alarm_raised) {
-				fprintf(stderr,
-					"' did not terminate within %u seconds\n",
-					timeout);
-				exit(E_exec_error);
-			} else {
-				fprintf(stderr,
-					"' terminated with exit code %d\n", rv);
-			}
-		}
-	}
-	fflush(stdout);
-	fflush(stderr);
-
-	if (ex)
-		*ex = rv;
+	exit(E_EXEC_ERROR);
 }
 
 #define NA(ARGC) \
   ({ if((ARGC) >= MAX_ARGS) { fprintf(stderr,"MAX_ARGS too small\n"); \
-       exit(E_thinko); \
+       exit(E_THINKO); \
      } \
      (ARGC)++; \
   })
@@ -1438,7 +1206,7 @@ int adm_attach(struct d_resource *res, const char *unused __attribute((unused)))
 	make_options(opt);
 	argv[NA(argc)] = 0;
 
-	return m_system_ex(argv, SLEEPS_LONG, res);
+	return m_system_ex(argv, SLEEPS_LONG, res->name);
 }
 
 struct d_option *find_opt(struct d_option *base, char *name)
@@ -1472,7 +1240,7 @@ int adm_resize(struct d_resource *res, const char *cmd)
 
 	/* if this is not "resize", but "check-resize", be silent! */
 	silent = strcmp(cmd, "resize") ? SUPRESS_STDERR : 0;
-	ex = m_system_ex(argv, SLEEPS_SHORT | silent, res);
+	ex = m_system_ex(argv, SLEEPS_SHORT | silent, res->name);
 
 	if (ex)
 		return ex;
@@ -1489,7 +1257,7 @@ int adm_resize(struct d_resource *res, const char *cmd)
 	argv[2] = "check-resize";
 	argv[3] = NULL;
 	/* ignore exit code */
-	m_system_ex(argv, SLEEPS_SHORT | silent, res);
+	m_system_ex(argv, SLEEPS_SHORT | silent, res->name);
 
 	return 0;
 }
@@ -1523,7 +1291,7 @@ int _admm_generic(struct d_resource *res, const char *cmd, int flags)
 
 	argv[NA(argc)] = 0;
 
-	return m_system_ex(argv, flags, res);
+	return m_system_ex(argv, flags, res->name);
 }
 
 static int admm_generic(struct d_resource *res, const char *cmd)
@@ -1545,7 +1313,7 @@ static void _adm_generic(struct d_resource *res, const char *cmd, int flags, pid
 	argv[NA(argc)] = 0;
 
 	setenv("DRBD_RESOURCE", res->name, 1);
-	m__system(argv, flags, res, pid, fd, ex);
+	m__system(argv, flags, res->name, pid, fd, ex);
 }
 
 static int adm_generic(struct d_resource *res, const char *cmd, int flags)
@@ -1668,7 +1436,7 @@ static int adm_generic_b(struct d_resource *res, const char *cmd)
 
 	if (fd < 0) {
 		fprintf(stderr, "Strange: got negative fd.\n");
-		exit(E_thinko);
+		exit(E_THINKO);
 	}
 
 	if (!dry_run) {
@@ -1753,7 +1521,7 @@ static int adm_khelper(struct d_resource *res, const char *cmd)
 
 	if ((sh_cmd = get_opt_val(res->handlers, cmd, NULL))) {
 		argv[2] = sh_cmd;
-		rv = m_system_ex(argv, SLEEPS_VERY_LONG, res);
+		rv = m_system_ex(argv, SLEEPS_VERY_LONG, res->name);
 	}
 	return rv;
 }
@@ -1817,7 +1585,7 @@ int adm_connect(struct d_resource *res,
 
 	argv[NA(argc)] = 0;
 
-	return m_system_ex(argv, SLEEPS_SHORT, res);
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
 }
 
 struct d_resource *res_by_name(const char *name);
@@ -1881,7 +1649,7 @@ char *proxy_connection_name(struct d_resource *res)
 		fprintf(stderr,
 				"The connection name in resource %s got too long.\n",
 				res->name);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	return conn_name;
@@ -1906,7 +1674,7 @@ int do_proxy_conn_up(struct d_resource *res, const char *conn_name)
 			res->me->proxy->outside_port, res->me->address,
 			res->me->port);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, res);
+	rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
 	return rv;
 }
 
@@ -1947,7 +1715,7 @@ int do_proxy_conn_plugins(struct d_resource *res, const char *conn_name)
 
 	argv[NA(argc)] = 0;
 	if (argc > 2)
-		return m_system_ex(argv, SLEEPS_SHORT, res);
+		return m_system_ex(argv, SLEEPS_SHORT, res->name);
 
 	return 0;
 }
@@ -1961,7 +1729,7 @@ int do_proxy_conn_down(struct d_resource *res, const char *conn_name)
 		conn_name = proxy_connection_name(res);
 	ssprintf(argv[2], "del connection %s", conn_name);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, res);
+	rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
 	return rv;
 }
 
@@ -1976,7 +1744,7 @@ static int check_proxy(struct d_resource *res, int do_up)
 		fprintf(stderr,
 			"There is no proxy config for host %s in resource %s.\n",
 			nodeinfo.nodename, res->name);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	if (!name_in_names(nodeinfo.nodename, res->me->proxy->on_hosts)) {
@@ -1985,13 +1753,13 @@ static int check_proxy(struct d_resource *res, int do_up)
 		fprintf(stderr,
 			"The proxy config in resource %s is not for %s.\n",
 			res->name, nodeinfo.nodename);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	if (!res->peer) {
 		fprintf(stderr, "Cannot determine the peer in resource %s.\n",
 			res->name);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 	if (!res->peer->proxy) {
@@ -2000,7 +1768,7 @@ static int check_proxy(struct d_resource *res, int do_up)
 			res->name);
 		if (all_resources)
 			return 0;
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 
 
@@ -2048,7 +1816,7 @@ int adm_syncer(struct d_resource *res, const char *unused __attribute((unused)))
 
 	argv[NA(argc)] = 0;
 
-	return m_system_ex(argv, SLEEPS_SHORT, res);
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
 }
 
 static int adm_up(struct d_resource *res,
@@ -2091,7 +1859,7 @@ static int adm_wait_c(struct d_resource *res,
 	}
 	argv[NA(argc)] = 0;
 
-	rv = m_system_ex(argv, SLEEPS_FOREVER, res);
+	rv = m_system_ex(argv, SLEEPS_FOREVER, res->name);
 
 	return rv;
 }
@@ -2144,7 +1912,7 @@ static int childs_running(pid_t * pids, int opts)
 				continue;
 			}
 			perror("waitpid");
-			exit(E_exec_error);
+			exit(E_EXEC_ERROR);
 		}
 		if (wr == 0)
 			rv = 1;	// Child still running.
@@ -2202,7 +1970,7 @@ int gets_timeout(pid_t * pids, char *s, int size, int timeout)
 				goto out;	// pr = -1 here.
 			}
 			perror("poll");
-			exit(E_exec_error);
+			exit(E_EXEC_ERROR);
 		}
 	} while (pr == -1);
 
@@ -2210,7 +1978,7 @@ int gets_timeout(pid_t * pids, char *s, int size, int timeout)
 		rr = read(fileno(stdin), s, size - 1);
 		if (rr == -1) {
 			perror("read");
-			exit(E_exec_error);
+			exit(E_EXEC_ERROR);
 		}
 		s[rr] = 0;
 	}
@@ -2310,7 +2078,7 @@ static int adm_wait_ci(struct d_resource *ignored __attribute((unused)),
 		make_options(opt);
 		argv[NA(argc)] = 0;
 
-		m__system(argv, RETURN_PID, res, &pids[i++], NULL, NULL);
+		m__system(argv, RETURN_PID, res->name, &pids[i++], NULL, NULL);
 	}
 
 	wtime = global_options.dialog_refresh ? : -1;
@@ -2480,7 +2248,7 @@ void print_usage_and_exit(const char *addinfo)
 	if (addinfo)
 		printf("\n%s\n", addinfo);
 
-	exit(E_usage);
+	exit(E_USAGE);
 }
 
 void verify_ips(struct d_resource *res)
@@ -2740,7 +2508,7 @@ static void global_validate_maybe_expand_die_if_invalid(int expand)
 	for_each_resource(res, tmp, config) {
 		validate_resource(res);
 		if (!config_valid)
-			exit(E_config_invalid);
+			exit(E_CONFIG_INVALID);
 		if (expand) {
 			convert_after_option(res);
 			convert_discard_opt(res);
@@ -2764,7 +2532,7 @@ char *canonify_path(char *path)
 
 	if (!path || !path[0]) {
 		fprintf(stderr, "cannot canonify an empty path\n");
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 
 	tmp = strdupa(path);
@@ -2775,11 +2543,11 @@ char *canonify_path(char *path)
 		cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 		if (cwd_fd < 0) {
 			fprintf(stderr, "open(\".\") failed: %m\n");
-			exit(E_usage);
+			exit(E_USAGE);
 		}
 		if (chdir(tmp)) {
 			fprintf(stderr, "chdir(\"%s\") failed: %m\n", tmp);
-			exit(E_usage);
+			exit(E_USAGE);
 		}
 	} else {
 		last_slash = tmp;
@@ -2788,7 +2556,7 @@ char *canonify_path(char *path)
 	that_wd = getcwd(NULL, 0);
 	if (!that_wd) {
 		fprintf(stderr, "getcwd() failed: %m\n");
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 
 	if (!strcmp("/", that_wd))
@@ -2800,7 +2568,7 @@ char *canonify_path(char *path)
 	if (cwd_fd >= 0) {
 		if (fchdir(cwd_fd) < 0) {
 			fprintf(stderr, "fchdir() failed: %m\n");
-			exit(E_usage);
+			exit(E_USAGE);
 		}
 		close(cwd_fd);
 	}
@@ -2884,7 +2652,7 @@ int parse_options(int argc, char **argv)
 				if (!yyin) {
 					fprintf(stderr, "Can not open '%s'.\n.",
 						optarg);
-					exit(E_exec_error);
+					exit(E_EXEC_ERROR);
 				}
 				if (asprintf(&config_file, "%s", optarg) < 0) {
 					fprintf(stderr,
@@ -3045,7 +2813,7 @@ void assign_default_config_file(void)
 	}
 	if (!config_file) {
 		fprintf(stderr, "Can not open '%s': %m\n", conf_file[i - 1]);
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 	}
 }
 
@@ -3080,7 +2848,7 @@ void count_resources_or_die(void)
 			"The highest minor you have in your config is %d"
 			"but a minor_count of %d in your config!\n",
 			highest_minor, mc);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 }
 
@@ -3091,18 +2859,18 @@ void die_if_no_resources(void)
 			"WARN: no normal resources defined for this host (%s)!?\n"
 			"Misspelled name of the local machine with the 'on' keyword ?\n",
 			nodeinfo.nodename);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 	if (!is_drbd_top && nr_normal == 0) {
 		fprintf(stderr,
 			"WARN: no normal resources defined for this host (%s)!?\n",
 			nodeinfo.nodename);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 	if (is_drbd_top && nr_stacked == 0) {
 		fprintf(stderr, "WARN: nothing stacked for this host (%s), "
 			"nothing to do in stacked mode!\n", nodeinfo.nodename);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 }
 
@@ -3124,13 +2892,14 @@ void print_dump_header(void)
 int main(int argc, char **argv)
 {
 	size_t i;
-	int rv = 0;
+	int rv = 0, r;
 	struct adm_cmd *cmd = NULL;
 	struct d_resource *res, *tmp;
 	char *env_drbd_nodename = NULL;
 	int is_dump_xml;
 	int is_dump;
 
+	initialize_err();
 	yyin = NULL;
 	uname(&nodeinfo);	/* FIXME maybe fold to lower case ? */
 	no_tty = (!isatty(fileno(stdin)) || !isatty(fileno(stdout)));
@@ -3153,7 +2922,7 @@ int main(int argc, char **argv)
 
 	if (drbdsetup == NULL || drbdmeta == NULL || drbd_proxy_ctl == NULL) {
 		fprintf(stderr, "could not strdup argv[0].\n");
-		exit(E_exec_error);
+		exit(E_EXEC_ERROR);
 	}
 
 	if (!getenv("DRBD_DONT_WARN_ON_VERSION_MISMATCH"))
@@ -3176,13 +2945,13 @@ int main(int argc, char **argv)
 
 	if (cmd == NULL) {
 		fprintf(stderr, "Unknown command '%s'.\n", argv[optind]);
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 
 	if (config_test && !cmd->test_config) {
 		fprintf(stderr, "The --config-to-test (-t) option is only allowed "
 			"with the dump and sh-nop commands\n");
-		exit(E_usage);
+		exit(E_USAGE);
 	}
 
 	do_verify_ips = cmd->verify_ips;
@@ -3237,7 +3006,7 @@ int main(int argc, char **argv)
 		yyin = fopen(config_test, "r");
 		if (!yyin) {
 			fprintf(stderr, "Can not open '%s'.\n.", config_test);
-			exit(E_exec_error);
+			exit(E_EXEC_ERROR);
 		}
 		my_parse();
 
@@ -3246,9 +3015,9 @@ int main(int argc, char **argv)
 	}
 
 	if (!config_valid)
-		exit(E_config_invalid);
+		exit(E_CONFIG_INVALID);
 
-	post_parse(config, cmd->is_proxy_cmd ? match_on_proxy : 0);
+	post_parse(config, cmd->is_proxy_cmd ? MATCH_ON_PROXY : 0);
 
 	if (!is_dump || dry_run || verbose)
 		expand_common();
@@ -3263,7 +3032,7 @@ int main(int argc, char **argv)
 	if (cmd->res_name_required) {
 		if (config == NULL) {
 			fprintf(stderr, "no resources defined!\n");
-			exit(E_usage);
+			exit(E_USAGE);
 		}
 
 		global_validate_maybe_expand_die_if_invalid(!is_dump);
@@ -3280,7 +3049,7 @@ int main(int argc, char **argv)
 				verify_ips(res);
 			}
 			if (!config_valid)
-				exit(E_config_invalid);
+				exit(E_CONFIG_INVALID);
 
 			if (is_dump_xml)
 				print_dump_xml_header();
@@ -3313,13 +3082,13 @@ int main(int argc, char **argv)
 					fprintf(stderr,
 						"'%s' not defined in your config.\n",
 						argv[i]);
-					exit(E_usage);
+					exit(E_USAGE);
 				}
 				if (res->ignore && !is_dump) {
 					fprintf(stderr,
 						"'%s' ignored, since this host (%s) is not mentioned with an 'on' keyword.\n",
 						res->name, nodeinfo.nodename);
-					rv = E_usage;
+					rv = E_USAGE;
 					continue;
 				}
 				if (is_drbd_top != res->stacked && !is_dump) {
@@ -3330,13 +3099,15 @@ int main(int argc, char **argv)
 						stacked ? "stacked" : "normal",
 						is_drbd_top ? "stacked" :
 						"normal");
-					rv = E_usage;
+					rv = E_USAGE;
 					continue;
 				}
 				verify_ips(res);
 				if (!is_dump && !config_valid)
-					exit(E_config_invalid);
-				rv = call_cmd(cmd, res, EXIT_ON_FAIL);	/* does exit for rv >= 20! */
+					exit(E_CONFIG_INVALID);
+				r = call_cmd(cmd, res, EXIT_ON_FAIL);	/* does exit for rv >= 20! */
+				if (r > rv)
+					rv = r;
 			}
 		}
 	} else {		// Commands which do not need a resource name
@@ -3352,7 +3123,9 @@ int main(int argc, char **argv)
 
 	/* do we really have to bitor the exit code?
 	 * it is even only a Boolean value in this case! */
-	rv |= run_dcmds();
+	r = run_dcmds();
+	if (r > rv)
+		rv = r;
 
 	free_config(config);
 
@@ -3362,5 +3135,5 @@ int main(int argc, char **argv)
 void yyerror(char *text)
 {
 	fprintf(stderr, "%s:%d: %s\n", config_file, line, text);
-	exit(E_syntax);
+	exit(E_SYNTAX);
 }

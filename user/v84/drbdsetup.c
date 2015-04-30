@@ -180,6 +180,7 @@ struct drbd_cmd {
 	int (*show_function)(const struct drbd_cmd*, struct genl_info *, void *u_prt);
 	struct option *options;
 	bool missing_ok;
+	bool warn_on_missing;
 	bool continuous_poll;
 	bool wait_for_connect_timeouts;
 	bool set_defaults;
@@ -210,9 +211,6 @@ static int lk_bdev_scmd(const struct drbd_cmd *cm, struct genl_info *info, void 
 static int print_broadcast_events(const struct drbd_cmd *, struct genl_info *, void *u_ptr);
 static int w_connected_state(const struct drbd_cmd *, struct genl_info *, void *u_ptr);
 static int w_synced_state(const struct drbd_cmd *, struct genl_info *, void *u_ptr);
-
-#define ADDRESS_STR_MAX 256
-static char *address_str(char *buffer, void* address, int addr_len);
 
 // convert functions for arguments
 static int conv_block_dev(struct drbd_argument *ad, struct msg_buff *msg, struct drbd_genlmsghdr *dhdr, char* arg);
@@ -360,7 +358,8 @@ const struct drbd_cmd commands[] = {
 		F_CONFIG_CMD,
 	 .ctx = &verify_cmd_ctx },
 	{"down", CTX_RESOURCE, DRBD_ADM_DOWN, NO_PAYLOAD, down_cmd,
-		.missing_ok = true, },
+		.missing_ok = true,
+		.warn_on_missing = true, },
 	{"state", CTX_MINOR, F_GET_CMD(role_scmd) },
 	{"role", CTX_MINOR, F_GET_CMD(role_scmd),
 		.lockless = true, },
@@ -555,14 +554,13 @@ static int conv_block_dev(struct drbd_argument *ad, struct msg_buff *msg,
 {
 	struct stat sb;
 	int device_fd;
-	int err;
 
 	if ((device_fd = open(arg,O_RDWR))==-1) {
 		PERROR("Can not open device '%s'", arg);
 		return OTHER_ERROR;
 	}
 
-	if ( (err=fstat(device_fd, &sb)) ) {
+	if (fstat(device_fd, &sb)) {
 		PERROR("fstat(%s) failed", arg);
 		return OTHER_ERROR;
 	}
@@ -913,8 +911,15 @@ retry_recv:
 			struct drbd_genlmsghdr *dh = genlmsg_data(nlmsg_data(nlh));
 			ASSERT(dh->minor == minor);
 			rv = dh->ret_code;
-			if (rv == ERR_RES_NOT_KNOWN && cm->missing_ok)
-				rv = NO_ERROR;
+
+			if (rv == ERR_RES_NOT_KNOWN) {
+				if (cm->warn_on_missing && isatty(STDERR_FILENO))
+					fprintf(stderr, "Resource unknown\n");
+
+				if (cm->missing_ok)
+					rv = NO_ERROR;
+			}
+
 			drbd_tla_parse(nlh);
 		} else {
 			if (received == -E_RCV_ERROR_REPLY && !errno)
@@ -1389,8 +1394,13 @@ static int generic_get(const struct drbd_cmd *cm, int timeout_arg, void *u_ptr)
 				}
 			}
 			rv = dh->ret_code;
-			if (rv == ERR_MINOR_INVALID && cm->missing_ok)
-				rv = NO_ERROR;
+			if (rv == ERR_MINOR_INVALID) {
+				if (cm->warn_on_missing)
+					fprintf(stderr, "Minor invalid");
+
+				if (cm->missing_ok)
+					rv = NO_ERROR;
+			}
 			if (rv != NO_ERROR)
 				goto out2;
 			err = cm->show_function(cm, &info, u_ptr);
@@ -2086,7 +2096,7 @@ static int sh_status_scmd(const struct drbd_cmd *cm __attribute((unused)),
 		available = 1;
 	state.i = si.current_state;
 
-	if (state.conn == C_STANDALONE && state.disk == D_DISKLESS) {
+	if (state.conn == C_STANDALONE && state.disk == D_DISKLESS && state.role != R_PRIMARY) {
 		printf("%s_known=%s\n\n", _P,
 			available ? "Unconfigured"
 			          : "NA # not available or not yet created");
@@ -2512,6 +2522,26 @@ static const char *resync_susp_str(struct peer_device_info *info)
 	return buffer;
 }
 
+const char *drbd_repl_str9(enum drbd_conns s)
+{
+	static const char *n[] = {
+		[C_WF_REPORT_PARAMS] = "Off",
+		[C_CONNECTED] = "Established",
+	};
+
+	return (s == C_WF_REPORT_PARAMS || s == C_CONNECTED) ? n[s] : drbd_conn_str(s);
+}
+
+const char *drbd_conn_str9(enum drbd_conns s)
+{
+	static const char *n[] = {
+		[C_WF_CONNECTION] = "Connecting",
+		[C_WF_REPORT_PARAMS] = "Connected",
+	};
+
+	return (s == C_WF_CONNECTION || s == C_WF_REPORT_PARAMS) ? n[s] : drbd_conn_str(s);
+}
+
 static void peer_device_status(struct peer_devices_list *peer_device, bool single_device)
 {
 	int indent = 4;
@@ -2520,17 +2550,19 @@ static void peer_device_status(struct peer_devices_list *peer_device, bool singl
 		wrap_printf(indent, "volume:%d", peer_device->ctx.ctx_volume);
 		indent = 8;
 	}
-	if (opt_verbose || peer_device->info.peer_repl_state > C_CONNECTED) {
+	/* this > C_WF_REPORT_PARAMS is > L_ESTABLISHED in DRBD 9 */
+	if (opt_verbose || peer_device->info.peer_repl_state > C_WF_REPORT_PARAMS) {
 		enum drbd_conns repl_state = peer_device->info.peer_repl_state;
 
 		wrap_printf(indent, " replication:%s%s%s",
 			    repl_state_color_start(repl_state),
-			    drbd_conn_str(repl_state),
+			    drbd_repl_str9(repl_state),
 			    repl_state_color_stop(repl_state));
 		indent = 8;
 	}
+	/* this C_WF_REPORT_PARAMS is C_CONNECTED resp. L_OFF in DRBD 9 */
 	if (opt_verbose || opt_statistics ||
-	    peer_device->info.peer_repl_state != C_CONNECTED ||
+	    peer_device->info.peer_repl_state != C_WF_REPORT_PARAMS ||
 	    peer_device->info.peer_disk_state != D_UNKNOWN) {
 		enum drbd_disk_state disk_state = peer_device->info.peer_disk_state;
 
@@ -2575,42 +2607,20 @@ static void connection_status(struct connections_list *connection,
 			      struct peer_devices_list *peer_devices,
 			      bool single_device)
 {
-	char local_addr[ADDRESS_STR_MAX], peer_addr[ADDRESS_STR_MAX];
+	wrap_printf(2, "%s", "peer" /* connection->ctx.ctx_conn_name */);
 
-#if 0
-	if (connection->ctx.ctx_conn_name_len)
-		wrap_printf(2, "%s", connection->ctx.ctx_conn_name);
-#endif
+	/* We do not want the IP-pair information */
+	/* We do not have any node-id information */
 
-	if (opt_verbose || /* connection->ctx.ctx_conn_name_len == 0 */ true) {
-		if (!address_str(local_addr, connection->ctx.ctx_my_addr, connection->ctx.ctx_my_addr_len))
-			strcpy(local_addr, "?");
-		if (!address_str(peer_addr, connection->ctx.ctx_peer_addr, connection->ctx.ctx_peer_addr_len))
-			strcpy(peer_addr, "?");
-		/* FIXME: Reject undefined endpoints once the kernel stops creating NULL connections. */
-		if (/* connection->ctx.ctx_conn_name_len == 0 */ true)
-			wrap_printf(2, "local:%s", local_addr);
-		else
-			wrap_printf(6, " local:%s", local_addr);
-		wrap_printf(6, " peer:%s", peer_addr);
-	}
-#if 0
-	if (opt_verbose) {
-		struct nlattr *nla;
-
-		nla = nla_find_nested(connection->net_conf, __nla_type(T_peer_node_id));
-		if (nla)
-			wrap_printf(6, " node-id:%d", *(uint32_t *)nla_data(nla));
-	}
-#endif
-	if (opt_verbose || connection->info.conn_connection_state != C_CONNECTED) {
+	/* this C_WF_REPORT_PARAMS is C_CONNECTED in DRBD 9 */
+	if (opt_verbose || connection->info.conn_connection_state < C_WF_REPORT_PARAMS) {
 		enum drbd_conns cstate = connection->info.conn_connection_state;
 		wrap_printf(6, " connection:%s%s%s",
 			    cstate_color_start(cstate),
-			    drbd_conn_str(cstate),
+			    drbd_conn_str9(cstate),
 			    cstate_color_stop(cstate));
 	}
-	if (opt_verbose || connection->info.conn_connection_state == C_CONNECTED) {
+	if (opt_verbose || connection->info.conn_connection_state == C_WF_REPORT_PARAMS) {
 		enum drbd_role role = connection->info.conn_role;
 		wrap_printf(6, " role:%s%s%s",
 			    role_color_start(role, false),
@@ -2620,7 +2630,7 @@ static void connection_status(struct connections_list *connection,
 	if (opt_verbose || connection->statistics.conn_congested > 0)
 		print_connection_statistics(6, NULL, &connection->statistics, wrap_printf);
 	wrap_printf(0, "\n");
-	if (opt_verbose || opt_statistics || connection->info.conn_connection_state == C_CONNECTED)
+	if (opt_verbose || opt_statistics || connection->info.conn_connection_state == C_WF_REPORT_PARAMS)
 		peer_devices_status(&connection->ctx, peer_devices, single_device);
 }
 
@@ -2731,57 +2741,9 @@ static int status_cmd(const struct drbd_cmd *cm, int argc, char **argv)
 	return 0;
 }
 
-static char *af_to_str(int af)
-{
-	if (af == AF_INET)
-		return "ipv4";
-	else if (af == AF_INET6)
-		return "ipv6";
-	/* AF_SSOCKS typically is 27, the same as AF_INET_SDP.
-	 * But with warn_and_use_default = 0, it will stay at -1 if not available.
-	 * Just keep the test on ssocks before the one on SDP (which is hard-coded),
-	 * and all should be fine.  */
-	else if (af == get_af_ssocks(0))
-		return "ssocks";
-	else if (af == AF_INET_SDP)
-		return "sdp";
-	else return "unknown";
-}
-
-static char *address_str(char *buffer, void* address, int addr_len)
-{
-	union {
-		struct sockaddr     addr;
-		struct sockaddr_in  addr4;
-		struct sockaddr_in6 addr6;
-	} a;
-
-	/* avoid alignment issues on certain platforms (e.g. armel) */
-	memset(&a, 0, sizeof(a));
-	memcpy(&a.addr, address, addr_len);
-	if (a.addr.sa_family == AF_INET
-	|| a.addr.sa_family == get_af_ssocks(0)
-	|| a.addr.sa_family == AF_INET_SDP) {
-		snprintf(buffer, ADDRESS_STR_MAX, "%s:%s:%u",
-			 af_to_str(a.addr4.sin_family),
-			 inet_ntoa(a.addr4.sin_addr),
-			 ntohs(a.addr4.sin_port));
-		return buffer;
-	} else if (a.addr.sa_family == AF_INET6) {
-		char buffer2[INET6_ADDRSTRLEN];
-		snprintf(buffer, ADDRESS_STR_MAX, "%s:[%s]:%u",
-		        af_to_str(a.addr6.sin6_family),
-		        inet_ntop(a.addr6.sin6_family, &a.addr6.sin6_addr, buffer2, INET6_ADDRSTRLEN),
-		        ntohs(a.addr6.sin6_port));
-		return buffer;
-	} else
-		return NULL;
-}
-
 static int event_key(char *key, int size, const char *name, unsigned minor,
 		     struct drbd_cfg_context *ctx)
 {
-	char addr[ADDRESS_STR_MAX];
 	int ret, pos = 0;
 
 	ret = snprintf(key + pos, size,
@@ -2800,32 +2762,11 @@ static int event_key(char *key, int size, const char *name, unsigned minor,
 		if (size)
 			size -= ret;
 	}
-#if 0
-	/* FIXME */
-	if (ctx->ctx_conn_name_len) {
-		ret = snprintf(key + pos, size,
-			       " conn-name:%s", ctx->ctx_conn_name);
-		if (ret < 0)
-			return ret;
-		pos += ret;
-		if (size)
-			size -= ret;
-	}
-#endif
-	if (ctx->ctx_my_addr_len &&
-	    address_str(addr, ctx->ctx_my_addr, ctx->ctx_my_addr_len)) {
-		ret = snprintf(key + pos, size,
-			      " local:%s", addr);
-		if (ret < 0)
-			return ret;
-		pos += ret;
-		if (size)
-			size -= ret;
-	}
-	if (ctx->ctx_peer_addr_len &&
-	    address_str(addr, ctx->ctx_peer_addr, ctx->ctx_peer_addr_len)) {
-		ret = snprintf(key + pos, size,
-			      " peer:%s", addr);
+	/* Always use "peer" as connection name,
+	 * and print it if ctx has peer address set.
+	 * Do not show IP address pairs */
+	if (ctx->ctx_peer_addr_len) {
+		ret = snprintf(key + pos, size, " conn-name:%s", "peer");
 		if (ret < 0)
 			return ret;
 		pos += ret;
@@ -2920,6 +2861,8 @@ static int print_notifications(const struct drbd_cmd *cm, struct genl_info *info
 	};
 	static uint32_t last_seq;
 	static bool last_seq_known;
+	static struct timeval tv;
+	static bool keep_tv;
 
 	struct drbd_cfg_context ctx = { .ctx_volume = -1U };
 	struct drbd_notification_header nh = { .nh_type = -1U };
@@ -2927,8 +2870,10 @@ static int print_notifications(const struct drbd_cmd *cm, struct genl_info *info
 	struct drbd_genlmsghdr *dh;
 	char *key = NULL;
 
-	if (!info)
+	if (!info) {
+		keep_tv = false;
 		return 0;
+	}
 
 	dh = info->userhdr;
 	if (dh->ret_code == ERR_MINOR_INVALID && cm->missing_ok)
@@ -2970,10 +2915,12 @@ static int print_notifications(const struct drbd_cmd *cm, struct genl_info *info
 	}
 
 	if (opt_timestamps) {
-		struct timeval tv;
 		struct tm *tm;
 
-		gettimeofday(&tv, NULL);
+		if (!keep_tv)
+			gettimeofday(&tv, NULL);
+		keep_tv = !!(nh.nh_type & NOTIFY_CONTINUES);
+
 		tm = localtime(&tv.tv_sec);
 		printf("%04u-%02u-%02uT%02u:%02u:%02u.%06u%+03d:%02u ",
 		       tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
@@ -3076,7 +3023,7 @@ static int print_notifications(const struct drbd_cmd *cm, struct genl_info *info
 			if (!old ||
 			    new.i.conn_connection_state != old->i.conn_connection_state)
 				printf(" connection:%s",
-				       drbd_conn_str(new.i.conn_connection_state));
+				       drbd_conn_str9(new.i.conn_connection_state));
 			if (!old ||
 			    new.i.conn_role != old->i.conn_role)
 				printf(" role:%s",
@@ -3108,7 +3055,7 @@ static int print_notifications(const struct drbd_cmd *cm, struct genl_info *info
 			old = update_info(&key, &new, sizeof(new));
 			if (!old || new.i.peer_repl_state != old->i.peer_repl_state)
 				printf(" replication:%s",
-				       drbd_conn_str(new.i.peer_repl_state));
+				       drbd_repl_str9(new.i.peer_repl_state));
 			if (!old || new.i.peer_disk_state != old->i.peer_disk_state)
 				printf(" peer-disk:%s",
 				       drbd_disk_str(new.i.peer_disk_state));

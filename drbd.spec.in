@@ -32,8 +32,8 @@
 %bcond_without sbinsymlinks
 # --with xen is ignored on any non-x86 architecture
 %bcond_without xen
-%bcond_without legacy_utils
-%bcond_without legacy_utils_84
+%bcond_without 83support
+%bcond_without 84support
 %ifnarch %{ix86} x86_64
 %global _without_xen --without-xen
 %endif
@@ -41,7 +41,7 @@
 Name: drbd
 Summary: DRBD driver for Linux
 Version: @PACKAGE_VERSION@
-Release: 4@RPM_DIST_TAG@
+Release: 1@RPM_DIST_TAG@
 Source: http://oss.linbit.com/drbd/drbd-utils-%{version}.tar.gz
 License: GPLv2+
 ExclusiveOS: linux
@@ -105,11 +105,18 @@ Group: System Environment/Kernel
 # Now we split the userland part, we "provide" a list of versions here,
 # to be able to use this package with existing module packages.
 #
-# which 9.0 version equivalent this package provides
-@SPEC_PROVIDES_DRBD_UTILS_90@
-%if %{with legacy_utils_84}
+%if %{with 84support}
 # which 8.4 version equivalent this package provides
-@SPEC_PROVIDES_DRBD_UTILS_84@
+Provides: drbd-utils = 8.4.5
+Provides: drbd-utils = 8.4.4
+Provides: drbd-utils = 8.4.3
+Provides: drbd-utils = 8.4.2
+Provides: drbd-utils = 8.4.1
+Provides: drbd-utils = 8.4.0
+%endif
+%if %{with 83support}
+# which 8.3 version equivalent this package provides
+Provides: drbd-utils = 8.3.16
 %endif
 # We used to have one monolithic userland package.
 # Since all other packages require drbd-utils,
@@ -137,17 +144,19 @@ This packages includes the DRBD administration tools.
 %{_sbindir}/drbdsetup
 %{_sbindir}/drbdadm
 %{_sbindir}/drbdmeta
-%if %{with legacy_utils}
+%if %{with 83support}
 %dir /lib/drbd/
 /lib/drbd/drbdsetup-83
 /lib/drbd/drbdadm-83
 %endif
-%if %{with legacy_utils_84}
+%if %{with 84support}
 /lib/drbd/drbdsetup-84
 /lib/drbd/drbdadm-84
 %endif
 %if %{initscripttype} == "systemd"
 %{_unitdir}/drbd.service
+%{_tmpfilesdir}/drbd.conf
+/lib/drbd/drbd
 %else
 %{_initddir}/drbd
 %endif
@@ -165,6 +174,8 @@ This packages includes the DRBD administration tools.
 %{_prefix}/lib/drbd/notify-pri-lost.sh
 %{_prefix}/lib/drbd/notify-pri-on-incon-degr.sh
 %{_prefix}/lib/drbd/notify.sh
+%dir %{_var}/lib/drbd
+%ghost %dir %{_var}/run/drbd
 
 %defattr(-,root,root,-)
 %config(noreplace) %{_sysconfdir}/drbd.conf
@@ -324,6 +335,10 @@ management utility.
 %setup -q -n drbd-utils-%{version}
 
 %build
+# rebuild configure...
+aclocal
+autoheader
+autoconf
 %configure \
     %{?_without_udev} \
     %{?_without_xen} \
@@ -331,9 +346,10 @@ management utility.
     %{?_without_heartbeat} \
     %{?_with_rgmanager} \
     %{?_without_bashcompletion} \
-    %{?_without_legacy_utils} \
-    %{?_without_legacy_utils_84} \
+    %{?_without_83support} \
+    %{?_without_84support} \
     --with-initdir=%{_initddir} \
+    %{?_tmpfilesdir:--with-tmpfilesdir=%{_tmpfilesdir}} \
     --with-initscripttype=%{initscripttype}
 make %{?_smp_mflags}
 make doc
@@ -347,6 +363,7 @@ make install DESTDIR=%{buildroot} CREATE_MAN_LINK=no
 # compat: we used to live in /sbin/
 # there may be many hardcoded /sbin/drbd* out there,
 # including variants of our own scripts.
+mkdir -p %{buildroot}/var/run/drbd
 mkdir %{buildroot}/sbin/
 cd %{buildroot}/sbin/
 ln -sv ..%{_sbindir}/drbdadm .
@@ -394,7 +411,7 @@ fi
 
 
 %changelog
-* Fri Sep 19 2014 Philipp Reisner <phil@linbit.com> - 8.9.2rc1-1
+* Fri Apr 03 2015 Philipp Reisner <phil@linbit.com> - 8.9.2-1
 - New upstream release.
 
 * Fri Aug 08 2014 Lars Ellenberg <lars@linbit.com> - 8.9.1-3

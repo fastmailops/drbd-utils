@@ -582,21 +582,9 @@ const char *read_balancing_map[] = {
 	{ "disk-drain", BOOLEAN(disk_drain, DISK_DRAIN) },				\
 	{ "md-flushes", BOOLEAN(md_flushes, MD_FLUSHES) },				\
 	{ "unplug-watermark", NUMERIC(unplug_watermark, UNPLUG_WATERMARK) },		\
-	{ "resync-rate", NUMERIC(resync_rate, RESYNC_RATE),				\
-          .unit = "bytes/second" },							\
 	{ "resync-after", NUMERIC(resync_after, MINOR_NUMBER) },			\
 	{ "al-extents", NUMERIC(al_extents, AL_EXTENTS) },				\
 	{ "al-updates", BOOLEAN(al_updates, AL_UPDATES) },				\
-	{ "c-plan-ahead", NUMERIC(c_plan_ahead, C_PLAN_AHEAD),				\
-          .unit = "1/10 seconds" },							\
-	{ "c-delay-target", NUMERIC(c_delay_target, C_DELAY_TARGET),			\
-          .unit = "1/10 seconds" },							\
-	{ "c-fill-target", NUMERIC(c_fill_target, C_FILL_TARGET),			\
-          .unit = "bytes" },								\
-	{ "c-max-rate", NUMERIC(c_max_rate, C_MAX_RATE),				\
-          .unit = "bytes/second" },							\
-	{ "c-min-rate", NUMERIC(c_min_rate, C_MIN_RATE),				\
-	  .unit = "bytes/second" },							\
 	{ "disk-timeout", NUMERIC(disk_timeout,	DISK_TIMEOUT),				\
 	  .unit = "1/10 seconds" },							\
 	{ "read-balancing", ENUM(read_balancing, READ_BALANCING) }			\
@@ -638,6 +626,7 @@ const char *read_balancing_map[] = {
 	{ "use-rle", BOOLEAN(use_rle, USE_RLE) },					\
 	{ "socket-check-timeout", NUMERIC(sock_check_timeo, SOCKET_CHECK_TIMEO) },	\
 	{ "fencing", ENUM(fencing_policy, FENCING) },					\
+	{ "max-buffers", NUMERIC(max_buffers, MAX_BUFFERS) },				\
 	{ "_name", STRING(name) }
 
 struct context_def disk_options_ctx = {
@@ -693,6 +682,16 @@ struct context_def connect_cmd_ctx = {
 		{ "tentative", FLAG(tentative) },
 		{ "discard-my-data", FLAG(discard_my_data) },
 		{ "peer-node-id", NUMERIC(peer_node_id, NODE_ID) },
+		{ "transport", STRING(transport_name) },
+		CHANGEABLE_NET_OPTIONS,
+		{ } },
+};
+
+struct context_def show_net_options_ctx = {
+	NLA_POLICY(net_conf),
+	.nla_type = DRBD_NLA_NET_CONF,
+	.fields = {
+		{ "transport", STRING(transport_name) },
 		CHANGEABLE_NET_OPTIONS,
 		{ } },
 };
@@ -756,7 +755,6 @@ struct context_def device_options_ctx = {
 	.nla_type = DRBD_NLA_DEVICE_CONF,
 	.fields = {
 		{ "max-bio-size", NUMERIC(max_bio_size, MAX_BIO_SIZE) },
-		{ "max-buffers", NUMERIC(max_buffers, MAX_BUFFERS) },
 		{ } },
 };
 
@@ -765,6 +763,19 @@ struct context_def invalidate_ctx = {
 	.nla_type = DRBD_NLA_INVALIDATE_PARMS,
 	.fields = {
 		{ "sync-from-peer-node-id", NUMERIC(sync_from_peer_node_id, SYNC_FROM_NID) },
+		{ } },
+};
+
+struct context_def peer_device_options_ctx = {
+	NLA_POLICY(peer_device_conf),
+	.nla_type = DRBD_NLA_PEER_DEVICE_OPTS,
+	.fields = {
+		{ "resync-rate", NUMERIC(resync_rate, RESYNC_RATE), .unit = "bytes/second" },
+		{ "c-plan-ahead", NUMERIC(c_plan_ahead, C_PLAN_AHEAD), .unit = "1/10 seconds" },
+		{ "c-delay-target", NUMERIC(c_delay_target, C_DELAY_TARGET), .unit = "1/10 seconds" },
+		{ "c-fill-target", NUMERIC(c_fill_target, C_FILL_TARGET), .unit = "bytes" },
+		{ "c-max-rate", NUMERIC(c_max_rate, C_MAX_RATE), .unit = "bytes/second" },
+		{ "c-min-rate", NUMERIC(c_min_rate, C_MIN_RATE), .unit = "bytes/second" },
 		{ } },
 };
 
