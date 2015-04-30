@@ -1,3 +1,12 @@
+drbd-utils (8.9.2-1) UNRELEASED; urgency=medium
+
+  * New uptream release
+    + Drop d/patches/fix-8.4-manpages, it has been merged upstream.
+    + Refresh patches
+  * Ensure reproducible build
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Thu, 30 Apr 2015 15:58:22 +0300
+
 drbd-utils (8.9.2~rc1-2) unstable; urgency=medium
 
   * Build-Depend on docbook-xml to avoid fetching the docbook DTDs from the
