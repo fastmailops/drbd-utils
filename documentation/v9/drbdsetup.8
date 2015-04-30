@@ -536,9 +536,7 @@ If a secondary node fails to complete a write request in
 \fBko\-count\fR
 times the
 \fBtimeout\fR
-parameter, it is excluded from the cluster\&. The primary node then sets the connection to this secondary node to Standalone\&. The default value of
-\fBko\-count\fR
-is 0, which disables this feature\&.
+parameter, it is excluded from the cluster\&. The primary node then sets the connection to this secondary node to Standalone\&. To disable this feature, you should explicitly set it to 0; defaults may change between versions\&.
 .RE
 .PP
 \fB\-\-max\-buffers \fR\fB\fInumber\fR\fR

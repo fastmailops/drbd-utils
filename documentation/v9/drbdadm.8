@@ -208,6 +208,16 @@ Detach the lower\-level device of a replicated device\&. See
 for details\&.
 .RE
 .PP
+direct\-connect {\fIresource\fR}
+.RS 4
+.\" drbdadm: direct-connect
+Bring up the specified resource, but skip proxy\&. This command is similar to
+\fBup\fR
+and is mainly meant for (proxy) developers to ease debugging\&. See
+\fBdrbdsetup\fR(8)
+for details\&.
+.RE
+.PP
 disconnect {\fIconnection\fR}
 .RS 4
 .\" drbdadm: disconnect

@@ -65,7 +65,7 @@ ifeq ($(FDIST_VERSION),)
 FDIST_VERSION := $(DIST_VERSION)
 endif
 
-all: configure tools
+all: check-submods configure tools
 
 .PHONY: all tools doc
 tools:
@@ -81,10 +81,29 @@ ifeq ($(WITH_84_SUPPORT),yes)
 	$(MAKE) -C documentation/v84 doc
 endif
 
+# we cannot use 'git submodule foreach':
+# foreach only works if submodule already checked out
+.PHONY: check-submods
+check-submods:
+	@if test -d .git && test -s .gitmodules; then \
+		for d in `grep "^\[submodule" .gitmodules | cut -f2 -d'"'`; do \
+			if [ ! "`ls -A $$d`" ]; then \
+				git submodule init; \
+				git submodule update; \
+				break; \
+			fi; \
+		done; \
+	fi
 
 .PHONY:	doc-clean install install-tools clean distclean extra-clean uninstall
 doc-clean:
-	$(MAKE) -C documentation doc-clean
+	$(MAKE) -C documentation/v9 doc-clean
+ifeq ($(WITH_83_SUPPORT),yes)
+	$(MAKE) -C documentation/v83 doc-clean
+endif
+ifeq ($(WITH_84_SUPPORT),yes)
+	$(MAKE) -C documentation/v84 doc-clean
+endif
 
 install: install-tools
 
@@ -143,6 +162,7 @@ PNAME	:= drbd-utils
 .PHONY: .filelist
 .filelist:
 	@$(GIT) ls-files | sed '$(if $(PRESERVE_DEBIAN),,/^debian/d);s#^#$(PNAME)-$(DIST_VERSION)/#' | grep -v "gitignore" > .filelist
+	@$(GIT) submodule foreach --quiet 'git ls-files | sed -e "s,^,$(PNAME)-$(DIST_VERSION)/$$path/,"' >> .filelist
 	@[ -s .filelist ] # assert there is something in .filelist now
 	@find documentation -name "[^.]*.[58]" -o -name "*.html" | \
 	sed "s/^/$(PNAME)-$(DIST_VERSION)\//"              >> .filelist ; \
@@ -188,7 +208,7 @@ configure: configure.ac
 	autoheader
 	autoconf
 
-tarball: check_all_committed distclean doc configure .filelist
+tarball: check-submods check_all_committed distclean doc configure .filelist
 	$(MAKE) tgz
 
 ifdef RPMBUILD

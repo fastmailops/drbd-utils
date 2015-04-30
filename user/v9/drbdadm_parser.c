@@ -139,8 +139,7 @@ void m_strtoll_range(const char *s, char def_unit,
 	unsigned long long r = m_strtoll(s, def_unit);
 	char unit[] = { def_unit != '1' ? def_unit : 0, 0 };
 	if (min > r || r > max) {
-		fprintf(stderr,
-			"%s:%d: %s %s => %llu%s out of range [%llu..%llu]%s.\n",
+		err("%s:%d: %s %s => %llu%s out of range [%llu..%llu]%s.\n",
 			config_file, fline, name, s, r, unit, min, max, unit);
 		if (config_valid <= 1) {
 			config_valid = 0;
@@ -148,8 +147,7 @@ void m_strtoll_range(const char *s, char def_unit,
 		}
 	}
 	if (DEBUG_RANGE_CHECK) {
-		fprintf(stderr,
-			"%s:%d: %s %s => %llu%s in range [%llu..%llu]%s.\n",
+		err("%s:%d: %s %s => %llu%s in range [%llu..%llu]%s.\n",
 			config_file, fline, name, s, r, unit, min, max, unit);
 	}
 }
@@ -173,8 +171,7 @@ void range_check(const enum range_checks what, const char *name,
 	case R_NO_CHECK:
 		break;
 	default:
-		fprintf(stderr, "%s:%d: unknown range for %s => %s\n",
-			config_file, fline, name, value);
+		err("%s:%d: unknown range for %s => %s\n", config_file, fline, name, value);
 		break;
 	case R_MINOR_COUNT:
 		M_STRTOLL_RANGE(MINOR_COUNT);
@@ -270,7 +267,7 @@ void range_check(const enum range_checks what, const char *name,
 		}
 		if (!proto && config_valid <= 1) {
 			config_valid = 0;
-			fprintf(stderr, "unknown protocol '%s', should be one of A,B,C\n", value);
+			err("unknown protocol '%s', should be one of A,B,C\n", value);
 		}
 		break;
 	case R_NODE_ID:
@@ -283,7 +280,7 @@ struct d_option *new_opt(char *name, char *value)
 {
 	struct d_option *cn = calloc(1, sizeof(struct d_option));
 
-	/* fprintf(stderr,"%s:%d: %s = %s\n",config_file,line,name,value); */
+	/* err("%s:%d: %s = %s\n",config_file,line,name,value); */
 	cn->name = name;
 	cn->value = value;
 
@@ -293,17 +290,15 @@ struct d_option *new_opt(char *name, char *value)
 void pdperror(char *text)
 {
 	config_valid = 0;
-	fprintf(stderr, "%s:%d: in proxy plugin section: %s.\n",
-		config_file, line, text);
+	err("%s:%d: in proxy plugin section: %s.\n", config_file, line, text);
 	exit(E_CONFIG_INVALID);
 }
 
 static void pperror(struct d_proxy_info *proxy, char *text)
 {
 	config_valid = 0;
-	fprintf(stderr, "%s:%d: in section: proxy on %s { ... } }:"
-		" '%s' keyword missing.\n",
-		config_file, c_section_start, names_to_str(&proxy->on_hosts), text);
+	err("%s:%d: in section: proxy on %s { ... } }: '%s' keyword missing.\n",
+	    config_file, c_section_start, names_to_str(&proxy->on_hosts), text);
 }
 
 #define typecheck(type,x) \
@@ -333,7 +328,7 @@ void check_uniq_init(void)
 {
 	memset(&global_htable, 0, sizeof(global_htable));
 	if (!hcreate_r(256 * ((2 * 4) + 4), &global_htable)) {
-		fprintf(stderr, "Insufficient memory.\n");
+		err("Insufficient memory.\n");
 		exit(E_EXEC_ERROR);
 	};
 }
@@ -351,7 +346,7 @@ void check_upr_init(void)
 		hdestroy_r(&per_resource_htable);
 	memset(&per_resource_htable, 0, sizeof(per_resource_htable));
 	if (!hcreate_r(256, &per_resource_htable)) {
-		fprintf(stderr, "Insufficient memory.\n");
+		err("Insufficient memory.\n");
 		exit(E_EXEC_ERROR);
 	};
 	created = 1;
@@ -375,35 +370,30 @@ int vcheck_uniq(struct hsearch_data *ht, const char *what, const char *fmt, va_l
 	rv = vasprintf(&e.key, fmt, ap);
 
 	if (rv < 0) {
-		perror("vasprintf");
+		err("vasprintf: %m\n");
 		exit(E_THINKO);
 	}
 
 	if (EXIT_ON_CONFLICT && !what) {
-		fprintf(stderr, "Oops, unset argument in %s:%d.\n", __FILE__,
-			__LINE__);
+		err("Oops, unset argument in %s:%d.\n", __FILE__, __LINE__);
 		exit(E_THINKO);
 	}
 	m_asprintf((char **)&e.data, "%s:%u", config_file, fline);
 	hsearch_r(e, FIND, &ep, ht);
-	//fprintf(stderr, "FIND %s: %p\n", e.key, ep);
+	//err("FIND %s: %p\n", e.key, ep);
 	if (ep) {
 		if (what) {
-			fprintf(stderr,
-				"%s: conflicting use of %s '%s' ...\n"
-				"%s: %s '%s' first used here.\n",
-				(char *)e.data,  what, ep->key,
-				(char *)ep->data, what, ep->key);
+			err("%s: conflicting use of %s '%s' ...\n%s: %s '%s' first used here.\n",
+			    (char *)e.data, what, ep->key, (char *)ep->data, what, ep->key);
 		}
 		free(e.key);
 		free(e.data);
 		config_valid = 0;
 	} else {
-		//fprintf(stderr, "ENTER %s\t=>\t%s\n", e.key, (char *)e.data);
+		//err("ENTER %s\t=>\t%s\n", e.key, (char *)e.data);
 		hsearch_r(e, ENTER, &ep, ht);
 		if (!ep) {
-			fprintf(stderr, "hash table entry (%s => %s) failed\n",
-					e.key, (char *)e.data);
+			err("hash table entry (%s => %s) failed\n", e.key, (char *)e.data);
 			exit(E_THINKO);
 		}
 		ep = NULL;
@@ -416,9 +406,8 @@ int vcheck_uniq(struct hsearch_data *ht, const char *what, const char *fmt, va_l
 static void pe_expected(const char *exp)
 {
 	const char *s = yytext;
-	fprintf(stderr, "%s:%u: Parse error: '%s' expected,\n\t"
-		"but got '%.20s%s'\n", config_file, line, exp, s,
-		strlen(s) > 20 ? "..." : "");
+	err("%s:%u: Parse error: '%s' expected,\n\tbut got '%.20s%s'\n",
+	    config_file, line, exp, s, strlen(s) > 20 ? "..." : "");
 	exit(E_CONFIG_INVALID);
 }
 
@@ -438,7 +427,7 @@ static void check_string_error(int got)
 	default:
 		return;
 	}
-	fprintf(stderr,"%s:%u: %s >>>%.20s...<<<\n", config_file, line, msg, yytext);
+	err("%s:%u: %s >>>%.20s...<<<\n", config_file, line, msg, yytext);
 	exit(E_CONFIG_INVALID);
 }
 
@@ -449,10 +438,8 @@ static void pe_expected_got(const char *exp, int got)
 	if (exp[0] == '\'' && exp[1] && exp[2] == '\'' && exp[3] == 0) {
 		tmp[0] = exp[1];
 	}
-	fprintf(stderr, "%s:%u: Parse error: '%s' expected,\n\t"
-		"but got '%.20s%s' (TK %d)\n",
-		config_file, line,
-		tmp[0] ? tmp : exp, s, strlen(s) > 20 ? "..." : "", got);
+	err("%s:%u: Parse error: '%s' expected,\n\tbut got '%.20s%s' (TK %d)\n",
+	    config_file, line, tmp[0] ? tmp : exp, s, strlen(s) > 20 ? "..." : "", got);
 	exit(E_CONFIG_INVALID);
 }
 
@@ -489,10 +476,8 @@ static void parse_global(void)
 	fline = line;
 	check_uniq("global section", "global");
 	if (!STAILQ_EMPTY(&config)) {
-		fprintf(stderr,
-			"%s:%u: You should put the global {} section\n\t"
-			"in front of any resource {} section\n",
-			config_file, line);
+		err("%s:%u: You should put the global {} section\n\tin front of any resource {} section\n",
+		    config_file, line);
 	}
 	EXP('{');
 	while (1) {
@@ -512,6 +497,21 @@ static void parse_global(void)
 			range_check(R_DIALOG_REFRESH, "dialog-refresh",
 				    yylval.txt);
 			global_options.dialog_refresh = atoi(yylval.txt);
+			break;
+		case TK_CMD_TIMEOUT_SHORT:
+			EXP(TK_INTEGER);
+			m_strtoll_range(yylval.txt, '1', "cmd-timeout-short", 0, 900);
+			global_options.cmd_timeout_short = atoi(yylval.txt);
+			break;
+		case TK_CMD_TIMEOUT_MEDIUM:
+			EXP(TK_INTEGER);
+			m_strtoll_range(yylval.txt, '1', "cmd-timeout-medium", 0, 900);
+			global_options.cmd_timeout_medium = atoi(yylval.txt);
+			break;
+		case TK_CMD_TIMEOUT_LONG:
+			EXP(TK_INTEGER);
+			m_strtoll_range(yylval.txt, '1', "cmd-timeout-long", 0, 900);
+			global_options.cmd_timeout_long = atoi(yylval.txt);
 			break;
 		case TK_USAGE_COUNT:
 			switch (yylex()) {
@@ -658,7 +658,11 @@ static struct options parse_options_d(int token_flag, int token_no_flag, int tok
 		token = REMOVE_GROUP_FROM_TOKEN(token_group);
 		fline = line;
 		opt_name = yylval.txt;
-		if (token == token_flag) {
+		if (token == token_delegate ||
+				GET_TOKEN_GROUP(token_delegate & token_group)) {
+			delegate(ctx);
+			continue;
+		} else if (token == token_flag) {
 			switch(yylex()) {
 			case TK_YES:
 				insert_tail(&options, new_opt(opt_name, strdup("yes")));
@@ -685,12 +689,8 @@ static struct options parse_options_d(int token_flag, int token_no_flag, int tok
 			expect_STRING_or_INT();
 			range_check(rc, opt_name, yylval.txt);
 			insert_tail(&options, new_opt(opt_name, yylval.txt));
-		} else if (token == token_delegate ||
-				GET_TOKEN_GROUP(token_delegate & token_group)) {
-			delegate(ctx);
-			continue;
 		} else if (token == TK_DEPRECATED_OPTION) {
-			/* fprintf(stderr, "Warn: Ignoring deprecated option '%s'\n", yylval.txt); */
+			/* err("Warn: Ignoring deprecated option '%s'\n", yylval.txt); */
 			expect_STRING_or_INT();
 		} else if (token == '}') {
 			return options;
@@ -704,6 +704,26 @@ static struct options parse_options_d(int token_flag, int token_no_flag, int tok
 static struct options parse_options(int token_flag, int token_no_flag, int token_option)
 {
 	return parse_options_d(token_flag, token_no_flag, token_option, 0, NULL, NULL);
+}
+
+static void insert_options_delegate(void *ctx)
+{
+	struct options *options = ctx;
+	char *opt_name = yylval.txt;
+	enum range_checks rc;
+
+	rc = yylval.rc;
+	expect_STRING_or_INT();
+	range_check(rc, opt_name, yylval.txt);
+	insert_tail(options, new_opt(opt_name, yylval.txt));
+	EXP(';');
+}
+
+static void parse_disk_options(struct options *disk_options, struct options *peer_device_options)
+{
+	*disk_options = parse_options_d(TK_DISK_FLAG, TK_DISK_NO_FLAG, TK_DISK_OPTION,
+					TK_PEER_DEVICE, insert_options_delegate,
+					peer_device_options);
 }
 
 static void __parse_address(struct d_address *a)
@@ -855,22 +875,20 @@ static void check_minor_nonsense(const char *devname, const int explicit_minor)
 		if (m == explicit_minor)
 			return;
 
-		fprintf(stderr,
-			"%s:%d: explicit minor number must match with device name\n"
-			"\tTry \"device /dev/drbd%u minor %u;\",\n"
-			"\tor leave off either device name or explicit minor.\n"
-			"\tArbitrary device names must start with /dev/drbd_\n"
-			"\tmind the '_'! (/dev/ is optional, but drbd_ is required)\n",
-			config_file, fline, explicit_minor, explicit_minor);
+		err("%s:%d: explicit minor number must match with device name\n"
+		    "\tTry \"device /dev/drbd%u minor %u;\",\n"
+		    "\tor leave off either device name or explicit minor.\n"
+		    "\tArbitrary device names must start with /dev/drbd_\n"
+		    "\tmind the '_'! (/dev/ is optional, but drbd_ is required)\n",
+		    config_file, fline, explicit_minor, explicit_minor);
 		config_valid = 0;
 		return;
 	} else if (devname[9] == '_')
 		return;
 
-	fprintf(stderr,
-		"%s:%d: arbitrary device name must start with /dev/drbd_\n"
-		"\tmind the '_'! (/dev/ is optional, but drbd_ is required)\n",
-		config_file, fline);
+	err("%s:%d: arbitrary device name must start with /dev/drbd_\n"
+	    "\tmind the '_'! (/dev/ is optional, but drbd_ is required)\n",
+	    config_file, fline);
 	config_valid = 0;
 	return;
 }
@@ -889,10 +907,9 @@ static void parse_device(struct names* on_hosts, struct d_volume *vol)
 			vol->device = yylval.txt;
 
 		if (strncmp("/dev/drbd", vol->device, 9)) {
-			fprintf(stderr,
-				"%s:%d: device name must start with /dev/drbd\n"
-				"\t(/dev/ is optional, but drbd is required)\n",
-				config_file, fline);
+			err("%s:%d: device name must start with /dev/drbd\n"
+			    "\t(/dev/ is optional, but drbd is required)\n",
+			    config_file, fline);
 			config_valid = 0;
 			/* no goto out yet,
 			 * as that would additionally throw a parse error */
@@ -904,9 +921,8 @@ static void parse_device(struct names* on_hosts, struct d_volume *vol)
 		case ';':
 			m = dt_minor_of_dev(vol->device);
 			if (m < 0) {
-				fprintf(stderr,
-					"%s:%d: no minor given nor device name contains a minor number\n",
-					config_file, fline);
+				err("%s:%d: no minor given nor device name contains a minor number\n",
+				    config_file, fline);
 				config_valid = 0;
 			}
 			vol->device_minor = m;
@@ -934,13 +950,29 @@ out:
 	}
 }
 
+struct d_volume *alloc_volume(void)
+{
+	struct d_volume *vol;
+
+	vol = calloc(1, sizeof(struct d_volume));
+	if (vol == NULL) {
+		err("calloc: %m\n");
+		exit(E_EXEC_ERROR);
+	}
+
+	STAILQ_INIT(&vol->disk_options);
+	STAILQ_INIT(&vol->pd_options);
+	STAILQ_INIT(&vol->peer_devices);
+
+	return vol;
+}
+
 struct d_volume *volume0(struct volumes *volumes)
 {
 	struct d_volume *vol = STAILQ_FIRST(volumes);
 
 	if (!vol) {
-		vol = calloc(1, sizeof(struct d_volume));
-		STAILQ_INIT(&vol->disk_options);
+		vol = alloc_volume();
 		vol->device_minor = -1;
 		vol->implicit = 1;
 		insert_head(volumes, vol);
@@ -950,9 +982,8 @@ struct d_volume *volume0(struct volumes *volumes)
 			return vol;
 
 		config_valid = 0;
-		fprintf(stderr,
-			"%s:%d: Explicit and implicit volumes not allowed\n",
-			config_file, line);
+		err("%s:%d: Explicit and implicit volumes not allowed\n",
+		    config_file, line);
 		return vol;
 	}
 }
@@ -968,9 +999,7 @@ int parse_volume_stmt(struct d_volume *vol, struct names* on_hosts, int token)
 			EXP(';');
 			break;
 		case '{':
-			vol->disk_options = parse_options(TK_DISK_FLAG,
-							  TK_DISK_NO_FLAG,
-							  TK_DISK_OPTION);
+			parse_disk_options(&vol->disk_options, &vol->pd_options);
 			break;
 		default:
 			check_string_error(token);
@@ -1013,8 +1042,7 @@ struct d_volume *parse_volume(int vnr, struct names* on_hosts)
 	struct d_volume *vol;
 	int token;
 
-	vol = calloc(1,sizeof(struct d_volume));
-	STAILQ_INIT(&vol->disk_options);
+	vol = alloc_volume();
 	vol->device_minor = -1;
 	vol->vnr = vnr;
 
@@ -1036,8 +1064,7 @@ struct d_volume *parse_stacked_volume(int vnr)
 	struct d_volume *vol;
 	int token;
 
-	vol = calloc(1,sizeof(struct d_volume));
-	STAILQ_INIT(&vol->disk_options);
+	vol = alloc_volume();
 	vol->device_minor = -1;
 	vol->vnr = vnr;
 
@@ -1050,7 +1077,7 @@ struct d_volume *parse_stacked_volume(int vnr)
 			break;
 		case TK_DISK:
 			EXP('{');
-			vol->disk_options = parse_options(TK_DISK_FLAG, TK_DISK_NO_FLAG, TK_DISK_OPTION);
+			parse_disk_options(&vol->disk_options, &vol->pd_options);
 			break;
 		case '}':
 			goto exit_loop;
@@ -1144,9 +1171,8 @@ static void parse_host_section(struct d_resource *res,
 			break;
 		case TK_ADDRESS:
 			if (host->by_address) {
-				fprintf(stderr,
-					"%s:%d: address statement not allowed for floating {} host sections\n",
-					config_file, fline);
+				err("%s:%d: address statement not allowed for floating {} host sections\n",
+				    config_file, fline);
 				config_valid = 0;
 				exit(E_CONFIG_INVALID);
 			}
@@ -1212,9 +1238,8 @@ static void parse_skip()
 		}
 	}
 	if (!token) {
-		fprintf(stderr, "%s:%u: reached eof "
-			"while parsing this skip block.\n",
-			config_file, fline);
+		err("%s:%u: reached eof ""while parsing this skip block.\n",
+		    config_file, fline);
 		exit(E_CONFIG_INVALID);
 	}
 }
@@ -1275,7 +1300,7 @@ void startup_delegate(void *ctx)
 	struct d_resource *res = (struct d_resource *)ctx;
 
 	if (!strcmp(yytext, "become-primary-on")) {
-		/* fprintf(stderr, "Warn: Ignoring deprecated become-primary-on. Use automatic-promote\n"); */
+		/* err("Warn: Ignoring deprecated become-primary-on. Use automatic-promote\n"); */
 		int token;
 		do {
 			token = yylex();
@@ -1320,8 +1345,8 @@ void proxy_delegate(void *ctx)
 	opt = NULL;
 	token = yylex();
 	if (token != '{') {
-		fprintf(stderr,	"%s:%d: expected \"{\" after \"proxy\" keyword\n",
-				config_file, fline);
+		err("%s:%d: expected \"{\" after \"proxy\" keyword\n",
+		    config_file, fline);
 		exit(E_CONFIG_INVALID);
 	}
 
@@ -1336,8 +1361,8 @@ void proxy_delegate(void *ctx)
 				if (STAILQ_EMPTY(&line))
 					goto out;
 
-				fprintf(stderr,	"%s:%d: Missing \";\" before  \"}\"\n",
-					config_file, fline);
+				err("%s:%d: Missing \";\" before  \"}\"\n",
+				    config_file, fline);
 				exit(E_CONFIG_INVALID);
 			}
 
@@ -1458,11 +1483,13 @@ struct connection *alloc_connection()
 
 	conn = calloc(1, sizeof(struct connection));
 	if (conn == NULL) {
-		perror("calloc");
+		err("calloc: %m\n");
 		exit(E_EXEC_ERROR);
 	}
 	STAILQ_INIT(&conn->hname_address_pairs);
 	STAILQ_INIT(&conn->net_options);
+	STAILQ_INIT(&conn->peer_devices);
+	STAILQ_INIT(&conn->pd_options);
 
 	return conn;
 }
@@ -1472,9 +1499,41 @@ void free_connection(struct connection *connection)
 	free(connection);
 }
 
+struct peer_device *alloc_peer_device()
+{
+	struct peer_device *peer_device;
+
+	peer_device = calloc(1, sizeof(*peer_device));
+	if (!peer_device)  {
+		err("calloc: %m\n");
+		exit(E_EXEC_ERROR);
+	}
+	STAILQ_INIT(&peer_device->pd_options);
+
+	return peer_device;
+}
+
+static struct peer_device *parse_peer_device(int vnr)
+{
+	struct peer_device *peer_device;
+
+	peer_device = alloc_peer_device();
+	peer_device->vnr = vnr;
+	peer_device->config_line = line;
+
+	EXP('{');
+	EXP(TK_DISK);
+	EXP('{');
+	peer_device->pd_options = parse_options(0, 0, TK_PEER_DEVICE);
+	EXP('}');
+
+	return peer_device;
+}
+
 static struct connection *parse_connection(enum pr_flags flags)
 {
 	struct connection *conn;
+	struct peer_device *peer_device;
 	int hosts = 0, token;
 
 	conn = alloc_connection();
@@ -1500,15 +1559,15 @@ static struct connection *parse_connection(enum pr_flags flags)
 		case TK__REMOTE_HOST:
 			insert_tail(&conn->hname_address_pairs, parse_hname_address_pair(conn, token));
 			if (++hosts >= 3) {
-				fprintf(stderr,	"%s:%d: only two 'host' keywords per connection allowed\n",
-					config_file, fline);
+				err("%s:%d: only two 'host' keywords per connection allowed\n",
+				    config_file, fline);
 				config_valid = 0;
 			}
 			break;
 		case TK_NET:
 			if (!STAILQ_EMPTY(&conn->net_options)) {
-				fprintf(stderr,	"%s:%d: only one 'net' section per connection allowed\n",
-					config_file, fline);
+				err("%s:%d: only one 'net' section per connection allowed\n",
+				    config_file, fline);
 				config_valid = 0;
 			}
 			EXP('{');
@@ -1517,6 +1576,16 @@ static struct connection *parse_connection(enum pr_flags flags)
 			break;
 		case TK_SKIP:
 			parse_skip();
+			break;
+		case TK_DISK:
+			EXP('{');
+			conn->pd_options = parse_options(0, 0, TK_PEER_DEVICE);
+			break;
+		case TK_VOLUME:
+			EXP(TK_INTEGER);
+			peer_device = parse_peer_device(atoi(yylval.txt));
+			peer_device->connection = conn;
+			STAILQ_INSERT_TAIL(&conn->peer_devices, peer_device, connection_link);
 			break;
 		case '}':
 			return conn;
@@ -1536,16 +1605,16 @@ void parse_connection_mesh(struct d_resource *res, enum pr_flags flags)
 		switch(token) {
 		case TK_HOSTS:
 			if (!STAILQ_EMPTY(&res->mesh)) {
-				fprintf(stderr,	"%s:%d: only one 'connection-mesh' keyword is allowed\n",
-					config_file, fline);
+				err("%s:%d: only one 'connection-mesh' keyword is allowed\n",
+				    config_file, fline);
 				config_valid = 0;
 			}
 			parse_hosts(&res->mesh, ';');
 			break;
 		case TK_NET:
 			if (!STAILQ_EMPTY(&res->mesh_net_options)) {
-				fprintf(stderr,	"%s:%d: only one 'net' section allowed\n",
-					config_file, fline);
+				err("%s:%d: only one 'net' section allowed\n",
+				    config_file, fline);
 				config_valid = 0;
 			}
 			EXP('{');
@@ -1578,6 +1647,7 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 	STAILQ_INIT(&res->all_hosts);
 	STAILQ_INIT(&res->net_options);
 	STAILQ_INIT(&res->disk_options);
+	STAILQ_INIT(&res->pd_options);
 	STAILQ_INIT(&res->res_options);
 	STAILQ_INIT(&res->startup_options);
 	STAILQ_INIT(&res->handlers);
@@ -1630,7 +1700,7 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 				break;
 			case '{':
 				check_upr("disk section", "%s:disk", res->name);
-				options = parse_options(TK_DISK_FLAG, TK_DISK_NO_FLAG, TK_DISK_OPTION);
+				parse_disk_options(&options, &res->pd_options);
 				STAILQ_CONCAT(&res->disk_options, &options);
 				break;
 			default:
@@ -1710,10 +1780,8 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 	if (flags == NO_HOST_SECT_ALLOWED && !STAILQ_EMPTY(&res->all_hosts)) {
 		config_valid = 0;
 
-		fprintf(stderr,
-			"%s:%d: in the %s section, there are no host sections"
-			" allowed.\n",
-			config_file, c_section_start, res->name);
+		err("%s:%d: in the %s section, there are no host sections allowed.\n",
+		    config_file, c_section_start, res->name);
 	}
 
 	return res;
@@ -1753,7 +1821,7 @@ void include_stmt(char *str)
 	   directory to the location of the current configuration file. */
 	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
 	if (cwd_fd < 0) {
-		fprintf(stderr, "open(\".\") failed: %m\n");
+		err("open(\".\") failed: %m\n");
 		exit(E_USAGE);
 	}
 
@@ -1763,7 +1831,7 @@ void include_stmt(char *str)
 		*last_slash = 0;
 
 	if (chdir(tmp)) {
-		fprintf(stderr, "chdir(\"%s\") failed: %m\n", tmp);
+		err("chdir(\"%s\") failed: %m\n", tmp);
 		exit(E_USAGE);
 	}
 
@@ -1775,27 +1843,25 @@ void include_stmt(char *str)
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
 				fclose(f);
 			} else {
-				fprintf(stderr,
-					"%s:%d: Failed to open include file '%s'.\n",
-					config_file, line, yylval.txt);
+				err("%s:%d: Failed to open include file '%s'.\n",
+				    config_file, line, yylval.txt);
 				config_valid = 0;
 			}
 		}
 		globfree(&glob_buf);
 	} else if (r == GLOB_NOMATCH) {
 		if (!strchr(str, '?') && !strchr(str, '*') && !strchr(str, '[')) {
-			fprintf(stderr,
-				"%s:%d: Failed to open include file '%s'.\n",
-				config_file, line, yylval.txt);
+			err("%s:%d: Failed to open include file '%s'.\n",
+			    config_file, line, yylval.txt);
 			config_valid = 0;
 		}
 	} else {
-		fprintf(stderr, "glob() failed: %d\n", r);
+		err("glob() failed: %d\n", r);
 		exit(E_USAGE);
 	}
 
 	if (fchdir(cwd_fd) < 0) {
-		fprintf(stderr, "fchdir() failed: %m\n");
+		err("fchdir() failed: %m\n");
 		exit(E_USAGE);
 	}
 

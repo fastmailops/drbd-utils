@@ -25,7 +25,6 @@
 */
 #ifndef DRBD_H
 #define DRBD_H
-#include <linux/connector.h>
 
 #include <asm/types.h>
 
@@ -176,6 +175,7 @@ enum drbd_ret_code {
 	ERR_MD_LAYOUT_NO_FIT    = 169,
 	ERR_IMPLICIT_SHRINK     = 170,
 	ERR_INVALID_PEER_NODE_ID = 171,
+	ERR_CREATE_TRANSPORT    = 172,
 
 	/* insert new ones above this line */
 	AFTER_LAST_ERR_CODE
@@ -350,9 +350,11 @@ enum mdf_peer_flag {
 	MDF_PEER_OUTDATED =	1 << 1,
 	MDF_PEER_FENCING =	1 << 2,
 	MDF_PEER_FULL_SYNC =	1 << 3,
+	MDF_NODE_EXISTS =       1 << 16, /* */
 };
 
-#define MAX_PEERS 32
+#define DRBD_PEERS_MAX 32
+#define DRBD_NODE_ID_MAX DRBD_PEERS_MAX
 
 enum drbd_uuid_index {
 	UI_CURRENT,
@@ -365,7 +367,7 @@ enum drbd_uuid_index {
 };
 
 #define HISTORY_UUIDS_V08 (UI_HISTORY_END - UI_HISTORY_START + 1)
-#define HISTORY_UUIDS MAX_PEERS
+#define HISTORY_UUIDS DRBD_PEERS_MAX
 
 enum drbd_timeout_flag {
 	UT_DEFAULT      = 0,

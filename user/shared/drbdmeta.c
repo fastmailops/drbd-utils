@@ -56,6 +56,7 @@
 #include "drbd_endian.h"
 #include "drbdtool_common.h"
 #include "drbd_strings.h"
+#include "drbd_meta_data.h"
 
 #include "drbdmeta_parser.h"
 
@@ -123,18 +124,18 @@ static int confirmed(const char *text)
 	size_t n = 0;
 	int ok;
 
-	printf("\n%s\n", text);
+	fprintf(stderr, "\n%s\n", text);
 
 	if (force) {
-	    printf("*** confirmation forced via --force option ***\n");
+	    fprintf(stderr, "*** confirmation forced via --force option ***\n");
 	    ok = 1;
 	}
 	else {
-	    printf("[need to type '%s' to confirm] ", yes);
+	    fprintf(stderr, "[need to type '%s' to confirm] ", yes);
 	    ok = getline(&answer,&n,stdin) == N &&
 		strncmp(answer,yes,N-1) == 0;
 	    free(answer);
-	    printf("\n");
+	    fprintf(stderr, "\n");
 	}
 	return ok;
 }
@@ -258,7 +259,7 @@ struct peer_md_cpu {
 	uint64_t bitmap_uuid;
 	uint64_t bitmap_dagtag;
 	uint32_t flags;
-	int32_t node_id;
+	int32_t bitmap_index;
 };
 
 struct md_cpu {
@@ -283,7 +284,7 @@ struct md_cpu {
 	/* Since DRBD 9.0 the following new stuff: */
 	uint32_t max_peers;
 	int32_t node_id;
-	struct peer_md_cpu peers[MAX_PEERS];
+	struct peer_md_cpu peers[DRBD_PEERS_MAX];
 	uint32_t al_stripes;
 	uint32_t al_stripe_size_4k;
 };
@@ -354,9 +355,9 @@ struct format_ops {
 	int (*md_initialize) (struct format *, int do_disk_writes, int max_peers);
 	int (*md_disk_to_cpu) (struct format *);
 	int (*md_cpu_to_disk) (struct format *);
-	void (*get_gi) (struct md_cpu *md, int bm_idx);
-	void (*show_gi) (struct md_cpu *md, int bm_idx);
-	void (*set_gi) (struct md_cpu *md, int bm_idx, char **argv, int argc);
+	void (*get_gi) (struct md_cpu *md, int node_id);
+	void (*show_gi) (struct md_cpu *md, int node_id);
+	void (*set_gi) (struct md_cpu *md, int node_id, char **argv, int argc);
 	int (*outdate_gi) (struct md_cpu *md);
 	int (*invalidate_gi) (struct md_cpu *md);
 };
@@ -469,20 +470,20 @@ int is_valid_md(enum md_format f,
 		return 0;
 	}
 
-	if (md->max_peers < 1 || md->max_peers > MAX_PEERS) {
+	if (md->max_peers < 1 || md->max_peers > DRBD_PEERS_MAX) {
 		fprintf(stderr, "%s max-peers value %d out of bounds\n",
 			v, md->max_peers);
 		return 0;
 	}
-	if (md->node_id < -1 || md->node_id > MAX_PEERS + 1) {
+	if (md->node_id < -1 || md->node_id > DRBD_PEERS_MAX + 1) {
 		fprintf(stderr, "%s device node-id value %d out of bounds\n",
 			v, md->node_id);
 		return 0;
 	}
 	for (n = 0; n < md->max_peers; n++) {
-		if (md->peers[n].node_id < -1 || md->peers[n].node_id > MAX_PEERS + 1) {
+		if (md->peers[n].bitmap_index < -1 || md->peers[n].bitmap_index > DRBD_PEERS_MAX + 1) {
 			fprintf(stderr, "%s peer device %d node-id value %d out of bounds\n",
-				v, n, md->peers[n].node_id);
+				v, n, md->peers[n].bitmap_index);
 			return 0;
 		}
 	}
@@ -784,44 +785,9 @@ int v84_al_disk_to_cpu(struct al_4k_cpu *al_cpu, struct al_4k_transaction_on_dis
 /*
  * -- DRBD 9.0 --------------------------------------
  */
+/* struct meta_data_on_disk_9 is in drbd_meta_data.h */
 
-struct peer_dev_md_on_disk {
-	be_u64 bitmap_uuid;
-	be_u64 bitmap_dagtag;
-	be_u32 flags;
-	be_s32 node_id;
-	be_u32 reserved_u32[2];
-} __packed;
-
-struct md_on_disk_09 {
-	be_u64 effective_size;    /* last agreed size */
-	be_u64 current_uuid;
-	be_u64 reserved_u64[4];   /* to have the magic at the same position as in v07, and v08 */
-	be_u64 device_uuid;
-	be_u32 flags;             /* MDF */
-	be_u32 magic;
-	be_u32 md_size_sect;
-	be_u32 al_offset;         /* offset to this block */
-	be_u32 al_nr_extents;     /* important for restoring the AL */
-	be_u32 bm_offset;         /* offset to the bitmap, from here */
-	be_u32 bm_bytes_per_bit;  /* BM_BLOCK_SIZE */
-	be_u32 la_peer_max_bio_size;   /* last peer max_bio_size */
-	be_u32 max_peers;
-	be_s32 node_id;
-
-	/* see al_tr_number_to_on_disk_sector() */
-	be_u32 al_stripes;
-	be_u32 al_stripe_size_4k;
-
-	be_u32 reserved_u32[2];
-
-	struct peer_dev_md_on_disk peers[MAX_PEERS];
-	be_u64 history_uuids[HISTORY_UUIDS];
-
-	char padding[0] __attribute__((aligned(4096)));
-} __packed;
-
-void md_disk_09_to_cpu(struct md_cpu *cpu, const struct md_on_disk_09 *disk)
+void md_disk_09_to_cpu(struct md_cpu *cpu, const struct meta_data_on_disk_9 *disk)
 {
 	int p, i;
 
@@ -836,18 +802,18 @@ void md_disk_09_to_cpu(struct md_cpu *cpu, const struct md_on_disk_09 *disk)
 	cpu->bm_offset = be32_to_cpu(disk->bm_offset.be);
 	cpu->bm_bytes_per_bit = be32_to_cpu(disk->bm_bytes_per_bit.be);
 	cpu->la_peer_max_bio_size = be32_to_cpu(disk->la_peer_max_bio_size.be);
-	cpu->max_peers = be32_to_cpu(disk->max_peers.be);
+	cpu->max_peers = be32_to_cpu(disk->bm_max_peers.be);
 	cpu->node_id = be32_to_cpu(disk->node_id.be);
 	cpu->al_stripes = be32_to_cpu(disk->al_stripes.be);
 	cpu->al_stripe_size_4k = be32_to_cpu(disk->al_stripe_size_4k.be);
 
-	if (cpu->max_peers > MAX_PEERS)
-		cpu->max_peers = MAX_PEERS;
+	if (cpu->max_peers > DRBD_PEERS_MAX)
+		cpu->max_peers = DRBD_PEERS_MAX;
 
 	cpu->current_uuid = be64_to_cpu(disk->current_uuid.be);
-	for (p = 0; p < cpu->max_peers; p++) {
+	for (p = 0; p < DRBD_NODE_ID_MAX; p++) {
 		cpu->peers[p].flags = be32_to_cpu(disk->peers[p].flags.be);
-		cpu->peers[p].node_id = be32_to_cpu(disk->peers[p].node_id.be);
+		cpu->peers[p].bitmap_index = be32_to_cpu(disk->peers[p].bitmap_index.be);
 		cpu->peers[p].bitmap_uuid =
 			be64_to_cpu(disk->peers[p].bitmap_uuid.be);
 		cpu->peers[p].bitmap_dagtag =
@@ -859,7 +825,7 @@ void md_disk_09_to_cpu(struct md_cpu *cpu, const struct md_on_disk_09 *disk)
 		cpu->history_uuids[i] = be64_to_cpu(disk->history_uuids[i].be);
 }
 
-void md_cpu_to_disk_09(struct md_on_disk_09 *disk, const struct md_cpu *cpu)
+void md_cpu_to_disk_09(struct meta_data_on_disk_9 *disk, const struct md_cpu *cpu)
 {
 	int p, i;
 
@@ -874,15 +840,15 @@ void md_cpu_to_disk_09(struct md_on_disk_09 *disk, const struct md_cpu *cpu)
 	disk->bm_offset.be = cpu_to_be32(cpu->bm_offset);
 	disk->bm_bytes_per_bit.be = cpu_to_be32(cpu->bm_bytes_per_bit);
 	disk->la_peer_max_bio_size.be = cpu_to_be32(cpu->la_peer_max_bio_size);
-	disk->max_peers.be = cpu_to_be32(cpu->max_peers);
+	disk->bm_max_peers.be = cpu_to_be32(cpu->max_peers);
 	disk->node_id.be = cpu_to_be32(cpu->node_id);
 	disk->al_stripes.be = cpu_to_be32(cpu->al_stripes);
 	disk->al_stripe_size_4k.be = cpu_to_be32(cpu->al_stripe_size_4k);
 
 	disk->current_uuid.be = cpu_to_be64(cpu->current_uuid);
-	for (p = 0; p < cpu->max_peers; p++) {
+	for (p = 0; p < DRBD_NODE_ID_MAX; p++) {
 		disk->peers[p].flags.be = cpu_to_be32(cpu->peers[p].flags);
-		disk->peers[p].node_id.be = cpu_to_be32(cpu->peers[p].node_id);
+		disk->peers[p].bitmap_index.be = cpu_to_be32(cpu->peers[p].bitmap_index);
 		disk->peers[p].bitmap_uuid.be =
 			cpu_to_be64(cpu->peers[p].bitmap_uuid);
 		disk->peers[p].bitmap_dagtag.be =
@@ -899,17 +865,17 @@ void md_cpu_to_disk_09(struct md_on_disk_09 *disk, const struct md_cpu *cpu)
  */
 
 /* pre declarations */
-void m_get_gc(struct md_cpu *md, int bm_idx);
-void m_show_gc(struct md_cpu *md, int bm_idx);
-void m_set_gc(struct md_cpu *md, int bm_idx, char **argv, int argc);
+void m_get_gc(struct md_cpu *md, int node_id);
+void m_show_gc(struct md_cpu *md, int node_id);
+void m_set_gc(struct md_cpu *md, int node_id, char **argv, int argc);
 int m_outdate_gc(struct md_cpu *md);
 int m_invalidate_gc(struct md_cpu *md);
-void m_get_uuid(struct md_cpu *md, int bm_idx);
-void m_show_uuid(struct md_cpu *md, int bm_idx);
-void m_set_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc);
-void m_get_v9_uuid(struct md_cpu *md, int bm_idx);
-void m_show_v9_uuid(struct md_cpu *md, int bm_idx);
-void m_set_v9_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc);
+void m_get_uuid(struct md_cpu *md, int node_id);
+void m_show_uuid(struct md_cpu *md, int node_id);
+void m_set_uuid(struct md_cpu *md, int node_id, char **argv, int argc);
+void m_get_v9_uuid(struct md_cpu *md, int node_id);
+void m_show_v9_uuid(struct md_cpu *md, int node_id);
+void m_set_v9_uuid(struct md_cpu *md, int node_id, char **argv, int argc);
 int m_outdate_uuid(struct md_cpu *md);
 int m_invalidate_uuid(struct md_cpu *md);
 int m_invalidate_v9_uuid(struct md_cpu *md);
@@ -1223,21 +1189,21 @@ size_t pwrite_with_limit_or_die(struct format *cfg, const void *buf, size_t coun
 	return count;
 }
 
-void m_get_gc(struct md_cpu *md, int bm_idx __attribute((unused)))
+void m_get_gc(struct md_cpu *md, int node_id __attribute((unused)))
 {
 	dt_print_gc(md->gc);
 }
 
-void m_show_gc(struct md_cpu *md, int bm_idx __attribute((unused)))
+void m_show_gc(struct md_cpu *md, int node_id __attribute((unused)))
 {
 	dt_pretty_print_gc(md->gc);
 }
 
-void m_get_uuid(struct md_cpu *md, int bm_idx)
+void m_get_uuid(struct md_cpu *md, int node_id)
 {
 	uint64_t uuids[] = {
 		[UI_CURRENT] = md->current_uuid,
-		[UI_BITMAP] = md->peers[bm_idx].bitmap_uuid,
+		[UI_BITMAP] = md->peers[node_id].bitmap_uuid,
 		[UI_HISTORY_START] = md->history_uuids[0],
 		[UI_HISTORY_END] = md->history_uuids[1],
 	};
@@ -1245,11 +1211,11 @@ void m_get_uuid(struct md_cpu *md, int bm_idx)
 	dt_print_uuids(uuids, md->flags);
 }
 
-void m_show_uuid(struct md_cpu *md, int bm_idx)
+void m_show_uuid(struct md_cpu *md, int node_id)
 {
 	uint64_t uuids[] = {
 		[UI_CURRENT] = md->current_uuid,
-		[UI_BITMAP] = md->peers[bm_idx].bitmap_uuid,
+		[UI_BITMAP] = md->peers[node_id].bitmap_uuid,
 		[UI_HISTORY_START] = md->history_uuids[0],
 		[UI_HISTORY_END] = md->history_uuids[1],
 	};
@@ -1257,28 +1223,28 @@ void m_show_uuid(struct md_cpu *md, int bm_idx)
 	dt_pretty_print_uuids(uuids, md->flags);
 }
 
-void m_get_v9_uuid(struct md_cpu *md, int bm_idx)
+void m_get_v9_uuid(struct md_cpu *md, int node_id)
 {
 	uint64_t uuids[] = {
 		[UI_CURRENT] = md->current_uuid,
-		[UI_BITMAP] = md->peers[bm_idx].bitmap_uuid,
+		[UI_BITMAP] = md->peers[node_id].bitmap_uuid,
 		[UI_HISTORY_START] = md->history_uuids[0],
 		[UI_HISTORY_END] = md->history_uuids[1],
 	};
 
-	dt_print_v9_uuids(uuids, md->flags, md->peers[bm_idx].flags);
+	dt_print_v9_uuids(uuids, md->flags, md->peers[node_id].flags);
 }
 
-void m_show_v9_uuid(struct md_cpu *md, int bm_idx)
+void m_show_v9_uuid(struct md_cpu *md, int node_id)
 {
 	uint64_t uuids[] = {
 		[UI_CURRENT] = md->current_uuid,
-		[UI_BITMAP] = md->peers[bm_idx].bitmap_uuid,
+		[UI_BITMAP] = md->peers[node_id].bitmap_uuid,
 		[UI_HISTORY_START] = md->history_uuids[0],
 		[UI_HISTORY_END] = md->history_uuids[1],
 	};
 
-	dt_pretty_print_v9_uuids(uuids, md->flags, md->peers[bm_idx].flags);
+	dt_pretty_print_v9_uuids(uuids, md->flags, md->peers[node_id].flags);
 }
 
 int m_strsep_u32(char **s, uint32_t *val)
@@ -1361,7 +1327,7 @@ int m_strsep_bit(char **s, uint32_t *val, int mask)
 	return rv;
 }
 
-void m_set_gc(struct md_cpu *md, int bm_idx __attribute((unused)), char **argv, int argc __attribute((unused)))
+void m_set_gc(struct md_cpu *md, int node_id __attribute((unused)), char **argv, int argc __attribute((unused)))
 {
 	char **str;
 
@@ -1379,7 +1345,7 @@ void m_set_gc(struct md_cpu *md, int bm_idx __attribute((unused)), char **argv, 
 	} while (0);
 }
 
-void m_set_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attribute((unused)))
+void m_set_uuid(struct md_cpu *md, int node_id, char **argv, int argc __attribute((unused)))
 {
 	char **str;
 	int i;
@@ -1388,7 +1354,7 @@ void m_set_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attribute
 
 	do {
 		if (!m_strsep_u64(str, &md->current_uuid)) break;
-		if (!m_strsep_u64(str, &md->peers[bm_idx].bitmap_uuid)) break;
+		if (!m_strsep_u64(str, &md->peers[node_id].bitmap_uuid)) break;
 		for (i = 0; i < HISTORY_UUIDS_V08; i++)
 			if (!m_strsep_u64(str, &md->history_uuids[i])) return;
 		if (!m_strsep_bit(str, &md->flags, MDF_CONSISTENT)) break;
@@ -1401,7 +1367,7 @@ void m_set_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attribute
 	} while (0);
 }
 
-void m_set_v9_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attribute((unused)))
+void m_set_v9_uuid(struct md_cpu *md, int node_id, char **argv, int argc __attribute((unused)))
 {
 	char **str;
 	int i;
@@ -1410,7 +1376,7 @@ void m_set_v9_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attrib
 
 	do {
 		if (!m_strsep_u64(str, &md->current_uuid)) break;
-		if (!m_strsep_u64(str, &md->peers[bm_idx].bitmap_uuid)) break;
+		if (!m_strsep_u64(str, &md->peers[node_id].bitmap_uuid)) break;
 		for (i = 0; i < HISTORY_UUIDS_V08; i++)
 			if (!m_strsep_u64(str, &md->history_uuids[i])) return;
 		if (!m_strsep_bit(str, &md->flags, MDF_CONSISTENT)) break;
@@ -1419,10 +1385,10 @@ void m_set_v9_uuid(struct md_cpu *md, int bm_idx, char **argv, int argc __attrib
 		if (!m_strsep_bit(str, &md->flags, MDF_CRASHED_PRIMARY)) break;
 		if (!m_strsep_bit(str, &md->flags, MDF_AL_CLEAN)) break;
 		if (!m_strsep_bit(str, &md->flags, MDF_AL_DISABLED)) break;
-		if (!m_strsep_bit(str, &md->peers[bm_idx].flags, MDF_PEER_CONNECTED)) break;
-		if (!m_strsep_bit(str, &md->peers[bm_idx].flags, MDF_PEER_OUTDATED)) break;
-		if (!m_strsep_bit(str, &md->peers[bm_idx].flags, MDF_PEER_FENCING)) break;
-		if (!m_strsep_bit(str, &md->peers[bm_idx].flags, MDF_PEER_FULL_SYNC)) break;
+		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_CONNECTED)) break;
+		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_OUTDATED)) break;
+		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_FENCING)) break;
+		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_FULL_SYNC)) break;
 	} while (0);
 }
 
@@ -1463,13 +1429,13 @@ int m_invalidate_uuid(struct md_cpu *md)
 
 int m_invalidate_v9_uuid(struct md_cpu *md)
 {
-	int bm_idx;
+	int node_id;
 
 	md->flags &= ~MDF_CONSISTENT;
 	md->flags &= ~MDF_WAS_UP_TO_DATE;
 
-	for (bm_idx = 0; bm_idx < md->max_peers; bm_idx++) {
-		md->peers[bm_idx].flags |= MDF_PEER_FULL_SYNC;
+	for (node_id = 0; node_id < DRBD_NODE_ID_MAX; node_id++) {
+		md->peers[node_id].flags |= MDF_PEER_FULL_SYNC;
 	}
 
 	return 0;
@@ -2450,8 +2416,22 @@ int meta_apply_al(struct format *cfg, char **argv __attribute((unused)), int arg
 unsigned long bm_bytes(const struct md_cpu const *md, uint64_t sectors)
 {
 	unsigned long long bm_bits;
+	unsigned long sectors_per_bit = md->bm_bytes_per_bit >> 9;
 
-	bm_bits = ALIGN(sectors, 8) / (md->bm_bytes_per_bit >> 9);
+	/* we announced 1 PiB as "supported" iirc. */
+	ASSERT(sectors <= (1ULL << (50-9)));
+
+	/* round up storage sectors to full "bitmap sectors per bit", then
+	 * convert to number of bits needed, and round that up to 64bit words
+	 * to ease interoperability between 32bit and 64bit architectures.
+	 */
+	bm_bits = (sectors + sectors_per_bit -1)/sectors_per_bit;
+	bm_bits = ALIGN(bm_bits, 64);
+
+	/* convert to bytes, multiply by number of peers,
+	 * and, because we do all our meta data IO in 4k blocks,
+	 * round up to full 4k
+	 */
 	return ALIGN(bm_bits / 8 * md->max_peers, 4096);
 }
 
@@ -2661,7 +2641,10 @@ int v07_style_md_open(struct format *cfg)
 	}
 
 	cfg->bd_size = bdev_size(cfg->md_fd);
-	if ((cfg->bd_size >> 9) < MD_BM_OFFSET_07) {
+	/* check_for_existing_data() wants to read that much,
+	 * so having less than that doesn't make sense.
+	 * It's only 68kB anyway! */
+	if (cfg->bd_size < SO_MUCH) {
 		fprintf(stderr, "%s is only %llu bytes. That's not enough.\n",
 			cfg->md_device_name, (long long unsigned)cfg->bd_size);
 		exit(10);
@@ -2956,8 +2939,8 @@ int v09_md_disk_to_cpu(struct format *cfg)
 {
 	struct md_cpu md;
 	int ok;
-	PREAD(cfg, on_disk_buffer, sizeof(struct md_on_disk_09), cfg->md_offset);
-	md_disk_09_to_cpu(&md, (struct md_on_disk_09*)on_disk_buffer);
+	PREAD(cfg, on_disk_buffer, sizeof(struct meta_data_on_disk_9), cfg->md_offset);
+	md_disk_09_to_cpu(&md, (struct meta_data_on_disk_9*)on_disk_buffer);
 	ok = is_valid_md(DRBD_V09, &md, cfg->md_index, cfg->bd_size);
 	if (ok)
 		cfg->md = md;
@@ -2970,8 +2953,8 @@ int v09_md_cpu_to_disk(struct format *cfg)
 {
 	if (!is_valid_md(DRBD_V09, &cfg->md, cfg->md_index, cfg->bd_size))
 		return -1;
-	md_cpu_to_disk_09((struct md_on_disk_09 *)on_disk_buffer, &cfg->md);
-	PWRITE(cfg, on_disk_buffer, sizeof(struct md_on_disk_09), cfg->md_offset);
+	md_cpu_to_disk_09((struct meta_data_on_disk_9 *)on_disk_buffer, &cfg->md);
+	PWRITE(cfg, on_disk_buffer, sizeof(struct meta_data_on_disk_9), cfg->md_offset);
 	cfg->update_lk_bdev = 1;
 	return 0;
 }
@@ -2994,10 +2977,10 @@ int v09_md_initialize(struct format *cfg, int do_disk_writes, int max_peers)
 	for (i = 0; i < ARRAY_SIZE(cfg->md.history_uuids); i++)
 		cfg->md.history_uuids[i] = 0;
 
-	for (p = 0; p < max_peers; p++) {
+	for (p = 0; p < DRBD_NODE_ID_MAX; p++) {
 		cfg->md.peers[p].bitmap_uuid = 0;
 		cfg->md.peers[p].flags = 0;
-		cfg->md.peers[p].node_id = -1;
+		cfg->md.peers[p].bitmap_index = -1;
 	}
 
 	return md_initialize_common(cfg, do_disk_writes);
@@ -3006,24 +2989,6 @@ int v09_md_initialize(struct format *cfg, int do_disk_writes, int max_peers)
 /******************************************
   }}} end of v09
  ******************************************/
-
-static int node_id_to_bm_idx(struct format *cfg, int node_id)
-{
-	int bm_idx;
-
-	if (format_version(cfg) < DRBD_V09)
-		return 0;
-
-	for (bm_idx = 0; bm_idx < cfg->md.max_peers; bm_idx++) {
-		/*if (cfg->md.peers[bm_idx].node_id == -1)
-		  vacant_idx = bm_idx; */
-		if (cfg->md.peers[bm_idx].node_id == node_id)
-			return bm_idx;
-	}
-
-	fprintf(stderr, "The node-id %d not known (yet) in meta data\n", node_id);
-	exit(10);
-}
 
 int meta_get_gi(struct format *cfg, char **argv __attribute((unused)), int argc)
 {
@@ -3034,7 +2999,7 @@ int meta_get_gi(struct format *cfg, char **argv __attribute((unused)), int argc)
 	if (cfg->ops->open(cfg))
 		return -1;
 
-	cfg->ops->get_gi(&cfg->md, node_id_to_bm_idx(cfg, option_node_id));
+	cfg->ops->get_gi(&cfg->md, option_node_id);
 
 	return cfg->ops->close(cfg);
 }
@@ -3052,7 +3017,7 @@ int meta_show_gi(struct format *cfg, char **argv __attribute((unused)), int argc
 
 	// find the correct slot from node-id.
 
-	cfg->ops->show_gi(&cfg->md, node_id_to_bm_idx(cfg, option_node_id));
+	cfg->ops->show_gi(&cfg->md, option_node_id);
 
 	if (cfg->md.effective_size) {
 		printf("last agreed size: %s (%llu sectors)\n",
@@ -3103,7 +3068,6 @@ int meta_set_gi(struct format *cfg, char **argv, int argc)
 {
 	struct md_cpu tmp;
 	int err;
-	int bm_idx;
 
 	if (argc > 1) {
 		fprintf(stderr, "Ignoring additional arguments\n");
@@ -3116,14 +3080,12 @@ int meta_set_gi(struct format *cfg, char **argv, int argc)
 	if (cfg->ops->open(cfg))
 		return -1;
 
-	bm_idx = node_id_to_bm_idx(cfg, option_node_id);
-
 	tmp = cfg->md;
-	cfg->ops->set_gi(&tmp, bm_idx, argv, argc);
+	cfg->ops->set_gi(&tmp, option_node_id, argv, argc);
 	printf("previously ");
-	cfg->ops->get_gi(&cfg->md, bm_idx);
+	cfg->ops->get_gi(&cfg->md, option_node_id);
 	printf("set GI to  ");
-	cfg->ops->get_gi(&tmp, bm_idx);
+	cfg->ops->get_gi(&tmp, option_node_id);
 
 	if (!confirmed("Write new GI to disk?")) {
 		printf("Operation canceled.\n");
@@ -3247,13 +3209,13 @@ int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc
 		       "flags 0x"X32(08)";\n",
 		       cfg->md.node_id,
 		       cfg->md.current_uuid, cfg->md.flags);
-		for (i = 0; i < cfg->md.max_peers; i++) {
+		for (i = 0; i < DRBD_NODE_ID_MAX; i++) {
 			struct peer_md_cpu *peer = &cfg->md.peers[i];
 
 			printf("peer[%d] {\n", i);
 			if (format_version(cfg) >= DRBD_V09) {
-				printf("    node-id %d;\n",
-				       peer->node_id);
+				printf("    bitmap-index %d;\n",
+				       peer->bitmap_index);
 			}
 			printf("    bitmap-uuid 0x"X64(016)";\n"
 			       "    bitmap-dagtag 0x"X64(016)";\n"
@@ -3641,7 +3603,7 @@ int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int pa
 			EXP(TK_FLAGS); EXP(TK_U32); EXP(';');
 			cfg->md.flags = (uint32_t)yylval.u64;
 
-			for (i = 0; i < cfg->md.max_peers; i++) {
+			for (i = 0; i < DRBD_NODE_ID_MAX; i++) {
 				EXP(TK_PEER); EXP('[');
 				EXP(TK_NUM); EXP(']');
 				if (yylval.u64 != i) {
@@ -3651,9 +3613,9 @@ int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int pa
 					exit(10);
 				}
 				EXP('{');
-				EXP(TK_NODE_ID);
+				EXP(TK_BITMAP_INDEX);
 				EXP(TK_NUM); EXP(';');
-				cfg->md.peers[i].node_id = yylval.u64;
+				cfg->md.peers[i].bitmap_index = yylval.u64;
 				EXP(TK_BITMAP_UUID); EXP(TK_U64); EXP(';');
 				cfg->md.peers[i].bitmap_uuid = yylval.u64;
 				EXP(TK_BITMAP_DAGTAG); EXP(TK_U64); EXP(';');
@@ -4277,7 +4239,7 @@ enum md_format detect_md(struct md_cpu *md, const uint64_t ll_size)
 		*md = md_test;
 	}
 
-	md_disk_09_to_cpu(&md_test, (struct md_on_disk_09*)on_disk_buffer);
+	md_disk_09_to_cpu(&md_test, (struct meta_data_on_disk_9*)on_disk_buffer);
 	if (is_valid_md(DRBD_V09, &md_test, DRBD_MD_INDEX_FLEX_INT, ll_size)) {
 		have = DRBD_V09;
 		*md = md_test;
@@ -4570,8 +4532,8 @@ int meta_create_md(struct format *cfg, char **argv __attribute((unused)), int ar
 	} else if (argc > 0)
 		fprintf(stderr, "Ignoring additional arguments\n");
 
-	if (max_peers < 1 || max_peers > MAX_PEERS) {
-		fprintf(stderr, "MAX_PEERS argument not in allowed range 1 .. %d.\n", MAX_PEERS);
+	if (max_peers < 1 || max_peers > DRBD_PEERS_MAX) {
+		fprintf(stderr, "MAX_PEERS argument not in allowed range 1 .. %d.\n", DRBD_PEERS_MAX);
 		exit(20);
 	}
 
@@ -4944,17 +4906,15 @@ int meta_chk_offline_resize(struct format *cfg, char **argv, int argc)
 
 int meta_forget_peer(struct format *cfg, char **argv, int argc)
 {
-	int bm_idx, err;
+	int err;
 
 	err = cfg->ops->open(cfg);
 	if (err)
 		return -1;
 
-	bm_idx = node_id_to_bm_idx(cfg, option_node_id);
-
-	cfg->md.peers[bm_idx].node_id = -1;
-	cfg->md.peers[bm_idx].bitmap_uuid = 0;
-	cfg->md.peers[bm_idx].flags = 0;
+	cfg->md.peers[option_node_id].bitmap_index = -1;
+	cfg->md.peers[option_node_id].bitmap_uuid = 0;
+	cfg->md.peers[option_node_id].flags = 0;
 
 	cfg->ops->md_cpu_to_disk(cfg);
 	err = cfg->ops->close(cfg) || err;
@@ -4994,7 +4954,7 @@ int main(int argc, char **argv)
 	struct format *cfg;
 	size_t i;
 	int ai, rv;
-	bool minor_attached;
+	bool minor_attached = false;
 
 #if 1
 	if (sizeof(struct md_on_disk_07) != 4096) {
@@ -5009,10 +4969,10 @@ int main(int argc, char **argv)
 				(unsigned long)sizeof(struct md_on_disk_08));
 		exit(111);
 	}
-	if (sizeof(struct md_on_disk_09) != 4096) {
+	if (sizeof(struct meta_data_on_disk_9) != 4096) {
 		fprintf(stderr, "Where did you get this broken build!?\n"
-				"sizeof(md_on_disk_09) == %lu, should be 4096\n",
-				(unsigned long)sizeof(struct md_on_disk_09));
+				"sizeof(meta_data_on_disk_9) == %lu, should be 4096\n",
+				(unsigned long)sizeof(struct meta_data_on_disk_9));
 		exit(111);
 	}
 #if 0
@@ -5056,15 +5016,15 @@ int main(int argc, char **argv)
 	    case 'p':
 		    option_peer_max_bio_size = m_strtoll(optarg, 1);
 		    if (option_peer_max_bio_size < 0 ||
-			option_peer_max_bio_size > 128 * 1024) {
-			    fprintf(stderr, "peer-max-bio-size out of range (0...128k)\n");
+			option_peer_max_bio_size > 1024 * 1024) {
+			    fprintf(stderr, "peer-max-bio-size out of range (0...1M)\n");
 			    exit(10);
 		    }
 		    break;
 	    case 'i':
 		    option_node_id = m_strtoll(optarg, 1);
-		    if (option_node_id < 0 || option_node_id > (MAX_PEERS - 1)) {
-			    fprintf(stderr, "node-id out of range (0...%d)\n", MAX_PEERS - 1);
+		    if (option_node_id < 0 || option_node_id > (DRBD_PEERS_MAX - 1)) {
+			    fprintf(stderr, "node-id out of range (0...%d)\n", DRBD_PEERS_MAX - 1);
 			    exit(10);
 		    }
 		    break;
@@ -5114,21 +5074,26 @@ int main(int argc, char **argv)
 	 * unlock happens implicitly when the process dies,
 	 * but may be requested implicitly
 	 */
-	cfg->minor = dt_minor_of_dev(cfg->drbd_dev_name);
-	if (cfg->minor < 0) {
-		fprintf(stderr, "Cannot determine minor device number of "
-				"drbd device '%s'",
-			cfg->drbd_dev_name);
-		exit(20);
-	}
-	cfg->lock_fd = dt_lock_drbd(cfg->minor);
+	if (strcmp(cfg->drbd_dev_name, "-")) {
+		cfg->minor = dt_minor_of_dev(cfg->drbd_dev_name);
+		if (cfg->minor < 0) {
+			fprintf(stderr, "Cannot determine minor device number of "
+					"drbd device '%s'",
+				cfg->drbd_dev_name);
+			exit(20);
+		}
+		cfg->lock_fd = dt_lock_drbd(cfg->minor);
 
-	/* unconditionally check whether this is in use */
-	minor_attached = is_attached(cfg->minor);
-	if (minor_attached && command->modifies_md) {
-		fprintf(stderr, "Device '%s' is configured!\n",
-			cfg->drbd_dev_name);
-		exit(20);
+		/* check whether this is in use */
+		minor_attached = is_attached(cfg->minor);
+		if (minor_attached && command->modifies_md) {
+			fprintf(stderr, "Device '%s' is configured!\n",
+				cfg->drbd_dev_name);
+			exit(20);
+		}
+	} else {
+		cfg->minor = -1;
+		cfg->lock_fd = -1;
 	}
 
 	if (option_peer_max_bio_size &&

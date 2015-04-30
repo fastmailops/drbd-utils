@@ -18,71 +18,9 @@
 #endif
 
 #include "config.h"
+#include "shared_main.h"
 
 #define API_VERSION 1
-const char *drbd_buildtag(void);
-
-#define E_SYNTAX	  2
-#define E_USAGE		  3
-#define E_CONFIG_INVALID 10
-#define E_EXEC_ERROR     20
-#define E_THINKO	 42 /* :) */
-
-enum {
-	SLEEPS_FINITE        = 1,
-	SLEEPS_SHORT         = 2+1,
-	SLEEPS_LONG          = 4+1,
-	SLEEPS_VERY_LONG     = 8+1,
-	SLEEPS_MASK          = 15,
-
-	RETURN_PID           = 2,
-	SLEEPS_FOREVER       = 4,
-
-	SUPRESS_STDERR       = 0x10,
-	RETURN_STDOUT_FD     = 0x20,
-	RETURN_STDERR_FD     = 0x40,
-	DONT_REPORT_FAILED   = 0x80,
-};
-
-/* for check_uniq(): Check for uniqueness of certain values...
- * comment out if you want to NOT choke on the first conflict */
-#define EXIT_ON_CONFLICT 1
-
-/* for verify_ips(): are not verifyable ips fatal? */
-#define INVALID_IP_IS_INVALID_CONF 1
-
-enum usage_count_type {
-	UC_YES,
-	UC_NO,
-	UC_ASK,
-};
-
-enum pp_flags {
-	MATCH_ON_PROXY = 1,
-};
-
-struct d_globals
-{
-	int disable_io_hints;
-	int disable_ip_verification;
-	int minor_count;
-	int dialog_refresh;
-	enum usage_count_type usage_count;
-};
-
-#define IFI_HADDR 8
-#define IFI_ALIAS 1
-
-struct ifi_info {
-	char ifi_name[IFNAMSIZ];      /* interface name, nul terminated */
-	uint8_t ifi_haddr[IFI_HADDR]; /* hardware address */
-	uint16_t ifi_hlen;            /* bytes in hardware address, 0, 6, 8 */
-	short ifi_flags;              /* IFF_xxx constants from <net/if.h> */
-	short ifi_myflags;            /* our own IFI_xxx flags */
-	struct sockaddr *ifi_addr;    /* primary address */
-	struct ifi_info *ifi_next;    /* next ifi_info structure */
-};
-
 struct d_name
 {
 	char *name;
@@ -119,6 +57,25 @@ struct d_proxy_info
 	struct options plugins; /* named proxy_plugins in other places */
 };
 
+struct connection;
+struct d_volume;
+
+struct peer_device
+{
+	int vnr; /* parsed */
+	struct options pd_options; /* parsed */
+	int config_line; /* parsed here */
+
+	struct connection *connection;
+	struct d_volume *volume; /* set in post_parese() */
+
+	STAILQ_ENTRY(peer_device) connection_link; /* added during parsing */
+	STAILQ_ENTRY(peer_device) volume_link; /* added in post_parse() */
+
+	unsigned int implicit:1; /* Do not dump by default */
+};
+STAILQ_HEAD(peer_devices, peer_device);
+
 struct d_volume
 {
 	unsigned vnr;
@@ -131,6 +88,8 @@ struct d_volume
 	int meta_minor;
 	STAILQ_ENTRY(d_volume) link;
 	struct options disk_options; /* Additional per volume options */
+	struct options pd_options; /* peer device options */
+	struct peer_devices peer_devices;
 
 	/* Do not dump an explicit volume section */
 	unsigned int implicit :1 ;
@@ -192,6 +151,7 @@ struct connection
 	struct hname_address_pairs hname_address_pairs; /* parsed here */
 	int config_line; /* parsed here */
 
+	struct peer_devices peer_devices;
 	struct d_host_info *peer;
 	struct d_address *my_address; /* determined in set_me_in_resource() */
 	struct d_address *peer_address;
@@ -200,6 +160,7 @@ struct connection
 	struct d_proxy_info *peer_proxy;
 
 	struct options net_options; /* parsed here, inherited from res, used here */
+	struct options pd_options; /* parsed here, inherited into the peer_devices */
 	unsigned int ignore:1;
 	/* ignore_tmp is a flag that has the same semantic as ignore,
 	 * but the user is free to manipulate it and run checks on it
@@ -226,6 +187,7 @@ struct d_resource
 
 	struct options net_options; /* parsed here, inherited to connections */
 	struct options disk_options;
+	struct options pd_options; /* peer device options */
 	struct options res_options;
 	struct options startup_options;
 	struct options handlers;
@@ -316,6 +278,7 @@ extern struct adm_cmd resize_cmd;
 extern struct adm_cmd connect_cmd;
 extern struct adm_cmd net_options_cmd;
 extern struct adm_cmd net_options_defaults_cmd;
+extern struct adm_cmd peer_device_options_defaults_cmd;
 extern struct adm_cmd disconnect_cmd;
 extern struct adm_cmd detach_cmd;
 extern struct adm_cmd del_minor_cmd;
@@ -327,13 +290,6 @@ extern struct adm_cmd proxy_reconf_cmd;
 extern int adm_create_md(const struct cfg_ctx *);
 extern int _adm_drbdmeta(const struct cfg_ctx *, int flags, char *argument);
 
-extern void m__system(char **argv, int flags, const char *res_name, pid_t *kid, int *fd, int *ex);
-static inline int m_system_ex(char **argv, int flags, const char *res_name)
-{
-	int ex;
-	m__system(argv, flags, res_name, NULL, NULL, &ex);
-	return ex;
-}
 extern struct d_option *find_opt(struct options *base, const char *name);
 /* stages of configuration, as performed on "drbdadm up"
  * or "drbdadm adjust":
@@ -360,6 +316,7 @@ enum drbd_cfg_stage {
 	/* discard/set connection parameters */
 	CFG_NET,
 
+	CFG_PEER_DEVICE,
 	__CFG_LAST
 };
 
@@ -380,6 +337,8 @@ extern struct d_resource* parse_resource_for_adjust(const struct cfg_ctx *ctx);
 extern struct d_resource* parse_resource(char*, enum pr_flags);
 extern void post_parse(struct resources *, enum pp_flags);
 extern struct connection *alloc_connection();
+extern struct d_volume *alloc_volume(void);
+extern struct peer_device *alloc_peer_device();
 extern void free_connection(struct connection *connection);
 extern void expand_common(void);
 extern void global_validate_maybe_expand_die_if_invalid(int expand, enum pp_flags flags);
@@ -408,13 +367,13 @@ int parse_proxy_options_section(struct d_proxy_info **proxy);
 int do_proxy_conn_up(const struct cfg_ctx *ctx);
 int do_proxy_conn_down(const struct cfg_ctx *ctx);
 int do_proxy_conn_plugins(const struct cfg_ctx *ctx);
+struct peer_device *find_peer_device(struct connection *conn, int vnr);
 
 extern char *config_file;
 extern char *config_save;
 extern int config_valid;
 extern struct resources config;
 extern struct d_resource* common;
-extern struct d_globals global_options;
 extern int line, fline;
 extern struct hsearch_data global_htable;
 

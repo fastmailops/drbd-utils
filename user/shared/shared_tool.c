@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <arpa/inet.h>
+#include <syslog.h>
 
 #include "config.h"
 #include "drbdadm.h"
@@ -241,8 +242,12 @@ int lk_bdev_save(const unsigned minor, const struct bdev_info *bd)
 	int ok = 0;
 
 	fp = fopen(path, "w");
+	/* Do not use stderr (or stdout) while having any FD open for write.
+	   We might get called with stdin, stdout and stderr closed. then
+	   fp might be on FD 2. Using stderr would send the text to the file.
+	   Work around: Error messages after closing the writebale FD. */
 	if (!fp)
-		goto fail;
+		goto fail_no_fp;
 
 	ok = fprintf(fp, "%llu\t%s\n",
 		(unsigned long long) bd->bd_size, bd->bd_name);
@@ -250,12 +255,15 @@ int lk_bdev_save(const unsigned minor, const struct bdev_info *bd)
 		goto fail;
 	if (bd->bd_uuid)
 		fprintf(fp, "uuid:\t"X64(016)"\n", bd->bd_uuid);
-	ok =       0 == fflush(fp);
-	ok = ok && 0 == fsync(fileno(fp));
-	ok = ok && 0 == fclose(fp);
 
-	if (!ok)
-fail:		/* MAYBE: unlink. But maybe partial info is better than no info? */
+ fail:
+	fflush(fp);
+	fsync(fileno(fp));
+	fclose(fp);
+
+ fail_no_fp:
+	if (ok <= 0)
+		/* MAYBE: unlink. But maybe partial info is better than no info? */
 		fprintf(stderr, "lk_bdev_save(%s) failed: %m\n", path);
 
 	free(path);
@@ -701,4 +709,209 @@ void dt_print_uuids(const uint64_t* uuid, unsigned int flags)
 	       flags & MDF_FULL_SYNC ? 1 : 0,
 	       flags & MDF_PEER_OUT_DATED ? 1 : 0,
 	       flags & MDF_CRASHED_PRIMARY ? 1 : 0);
+}
+
+enum new_strtoll_errs
+new_strtoll(const char *s, const char def_unit, unsigned long long *rv)
+{
+	char unit = 0;
+	char dummy = 0;
+	int shift, c;
+
+	switch (def_unit) {
+	default:
+		return MSE_DEFAULT_UNIT;
+	case 0:
+	case 1:
+	case '1':
+		shift = 0;
+		break;
+	case 'K':
+	case 'k':
+		shift = -10;
+		break;
+	case 's':
+		shift = -9;   // sectors
+		break;
+		/*
+		  case 'M':
+		  case 'm':
+		  case 'G':
+		  case 'g':
+		*/
+	}
+
+	if (!s || !*s) return MSE_MISSING_NUMBER;
+
+	c = sscanf(s, "%llu%c%c", rv, &unit, &dummy);
+
+	if (c != 1 && c != 2) return MSE_INVALID_NUMBER;
+
+	switch (unit) {
+	case 0:
+		return MSE_OK;
+	case 'K':
+	case 'k':
+		shift += 10;
+		break;
+	case 'M':
+	case 'm':
+		shift += 20;
+		break;
+	case 'G':
+	case 'g':
+		shift += 30;
+		break;
+	case 's':
+		shift += 9;
+		break;
+	default:
+		return MSE_INVALID_UNIT;
+	}
+
+	/* if shift is negative (e.g. default unit 'K', actual unit 's'),
+	 * convert to positive, and shift right, rounding up. */
+	if (shift < 0) {
+		shift = -shift;
+		*rv = (*rv + (1ULL << shift) - 1) >> shift;
+		return MSE_OK;
+	}
+
+	/* if shift is positive, first check for overflow */
+	if (*rv > (~0ULL >> shift))
+		return MSE_OUT_OF_RANGE;
+
+	/* then convert */
+	*rv = *rv << shift;
+	return MSE_OK;
+}
+
+struct err_state {
+	unsigned int stderr_available:1;
+};
+
+static struct err_state err_state = { /* all zero */ };
+
+/* Call initialize_err() before creating any FD */
+void initialize_err(void)
+{
+	int err;
+
+	err = fcntl(STDERR_FILENO, F_GETFL);
+	if (err < 0 && errno == EBADF) {
+		err_state.stderr_available = 0;
+		openlog(NULL, LOG_PID, LOG_SYSLOG);
+	} else {
+		err_state.stderr_available = 1;
+	}
+}
+
+int err(const char *format, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, format);
+
+	if (err_state.stderr_available) {
+		n = vfprintf(stderr, format, ap);
+	} else {
+		vsyslog(LOG_ERR, format, ap);
+		n = 1;
+	}
+
+	va_end(ap);
+
+	return n;
+}
+
+/* if @str is NULL or the empty string, return "";
+ * if @str contains ' ', '\t' or '\\',
+ * surround it with ", and escape space, tab, backslash and double-quote with backslash.
+ * This escape is for escaping tokens for the drbdadm config parser,
+ * so any legal input do drbdadm "drbdadm dump" should result in output, which,
+ * if fed into an additional "drbdadm dump" should give the same output again.
+ */
+const char *esc(char *str)
+{
+	static char buffer[1024];
+	char *ue = str, *e = buffer;
+
+	if (!str || !str[0]) {
+		return "\"\"";
+	}
+	if (strchr(str, ' ') || strchr(str, '\t') || strchr(str, '\\')) {
+		*e++ = '"';
+		while (*ue) {
+			if (*ue == '"' || *ue == '\\') {
+				*e++ = '\\';
+			}
+			if (e - buffer >= 1022) {
+				err("string too long.\n");
+				exit(E_SYNTAX);
+			}
+			*e++ = *ue++;
+			if (e - buffer >= 1022) {
+				err("string too long.\n");
+				exit(E_SYNTAX);
+			}
+		}
+		*e++ = '"';
+		*e++ = '\0';
+		return buffer;
+	}
+	return str;
+}
+
+/* escape a few things that are not legal in xml content; good enough for our
+ * purposes, but likely not "academically correct" resp.  "complete". */
+const char *esc_xml(char *str)
+{
+	static char buffer[1024];
+	char *ue = str, *e = buffer;
+
+	if (!str || !str[0]) {
+		return "";
+	}
+	if (strchr(str, '"') || strchr(str, '\'') || strchr(str, '<') ||
+	    strchr(str, '>') || strchr(str, '&') || strchr(str, '\\')) {
+		while (*ue) {
+			if (*ue == '"' || *ue == '\\') {
+				*e++ = '\\';
+				if (e - buffer >= 1021) {
+					err("string too long.\n");
+					exit(E_SYNTAX);
+				}
+				*e++ = *ue++;
+			} else if (*ue == '\'' || *ue == '<' || *ue == '>'
+				   || *ue == '&') {
+				if (*ue == '\'' && e - buffer < 1017) {
+					strcpy(e, "&apos;");
+					e += 6;
+				} else if (*ue == '<' && e - buffer < 1019) {
+					strcpy(e, "&lt;");
+					e += 4;
+				} else if (*ue == '>' && e - buffer < 1019) {
+					strcpy(e, "&gt;");
+					e += 4;
+				} else if (*ue == '&' && e - buffer < 1018) {
+					strcpy(e, "&amp;");
+					e += 5;
+				} else {
+					err("string too long.\n");
+					exit(E_SYNTAX);
+				}
+				ue++;
+			} else {
+				*e++ = *ue++;
+				if (e - buffer >= 1022) {
+					err("string too long.\n");
+					exit(E_SYNTAX);
+				}
+			}
+		}
+		*e++ = '\0';
+		return buffer;
+	}
+	return str;
 }

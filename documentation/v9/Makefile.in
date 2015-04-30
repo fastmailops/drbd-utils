@@ -76,10 +76,12 @@ DRBDSETUP_CMDS += forget-peer
 
 make_doc := $(shell $(XSLTPROC)				\
 	$(XSLTPROC_MANPAGES_OPTIONS)			\
-	$(MANPAGES_STYLESHEET) < /dev/null && echo doc )
+	$(MANPAGES_STYLESHEET) < /dev/null > /dev/null 2>&1 && echo doc )
 
-all: $(make_doc)
-ifneq ($(make_doc),doc)
+ifeq ($(make_doc),doc)
+all: doc
+else
+all:
 	@echo "To (re)make the documentation: make doc"
 endif
 
@@ -94,7 +96,6 @@ MAN_LINK=9.0
 endif
 
 doc-clean: distclean
-
 
 ####### Implicit rules
 
@@ -115,10 +116,13 @@ doc-clean: distclean
 	$(XSLTPROC_FO_OPTIONS) \
 	$(FO_STYLESHEET) $<
 
-../../user/v9/drbdsetup:
-	$(MAKE) -C $(@D) $(@F)
+../../user/v9/drbdsetup.o: FORCE
+	$(MAKE) -C $(@D) drbdsetup
 
-drbdsetup_xml-help_%.xml: ../../user/v9/drbdsetup
+.PHONY: FORCE
+FORCE:
+
+drbdsetup_xml-help_%.xml: ../../user/v9/drbdsetup.o
 	../../user/v9/drbdsetup xml-help $* > $@
 
 drbdsetup_%.xml: drbdsetup_xml-help_%.xml xml-usage-to-docbook.xsl

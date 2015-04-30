@@ -60,10 +60,10 @@ void set_on_hosts_in_res(struct d_resource *res)
 			}
 
 			if (l_res == NULL) {
-				fprintf(stderr, "%s:%d: in resource %s, "
-					"referenced resource '%s' not defined.\n",
-					res->config_file, res->start_line, res->name,
-					host->lower_name);
+				err("%s:%d: in resource %s, "
+				    "referenced resource '%s' not defined.\n",
+				    res->config_file, res->start_line,
+				    res->name, host->lower_name);
 				config_valid = 0;
 				continue;
 			}
@@ -147,7 +147,7 @@ static void set_host_info_in_host_address_pairs(struct d_resource *res, struct c
 		if (ha->host_info) { /* Implicit connection have that already set. */
 			host_info = ha->host_info;
 			if (i == 2) {
-				fprintf(stderr, "LOGIC BUG in set_host_info_in_host_address_pairs()\n");
+				err("LOGIC BUG in set_host_info_in_host_address_pairs()\n");
 				exit(20);
 			}
 			addr_hash[i] = crc32c(0x1a656f21,
@@ -167,10 +167,10 @@ static void set_host_info_in_host_address_pairs(struct d_resource *res, struct c
 		}
 
 		if (!host_info) {
-			fprintf(stderr, "%s:%d: in resource %s a hostname (\"%s\") is given\n"
-				"with a \"host\" keyword, has no \"address\" keyword, and not matching\n"
-				"host section (\"on\" keyword)\n",
-				config_file, ha->config_line, res->name, ha->name);
+			err("%s:%d: in resource %s a hostname (\"%s\") is given\n"
+			    "with a \"host\" keyword, has no \"address\" keyword, and not matching\n"
+			    "host section (\"on\" keyword)\n",
+			    config_file, ha->config_line, res->name, ha->name);
 			config_valid = 0;
 			continue;
 		}
@@ -193,12 +193,12 @@ static void set_host_info_in_host_address_pairs(struct d_resource *res, struct c
 					have_port = false;
 			}
 			if (!(have_address && have_port)) {
-				fprintf(stderr, "%s:%d: Resource %s, host %s: "
-						"cannot determine which %s%s%s to use\n",
-					config_file, ha->config_line, res->name, ha->name,
-					have_address ? "" : "address",
-					have_address != have_port ? "" : " and ",
-					have_port ? "" : "port");
+				err("%s:%d: Resource %s, host %s: "
+				    "cannot determine which %s%s%s to use\n",
+				    config_file, ha->config_line, res->name,
+				    ha->name, have_address ? "" : "address",
+				    have_address != have_port ? "" : " and ",
+				    have_port ? "" : "port");
 				config_valid = 0;
 			}
 		}
@@ -230,7 +230,7 @@ static void set_host_info_in_host_address_pairs(struct d_resource *res, struct c
 			have_node_ids = generate_implicit_node_id(addr_hash, host_info_array);
 		}
 		if (!have_node_ids) {
-			fprintf(stderr, "BAD LUCK, equal hashes\n");
+			err("BAD LUCK, equal hashes\n");
 			exit(20);
 		}
 	}
@@ -283,23 +283,21 @@ void set_me_in_resource(struct d_resource* res, int match_on_proxy)
 		/* we matched. */
 		if (res->ignore) {
 			config_valid = 0;
-			fprintf(stderr,
-				"%s:%d: in resource %s, %s %s { ... }:\n"
-				"\tYou cannot ignore and define at the same time.\n",
-				res->config_file, host->config_line, res->name,
-				host->lower ? "stacked-on-top-of" : "on",
-				host->lower ? host->lower->name : names_to_str(&host->on_hosts));
+			err("%s:%d: in resource %s, %s %s { ... }:\n"
+			    "\tYou cannot ignore and define at the same time.\n",
+			    res->config_file, host->config_line, res->name,
+			    host->lower ? "stacked-on-top-of" : "on",
+			    host->lower ? host->lower->name : names_to_str(&host->on_hosts));
 		}
 		if (res->me && res->me != host) {
 			config_valid = 0;
-			fprintf(stderr,
-				"%s:%d: in resource %s, %s %s { ... } ... %s %s { ... }:\n"
-				"\tThere are multiple host sections for this node.\n",
-				res->config_file, host->config_line, res->name,
-				res->me->lower ? "stacked-on-top-of" : "on",
-				res->me->lower ? res->me->lower->name : names_to_str(&res->me->on_hosts),
-				host->lower ? "stacked-on-top-of" : "on",
-				host->lower ? host->lower->name : names_to_str(&host->on_hosts));
+			err("%s:%d: in resource %s, %s %s { ... } ... %s %s { ... }:\n"
+			    "\tThere are multiple host sections for this node.\n",
+			    res->config_file, host->config_line, res->name,
+			    res->me->lower ? "stacked-on-top-of" : "on",
+			    res->me->lower ? res->me->lower->name : names_to_str(&res->me->on_hosts),
+			    host->lower ? "stacked-on-top-of" : "on",
+			    host->lower ? host->lower->name : names_to_str(&host->on_hosts));
 		}
 		res->me = host;
 		host->used_as_me = 1;
@@ -345,9 +343,9 @@ static void set_peer_in_connection(struct d_resource* res, struct connection *co
 	/* me must be already set */
 	if (!res->me) {
 		/* should have been implicitly ignored. */
-		fprintf(stderr, "%s:%d: in resource %s:\n"
-				"\tcannot determine the peer, don't even know myself!\n",
-				res->config_file, res->start_line, res->name);
+		err("%s:%d: in resource %s:\n"
+		    "\tcannot determine the peer, don't even know myself!\n",
+		    res->config_file, res->start_line, res->name);
 		exit(E_THINKO);
 	}
 
@@ -361,10 +359,9 @@ static void set_peer_in_connection(struct d_resource* res, struct connection *co
 
 	if (nr_hosts == 1) {
 		if (peer_required) {
-			fprintf(stderr,
-				"%s:%d: in connection in resource %s:\n"
-				"\tMissing statement 'host <PEER> '.\n",
-				res->config_file, conn->config_line, res->name);
+			err("%s:%d: in connection in resource %s:\n"
+			    "\tMissing statement 'host <PEER> '.\n",
+			    res->config_file, conn->config_line, res->name);
 			config_valid = 0;
 		}
 		return;
@@ -379,10 +376,9 @@ static void set_peer_in_connection(struct d_resource* res, struct connection *co
 		return;
 	}
 
-	fprintf(stderr,
-		"%s:%d: in connection in resource %s:\n"
-		"\tBug in set_peer_in_connection()\n",
-		res->config_file, conn->config_line, res->name);
+	err("%s:%d: in connection in resource %s:\n"
+	    "\tBug in set_peer_in_connection()\n",
+	    res->config_file, conn->config_line, res->name);
 	config_valid = 0;
 }
 
@@ -483,9 +479,9 @@ static struct d_volume *find_volume(struct volumes *volumes, int vnr)
 static void derror(struct d_host_info *host, struct d_resource *res, char *text)
 {
 	config_valid = 0;
-	fprintf(stderr, "%s:%d: in resource %s, on %s { ... }:"
-		" '%s' keyword missing.\n",
-		res->config_file, host->config_line, res->name, names_to_str(&host->on_hosts), text);
+	err("%s:%d: in resource %s, on %s { ... }: '%s' keyword missing.\n",
+	    res->config_file, host->config_line, res->name,
+	    names_to_str(&host->on_hosts), text);
 }
 
 static void inherit_volumes(struct volumes *from, struct d_host_info *host)
@@ -496,7 +492,7 @@ static void inherit_volumes(struct volumes *from, struct d_host_info *host)
 	for_each_volume(s, from) {
 		t = find_volume(&host->volumes, s->vnr);
 		if (!t) {
-			t = calloc(1, sizeof(struct d_volume));
+			t = alloc_volume();
 			t->device_minor = -1;
 			t->vnr = s->vnr;
 			insert_volume(&host->volumes, t);
@@ -543,9 +539,8 @@ static void check_volumes_complete(struct d_resource *res, struct d_host_info *h
 		if (vnr == -1U || vnr < vol->vnr)
 			vnr = vol->vnr;
 		else
-			fprintf(stderr,
-				"internal error: in %s: unsorted volumes list\n",
-				res->name);
+			err("internal error: in %s: unsorted volumes list\n",
+			    res->name);
 		check_volume_complete(res, host, vol);
 	}
 }
@@ -582,14 +577,10 @@ static void check_volume_sets_equal(struct d_resource *res, struct d_host_info *
 	/* volume lists are supposed to be sorted on vnr */
 	while (a || b) {
 		while (a && (!b || a->vnr < b->vnr)) {
-			fprintf(stderr,
-				"%s:%d: in resource %s, on %s { ... }: "
-				"volume %d not defined on %s\n",
-				config_file, line, res->name,
-				names_to_str(&host1->on_hosts),
-				a->vnr,
-				compare_stacked ? host1->lower->name
-					: names_to_str(&host2->on_hosts));
+			err("%s:%d: in resource %s, on %s { ... }: volume %d not defined on %s\n",
+			    config_file, line, res->name,
+			    names_to_str(&host1->on_hosts), a->vnr,
+			    compare_stacked ? host1->lower->name : names_to_str(&host2->on_hosts));
 			a = STAILQ_NEXT(a, link);
 			config_valid = 0;
 		}
@@ -599,14 +590,11 @@ static void check_volume_sets_equal(struct d_resource *res, struct d_host_info *
 			 * top of it.  Warn (if we have a terminal),
 			 * but consider it as valid. */
 			if (!(compare_stacked && no_tty))
-				fprintf(stderr,
-					"%s:%d: in resource %s, on %s { ... }: "
-					"volume %d missing (present on %s)\n",
-					config_file, line, res->name,
-					names_to_str(&host1->on_hosts),
-					b->vnr,
-					compare_stacked ? host1->lower->name
-						: names_to_str(&host2->on_hosts));
+				err("%s:%d: in resource %s, on %s { ... }: "
+				    "volume %d missing (present on %s)\n",
+				    config_file, line, res->name,
+				    names_to_str(&host1->on_hosts), b->vnr,
+				    compare_stacked ? host1->lower->name : names_to_str(&host2->on_hosts));
 			if (!compare_stacked)
 				config_valid = 0;
 			b = STAILQ_NEXT(b, link);
@@ -638,7 +626,7 @@ static struct hname_address *alloc_hname_address()
 
 	ha = calloc(1, sizeof(struct hname_address));
 	if (ha == NULL) {
-		perror("calloc");
+		err("calloc", ": %m\n");
 		exit(E_EXEC_ERROR);
 	}
 	return ha;
@@ -659,10 +647,9 @@ static void create_implicit_connections(struct d_resource *res)
 
 	for_each_host(host_info, &res->all_hosts) {
 		if (++hosts == 3) {
-			fprintf(stderr,
-				"Resource %s:\n\t"
-				"Use explicit 'connection' sections with more than two 'on' sections.\n",
-				res->name);
+			err("Resource %s:\n\t"
+			    "Use explicit 'connection' sections with more than two 'on' sections.\n",
+		            res->name);
 			break;
 		}
 		if (host_info->address.af && host_info->address.addr && host_info->address.port) {
@@ -692,10 +679,9 @@ static struct d_host_info *find_host_info_or_invalid(struct d_resource *res, cha
 	struct d_host_info *host_info = find_host_info_by_name(res, name);
 
 	if (!host_info) {
-		fprintf(stderr,
-			"%s:%d: in resource %s:\n\t"
-			"There is no 'on' section for hostname '%s' named in the connection-mesh\n",
-			res->config_file, res->start_line, res->name, name);
+		err("%s:%d: in resource %s:\n\t"
+		    "There is no 'on' section for hostname '%s' named in the connection-mesh\n",
+		    res->config_file, res->start_line, res->name, name);
 		config_valid = 0;
 	}
 
@@ -820,9 +806,10 @@ static void check_addr_conflict(struct d_resource *res, struct resources *resour
 				i++;
 			}
 			if (i == 2 && addresses_equal(addr[0], addr[1]) && !addr_scope_local(addr[0]->addr)) {
-				fprintf(stderr, "%s:%d: in resource %s %s:%s:%s is used for both endpoints\n",
-					res->config_file, con->config_line, res->name,
-					addr[0]->af, addr[0]->addr, addr[0]->port);
+				err("%s:%d: in resource %s %s:%s:%s is used for both endpoints\n",
+				    res->config_file, con->config_line,
+				    res->name, addr[0]->af, addr[0]->addr,
+				    addr[0]->port);
 				config_valid = 0;
 			}
 		}
@@ -837,9 +824,59 @@ static void must_have_two_hosts(struct d_resource *res, struct connection *con)
 	STAILQ_FOREACH(ha, &con->hname_address_pairs, link)
 		i++;
 	if (i != 2) {
-		fprintf(stderr, "%s:%d: Resource %s: connection needs to have two endpoints\n",
-			res->config_file, con->config_line, res->name);
+		err("%s:%d: Resource %s: connection needs to have two endpoints\n",
+		    res->config_file, con->config_line, res->name);
 		config_valid = 0;
+	}
+}
+
+struct peer_device *find_peer_device(struct connection *conn, int vnr)
+{
+	struct peer_device *peer_device;
+
+	STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
+		if (peer_device->vnr == vnr)
+			return peer_device;
+	}
+
+	return NULL;
+}
+
+static void fixup_peer_devices(struct d_resource *res)
+{
+	struct connection *conn;
+	struct d_host_info *some_host = STAILQ_FIRST(&res->all_hosts);
+	/* At this point all hosts of the resource have the same set of volumes */
+
+	for_each_connection(conn, &res->connections) {
+		struct peer_device *peer_device;
+		struct d_volume *vol;
+
+		STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
+
+			vol = volume_by_vnr(&some_host->volumes, peer_device->vnr);
+			if (!vol) {
+				err("%s:%d: Resource %s: There is a reference to a volume %d that"
+				    "is not known in this resource\n",
+				    res->config_file, peer_device->config_line, res->name,
+				    peer_device->vnr);
+				config_valid = 0;
+			}
+			peer_device->volume = vol;
+			STAILQ_INSERT_TAIL(&vol->peer_devices, peer_device, volume_link);
+		}
+		for_each_volume(vol, &some_host->volumes) {
+			peer_device = find_peer_device(conn, vol->vnr);
+			if (peer_device)
+				continue;
+			peer_device = alloc_peer_device();
+			peer_device->vnr = vol->vnr;
+			peer_device->implicit = 1;
+			peer_device->connection = conn;
+			peer_device->volume = vol;
+			STAILQ_INSERT_TAIL(&conn->peer_devices, peer_device, connection_link);
+			STAILQ_INSERT_TAIL(&vol->peer_devices, peer_device, volume_link);
+		}
 	}
 }
 
@@ -903,6 +940,9 @@ void post_parse(struct resources *resources, enum pp_flags flags)
 	for_each_resource(res, resources)
 		if (res->stacked_on_one)
 			set_disk_in_res(res);
+
+	for_each_resource(res, resources)
+		fixup_peer_devices(res);
 }
 
 static void expand_opts(struct options *common, struct options *options)
@@ -947,6 +987,7 @@ void expand_common(void)
 		if (common) {
 			expand_opts(&common->net_options, &res->net_options);
 			expand_opts(&common->disk_options, &res->disk_options);
+			expand_opts(&common->pd_options, &res->pd_options);
 			expand_opts(&common->startup_options, &res->startup_options);
 			expand_opts(&common->proxy_options, &res->proxy_options);
 			expand_opts(&common->handlers, &res->handlers);
@@ -961,8 +1002,10 @@ void expand_common(void)
 		/* now that common disk options (if any) have been propagated to the
 		 * resource level, further propagate them to the volume level. */
 		for_each_host(h, &res->all_hosts) {
-			for_each_volume(vol, &h->volumes)
+			for_each_volume(vol, &h->volumes) {
 				expand_opts(&res->disk_options, &vol->disk_options);
+				expand_opts(&res->pd_options, &vol->pd_options);
+			}
 		}
 
 		/* now from all volume/disk-options on resource level to host level */
@@ -970,6 +1013,7 @@ void expand_common(void)
 			for_each_host(h, &res->all_hosts) {
 				host_vol = volume_by_vnr(&h->volumes, vol->vnr);
 				expand_opts(&vol->disk_options, &host_vol->disk_options);
+				expand_opts(&vol->pd_options, &host_vol->pd_options);
 			}
 		}
 
@@ -986,6 +1030,16 @@ void expand_common(void)
 
 				expand_opts(&res->proxy_options, &ha->proxy->options);
 				expand_opts(&res->proxy_plugins, &ha->proxy->plugins);
+			}
+		}
+
+		/* inherit peer_device options from connections to peer_devices AND
+		   tie the peer_device options from the volume to peer_devices */
+		for_each_connection(conn, &res->connections) {
+			struct peer_device *peer_device;
+			STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
+				expand_opts(&conn->pd_options, &peer_device->pd_options);
+				expand_opts(&peer_device->volume->pd_options, &peer_device->pd_options);
 			}
 		}
 	}
@@ -1015,17 +1069,16 @@ static int sanity_check_abs_cmd(char *cmd_name)
 	if (!(sb.st_mode & S_ISUID) || sb.st_mode & S_IXOTH || sb.st_gid == 0) {
 		static int did_header = 0;
 		if (!did_header)
-			fprintf(stderr,
-				"WARN:\n"
-				"  You are using the 'drbd-peer-outdater' as fence-peer program.\n"
-				"  If you use that mechanism the dopd heartbeat plugin program needs\n"
-				"  to be able to call drbdsetup and drbdmeta with root privileges.\n\n"
-				"  You need to fix this with these commands:\n");
+			err("WARN:\n"
+			    "  You are using the 'drbd-peer-outdater' as fence-peer program.\n"
+			    "  If you use that mechanism the dopd heartbeat plugin program needs\n"
+			    "  to be able to call drbdsetup and drbdmeta with root privileges.\n\n"
+			    "  You need to fix this with these commands:\n");
 		did_header = 1;
-		fprintf(stderr,
-			"  chgrp haclient %s\n"
-			"  chmod o-x %s\n"
-			"  chmod u+s %s\n\n", cmd_name, cmd_name, cmd_name);
+		err("  chgrp haclient %s\n"
+		    "  chmod o-x %s\n"
+		    "  chmod u+s %s\n\n",
+		    cmd_name, cmd_name, cmd_name);
 	}
 	return 1;
 }
@@ -1085,13 +1138,13 @@ static void sanity_check_conf(char *c)
 	if (sb.st_mode & S_IRGRP && sb.st_gid != 0)
 		return;
 
-	fprintf(stderr,
-		"WARN:\n"
-		"  You are using the 'drbd-peer-outdater' as fence-peer program.\n"
-		"  If you use that mechanism the dopd heartbeat plugin program needs\n"
-		"  to be able to read the drbd.config file.\n\n"
-		"  You need to fix this with these commands:\n"
-		"  chgrp haclient %s\n" "  chmod g+r %s\n\n", c, c);
+	err("WARN:\n"
+	    "  You are using the 'drbd-peer-outdater' as fence-peer program.\n"
+	    "  If you use that mechanism the dopd heartbeat plugin program needs\n"
+	    "  to be able to read the drbd.config file.\n\n"
+	    "  You need to fix this with these commands:\n"
+	    "  chgrp haclient %s\n"
+	    "  chmod g+r %s\n\n", c, c);
 }
 
 static void sanity_check_perm()
@@ -1130,10 +1183,9 @@ static void ensure_proxy_sections(struct d_resource *res)
 		if (prev_proxy_sect == INIT)
 			continue;
 		if (prev_proxy_sect != proxy_sect) {
-			fprintf(stderr,
-				"%s:%d: in resource %s:\n\t"
-				"Either all 'on' sections must contain a proxy subsection, or none.\n",
-				res->config_file, res->start_line, res->name);
+			err("%s:%d: in resource %s:\n\t"
+			    "Either all 'on' sections must contain a proxy subsection, or none.\n",
+			    res->config_file, res->start_line, res->name);
 			config_valid = 0;
 		}
 	}
@@ -1148,10 +1200,10 @@ static void ensure_proxy_sections(struct d_resource *res)
 			if (prev_proxy_sect == INIT)
 				continue;
 			if (prev_proxy_sect != proxy_sect) {
-				fprintf(stderr,
-					"%s:%d: in connection in resource %s:\n"
-					"Either all 'host' statements must have a proxy subsection, or none.\n",
-					res->config_file, conn->config_line, res->name);
+				err("%s:%d: in connection in resource %s:\n"
+				    "Either all 'host' statements must have a proxy subsection, or none.\n",
+				    res->config_file, conn->config_line,
+				    res->name);
 				config_valid = 0;
 			}
 		}
@@ -1172,12 +1224,10 @@ static void validate_resource(struct d_resource *res, enum pp_flags flags)
 		rs_after_res = res_by_name(opt->value);
 		if (rs_after_res == NULL ||
 		    (rs_after_res->ignore && !(flags & MATCH_ON_PROXY))) {
-			fprintf(stderr,
-				"%s:%d: in resource %s:\n\tresource '%s' mentioned in "
-				"'resync-after' option is not known%s.\n",
-				res->config_file, res->start_line, res->name,
-				opt->value,
-				rs_after_res ? " on this host" : "");
+			err("%s:%d: in resource %s:\n\tresource '%s' mentioned in "
+			    "'resync-after' option is not known%s.\n",
+			    res->config_file, res->start_line, res->name,
+			    opt->value, rs_after_res ? " on this host" : "");
 			/* Non-fatal if run from some script.
 			 * When deleting resources, it is an easily made
 			 * oversight to leave references to the deleted
@@ -1198,19 +1248,15 @@ static void validate_resource(struct d_resource *res, enum pp_flags flags)
 		}
 	}
 	if (STAILQ_EMPTY(&res->all_hosts)) {
-		fprintf(stderr,
-			"%s:%d: in resource %s:\n\ta host sections ('on %s { ... }') is missing.\n",
-			res->config_file, res->start_line, res->name,
-			hostname);
+		err("%s:%d: in resource %s:\n\ta host sections ('on %s { ... }') is missing.\n",
+		    res->config_file, res->start_line, res->name, hostname);
 		config_valid = 0;
 	}
 	if (res->ignore)
 		return;
 	if (!res->me) {
-		fprintf(stderr,
-			"%s:%d: in resource %s:\n\tmissing section 'on %s { ... }'.\n",
-			res->config_file, res->start_line, res->name,
-			hostname);
+		err("%s:%d: in resource %s:\n\tmissing section 'on %s { ... }'.\n",
+		    res->config_file, res->start_line, res->name, hostname);
 		config_valid = 0;
 	}
 	// need to verify that in the discard-node-nodename options only known
@@ -1218,12 +1264,11 @@ static void validate_resource(struct d_resource *res, enum pp_flags flags)
 	if ((opt = find_opt(&res->net_options, "after-sb-0pri"))) {
 		if (!strncmp(opt->value, "discard-node-", 13)) {
 			if (!host_name_known(res, opt->value + 13)) {
-				fprintf(stderr,
-					"%s:%d: in resource %s:\n\t"
-					"the nodename in the '%s' option is "
-					"not known.\n",
-					res->config_file, res->start_line,
-					res->name, opt->value);
+				err("%s:%d: in resource %s:\n\t"
+				    "the nodename in the '%s' option is "
+				    "not known.\n",
+				    res->config_file, res->start_line,
+				    res->name, opt->value);
 				config_valid = 0;
 			}
 		}
@@ -1277,11 +1322,10 @@ static void _convert_after_option(struct d_resource *res, struct d_volume *vol)
 		ctx_by_name(&depends_on_ctx, opt->value, CTX_FIRST);
 		volumes = ctx_set_implicit_volume(&depends_on_ctx);
 		if (volumes > 1) {
-			fprintf(stderr,
-				"%s:%d: in resource %s:\n\t"
-				"resync-after contains '%s', which is ambiguous, since it contains %d volumes\n",
-				res->config_file, res->start_line, res->name,
-				opt->value, volumes);
+			err("%s:%d: in resource %s:\n\t"
+			    "resync-after contains '%s', which is ambiguous, since it contains %d volumes\n",
+			    res->config_file, res->start_line, res->name,
+			    opt->value, volumes);
 			config_valid = 0;
 			return;
 		}

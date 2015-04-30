@@ -46,6 +46,7 @@ struct context_def {
 
 extern struct context_def disk_options_ctx;
 extern struct context_def net_options_ctx;
+extern struct context_def show_net_options_ctx;
 extern struct context_def primary_cmd_ctx;
 extern struct context_def attach_cmd_ctx;
 extern struct context_def detach_cmd_ctx;
@@ -58,6 +59,7 @@ extern struct context_def verify_cmd_ctx;
 extern struct context_def device_options_ctx;
 extern struct context_def invalidate_ctx;
 extern struct context_def create_md_ctx;
+extern struct context_def peer_device_options_ctx;
 
 extern const char *double_quote_string(const char *str);
 
