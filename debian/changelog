@@ -1,11 +1,14 @@
-drbd-utils (8.9.2-1) UNRELEASED; urgency=medium
+drbd-utils (8.9.5-1) unstable; urgency=medium
 
-  * New uptream release
+  * New upstream release (closes: #808315)
     + Drop d/patches/fix-8.4-manpages, it has been merged upstream.
     + Refresh patches
-  * Ensure reproducible build
+  * Ensure reproducible build.
+  * Remove DRBD service file and use initscript (closes: #787394, #633547).
+    Upstream is doing the same and the start logic is complicated enough to be
+    a bad fit for a systemd unit.
 
- -- Apollon Oikonomopoulos <apoikos@debian.org>  Thu, 30 Apr 2015 15:58:22 +0300
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Tue, 29 Dec 2015 12:26:49 +0200
 
 drbd-utils (8.9.2~rc1-2) unstable; urgency=medium
 
