@@ -27,14 +27,14 @@
 /* ============================================================================================== */
 
 static int enum_string_to_int(const char **map, int size, const char *value,
-			      int (*strcmp)(const char *, const char *))
+			      int (*strcmp_fn)(const char *, const char *))
 {
 	int n;
 
 	if (!value)
 		return -1;
 	for (n = 0; n < size; n++) {
-		if (map[n] && !strcmp(value, map[n]))
+		if (map[n] && !strcmp_fn(value, map[n]))
 			return n;
 	}
 	return -1;
@@ -149,6 +149,38 @@ static void enum_describe_xml(struct field_def *field)
 	}
 	printf("\t</option>\n");
 }
+
+static enum check_codes enum_check(struct field_def *field, const char *value)
+{
+	int n = enum_string_to_int(field->u.e.map, field->u.e.size, value, strcmp);
+	return n == -1 ? CC_NOT_AN_ENUM : CC_OK;
+}
+
+static enum check_codes enum_check_nocase(struct field_def *field, const char *value)
+{
+	int n = enum_string_to_int(field->u.e.map, field->u.e.size, value, strcasecmp);
+	return n == -1 ? CC_NOT_AN_ENUM : CC_OK;
+}
+
+struct field_class fc_enum = {
+	.is_default = enum_is_default,
+	.is_equal = enum_is_equal,
+	.get = get_enum,
+	.put = put_enum,
+	.usage = enum_usage,
+	.describe_xml = enum_describe_xml,
+	.check = enum_check,
+};
+
+struct field_class fc_enum_nocase = {
+	.is_default = enum_is_default_nocase,
+	.is_equal = enum_is_equal_nocase,
+	.get = get_enum,
+	.put = put_enum_nocase,
+	.usage = enum_usage,
+	.describe_xml = enum_describe_xml,
+	.check = enum_check_nocase,
+};
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -274,6 +306,39 @@ static void numeric_describe_xml(struct field_def *field)
 	printf("\t</option>\n");
 }
 
+static enum check_codes numeric_check(struct field_def *field, const char *value)
+{
+	enum new_strtoll_errs e;
+	unsigned long long l;
+
+	e = new_strtoll(value, field->u.n.scale, &l);
+	if (e != MSE_OK)
+		return CC_NOT_A_NUMBER;
+	if (l < field->u.n.min) {
+		if (field->implicit_clamp)
+			l = field->u.n.min;
+		else
+			return CC_TOO_SMALL;
+	}
+	if (l > field->u.n.max) {
+		if (field->implicit_clamp)
+			l = field->u.n.max;
+		else
+			return CC_TOO_BIG;
+	}
+	return CC_OK;
+}
+
+struct field_class fc_numeric = {
+	.is_default = numeric_is_default,
+	.is_equal = numeric_is_equal,
+	.get = get_numeric,
+	.put = put_numeric,
+	.usage = numeric_usage,
+	.describe_xml = numeric_describe_xml,
+	.check = numeric_check,
+};
+
 /* ---------------------------------------------------------------------------------------------- */
 
 static int boolean_string_to_int(const char *value)
@@ -350,6 +415,32 @@ static void boolean_describe_xml(struct field_def *field)
 	       field->u.b.def ? "yes" : "no");
 }
 
+static enum check_codes boolean_check(struct field_def *field, const char *value)
+{
+	int yesno = boolean_string_to_int(value);
+	return yesno == -1 ? CC_NOT_A_BOOL : CC_OK;
+}
+
+struct field_class fc_boolean = {
+	.is_default = boolean_is_default,
+	.is_equal = boolean_is_equal,
+	.get = get_boolean,
+	.put = put_boolean,
+	.usage = boolean_usage,
+	.describe_xml = boolean_describe_xml,
+	.check = boolean_check,
+};
+
+struct field_class fc_flag = {
+	.is_default = boolean_is_default,
+	.is_equal = boolean_is_equal,
+	.get = get_boolean,
+	.put = put_flag,
+	.usage = boolean_usage,
+	.describe_xml = boolean_describe_xml,
+	.check = boolean_check,
+};
+
 /* ---------------------------------------------------------------------------------------------- */
 
 static bool string_is_default(struct field_def *field, const char *value)
@@ -395,6 +486,11 @@ static void string_describe_xml(struct field_def *field)
 	       field->name);
 }
 
+static enum check_codes string_check(struct field_def *field, const char *value)
+{
+	return CC_OK;
+}
+
 const char *double_quote_string(const char *str)
 {
 	static char *buffer;
@@ -422,16 +518,21 @@ const char *double_quote_string(const char *str)
 	return buffer;
 }
 
+struct field_class fc_string = {
+	.is_default = string_is_default,
+	.is_equal = string_is_equal,
+	.get = get_string,
+	.put = put_string,
+	.usage = string_usage,
+	.describe_xml = string_describe_xml,
+	.check = string_check,
+};
+
 /* ============================================================================================== */
 
 #define ENUM(f, d)									\
 	.nla_type = T_ ## f,								\
-	.is_default = enum_is_default,							\
-	.is_equal = enum_is_equal,							\
-	.get = get_enum,								\
-	.put = put_enum,								\
-	.usage = enum_usage,								\
-	.describe_xml = enum_describe_xml,						\
+	.ops = &fc_enum,									\
 	.u = { .e = {									\
 		.map = f ## _map,							\
 		.size = ARRAY_SIZE(f ## _map),						\
@@ -439,12 +540,7 @@ const char *double_quote_string(const char *str)
 
 #define ENUM_NOCASE(f, d)								\
 	.nla_type = T_ ## f,								\
-	.is_default = enum_is_default_nocase,						\
-	.is_equal = enum_is_equal_nocase,						\
-	.get = get_enum,								\
-	.put = put_enum_nocase,								\
-	.usage = enum_usage,								\
-	.describe_xml = enum_describe_xml,						\
+	.ops = &fc_enum_nocase,								\
 	.u = { .e = {									\
 		.map = f ## _map,							\
 		.size = ARRAY_SIZE(f ## _map),						\
@@ -452,12 +548,7 @@ const char *double_quote_string(const char *str)
 
 #define NUMERIC(f, d)									\
 	.nla_type = T_ ## f,								\
-	.is_default = numeric_is_default,						\
-	.is_equal = numeric_is_equal,							\
-	.get = get_numeric,								\
-	.put = put_numeric,								\
-	.usage = numeric_usage,								\
-	.describe_xml = numeric_describe_xml,						\
+	.ops = &fc_numeric,								\
 	.u = { .n = {									\
 		.min = DRBD_ ## d ## _MIN,						\
 		.max = DRBD_ ## d ## _MAX,						\
@@ -467,36 +558,21 @@ const char *double_quote_string(const char *str)
 
 #define BOOLEAN(f, d)									\
 	.nla_type = T_ ## f,								\
-	.is_default = boolean_is_default,						\
-	.is_equal = boolean_is_equal,							\
-	.get = get_boolean,								\
-	.put = put_boolean,								\
-	.usage = boolean_usage,								\
-	.describe_xml = boolean_describe_xml,						\
+	.ops = &fc_boolean,								\
 	.u = { .b = {									\
 		.def = DRBD_ ## d ## _DEF } },						\
 	.argument_is_optional = true
 
 #define FLAG(f)										\
 	.nla_type = T_ ## f,								\
-	.is_default = boolean_is_default,						\
-	.is_equal = boolean_is_equal,							\
-	.get = get_boolean,								\
-	.put = put_flag,								\
-	.usage = boolean_usage,								\
-	.describe_xml = boolean_describe_xml,						\
+	.ops = &fc_flag,								\
 	.u = { .b = {									\
 		.def = false } },							\
 	.argument_is_optional = true
 
 #define STRING(f)									\
 	.nla_type = T_ ## f,								\
-	.is_default = string_is_default,						\
-	.is_equal = string_is_equal,							\
-	.get = get_string,								\
-	.put = put_string,								\
-	.usage = string_usage,								\
-	.describe_xml = string_describe_xml,						\
+	.ops = &fc_string,								\
 	.needs_double_quoting = true
 
 /* ============================================================================================== */
@@ -582,12 +658,16 @@ const char *read_balancing_map[] = {
 	{ "disk-drain", BOOLEAN(disk_drain, DISK_DRAIN) },				\
 	{ "md-flushes", BOOLEAN(md_flushes, MD_FLUSHES) },				\
 	{ "unplug-watermark", NUMERIC(unplug_watermark, UNPLUG_WATERMARK) },		\
-	{ "resync-after", NUMERIC(resync_after, MINOR_NUMBER) },			\
-	{ "al-extents", NUMERIC(al_extents, AL_EXTENTS) },				\
+	{ "resync-after", NUMERIC(resync_after, MINOR_NUMBER), .checked_in_postparse = true}, \
+	{ "al-extents", NUMERIC(al_extents, AL_EXTENTS), .implicit_clamp = true, },	\
 	{ "al-updates", BOOLEAN(al_updates, AL_UPDATES) },				\
+	{ "discard-zeroes-if-aligned",							\
+		BOOLEAN(discard_zeroes_if_aligned, DISCARD_ZEROES_IF_ALIGNED) },	\
 	{ "disk-timeout", NUMERIC(disk_timeout,	DISK_TIMEOUT),				\
 	  .unit = "1/10 seconds" },							\
-	{ "read-balancing", ENUM(read_balancing, READ_BALANCING) }			\
+	{ "read-balancing", ENUM(read_balancing, READ_BALANCING) },			\
+	{ "rs-discard-granularity",							\
+		NUMERIC(rs_discard_granularity, RS_DISCARD_GRANULARITY) }
 
 #define CHANGEABLE_NET_OPTIONS								\
 	{ "protocol", ENUM_NOCASE(wire_protocol, PROTOCOL) },				\
@@ -675,15 +755,27 @@ struct context_def detach_cmd_ctx = {
 	},
 };
 
-struct context_def connect_cmd_ctx = {
+struct context_def new_peer_cmd_ctx = {
 	NLA_POLICY(net_conf),
 	.nla_type = DRBD_NLA_NET_CONF,
 	.fields = {
-		{ "tentative", FLAG(tentative) },
-		{ "discard-my-data", FLAG(discard_my_data) },
-		{ "peer-node-id", NUMERIC(peer_node_id, NODE_ID) },
 		{ "transport", STRING(transport_name) },
 		CHANGEABLE_NET_OPTIONS,
+		{ } },
+};
+
+struct context_def path_cmd_ctx = {
+	NLA_POLICY(path_parms),
+	.nla_type = DRBD_NLA_PATH_PARMS,
+	.fields = { { } },
+};
+
+struct context_def connect_cmd_ctx = {
+	NLA_POLICY(connect_parms),
+	.nla_type = DRBD_NLA_CONNECT_PARMS,
+	.fields = {
+		{ "tentative", FLAG(tentative) },
+		{ "discard-my-data", FLAG(discard_my_data) },
 		{ } },
 };
 
@@ -728,6 +820,7 @@ struct context_def resource_options_ctx = {
 		{ "peer-ack-delay", NUMERIC(peer_ack_delay, PEER_ACK_DELAY) },
 		{ "twopc-timeout", NUMERIC(twopc_timeout, TWOPC_TIMEOUT) },
 		{ "twopc-retry-timeout", NUMERIC(twopc_retry_timeout, TWOPC_RETRY_TIMEOUT) },
+		{ "auto-promote-timeout", NUMERIC(auto_promote_timeout, AUTO_PROMOTE_TIMEOUT) },
 		{ } },
 };
 
@@ -786,5 +879,53 @@ struct context_def create_md_ctx = {
 		{ .name = "peer-max-bio-size", .argument_is_optional = false },
 		{ .name = "al-stripes", .argument_is_optional = false },
 		{ .name = "al-stripe-size-kB", .argument_is_optional = false },
+		{ } },
+};
+
+// only used by drbdadm's config file parser:
+struct context_def handlers_ctx = {
+	.fields = {
+		{ "pri-on-incon-degr", .ops = &fc_string, .needs_double_quoting = true},
+		{ "pri-lost-after-sb", .ops = &fc_string, .needs_double_quoting = true},
+		{ "pri-lost", .ops = &fc_string, .needs_double_quoting = true},
+		{ "initial-split-brain", .ops = &fc_string, .needs_double_quoting = true},
+		{ "split-brain", .ops = &fc_string, .needs_double_quoting = true},
+		{ "outdate-peer", .ops = &fc_string, .needs_double_quoting = true},
+		{ "fence-peer", .ops = &fc_string, .needs_double_quoting = true},
+		{ "local-io-error", .ops = &fc_string, .needs_double_quoting = true},
+		{ "before-resync-target", .ops = &fc_string, .needs_double_quoting = true},
+		{ "after-resync-target", .ops = &fc_string, .needs_double_quoting = true},
+		{ "before-resync-source", .ops = &fc_string, .needs_double_quoting = true},
+		{ "out-of-sync", .ops = &fc_string, .needs_double_quoting = true},
+		{ } },
+};
+
+struct context_def proxy_options_ctx = {
+	.fields = {
+		{ "memlimit", .ops = &fc_numeric, .u={.n={.min = 0, .max=-1}}},
+		{ "read-loops", .ops = &fc_numeric, .u={.n={.min = 0, .max=-1}}},
+		{ "compression", .ops = &fc_numeric, .u={.n={.min = 0, .max=-1}}},
+		{ "bwlimit", .ops = &fc_numeric, .u={.n={.min = 0, .max=-1}}},
+		{ "sndbuf-size", NUMERIC(sndbuf_size, SNDBUF_SIZE), .unit = "bytes" },
+		{ "rcvbuf-size", NUMERIC(rcvbuf_size, RCVBUF_SIZE), .unit = "bytes" },
+		{ "ping-timeout", NUMERIC(ping_timeo, PING_TIMEO), .unit = "1/10 seconds" },
+		{ } },
+};
+
+#define ADM_NUMERIC(d)									\
+	.ops = &fc_numeric,								\
+	.u = { .n = {									\
+		.min = DRBD_ ## d ## _MIN,						\
+		.max = DRBD_ ## d ## _MAX,						\
+		.def = DRBD_ ## d ## _DEF,						\
+		.is_signed = false,							\
+		.scale = DRBD_ ## d ## _SCALE } }
+
+struct context_def startup_options_ctx = {
+	.fields = {
+		{ "wfc-timeout", ADM_NUMERIC(WFC_TIMEOUT) },
+		{ "degr-wfc-timeout", ADM_NUMERIC(DEGR_WFC_TIMEOUT) },
+		{ "outdated-wfc-timeout", ADM_NUMERIC(OUTDATED_WFC_TIMEOUT) },
+		{ "wait-after-sb", .ops = &fc_boolean },
 		{ } },
 };

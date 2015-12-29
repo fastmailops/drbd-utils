@@ -39,11 +39,11 @@ drbdsetup \- Setup tool for DRBD .\" drbdsetup
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR del\-minor \fIminor\fR
 .HP \w'\fBdrbdsetup\fR\ 'u
-\fBdrbdsetup\fR attach \fIminor\fR \fIlower_dev\fR \fImeta_data_dev\fR \fImeta_data_index\fR [\-\-size\ {\fIval\fR}] [\-\-max\-bio\-bvecs\ {\fIval\fR}] [\-\-on\-io\-error\ {pass_on\ |\ call\-local\-io\-error\ |\ detach}] [\-\-fencing\ {dont\-care\ |\ resource\-only\ |\ resource\-and\-stonith}] [\-\-disk\-barrier] [\-\-disk\-flushes] [\-\-disk\-drain] [\-\-md\-flushes] [\-\-resync\-rate\ {\fIval\fR}] [\-\-resync\-after\ {\fIval\fR}] [\-\-al\-extents\ {\fIval\fR}] [\-\-al\-updates] [\-\-c\-plan\-ahead\ {\fIval\fR}] [\-\-c\-delay\-target\ {\fIval\fR}] [\-\-c\-fill\-target\ {\fIval\fR}] [\-\-c\-max\-rate\ {\fIval\fR}] [\-\-c\-min\-rate\ {\fIval\fR}] [\-\-disk\-timeout\ {\fIval\fR}] [\-\-read\-balancing\ {prefer\-local\ |\ prefer\-remote\ |\ round\-robin\ |\ least\-pending\ |\ when\-congested\-remote\ |\ 32K\-striping\ |\ 64K\-striping\ |\ 128K\-striping\ |\ 256K\-striping\ |\ 512K\-striping\ |\ 1M\-striping}]
+\fBdrbdsetup\fR attach \fIminor\fR \fIlower_dev\fR \fImeta_data_dev\fR \fImeta_data_index\fR [\-\-size\ {\fIval\fR}] [\-\-max\-bio\-bvecs\ {\fIval\fR}] [\-\-on\-io\-error\ {pass_on\ |\ call\-local\-io\-error\ |\ detach}] [\-\-fencing\ {dont\-care\ |\ resource\-only\ |\ resource\-and\-stonith}] [\-\-disk\-barrier] [\-\-disk\-flushes] [\-\-disk\-drain] [\-\-md\-flushes] [\-\-resync\-rate\ {\fIval\fR}] [\-\-resync\-after\ {\fIval\fR}] [\-\-al\-extents\ {\fIval\fR}] [\-\-al\-updates] [\-\-discard\-zeroes\-if\-aligned] [\-\-c\-plan\-ahead\ {\fIval\fR}] [\-\-c\-delay\-target\ {\fIval\fR}] [\-\-c\-fill\-target\ {\fIval\fR}] [\-\-c\-max\-rate\ {\fIval\fR}] [\-\-c\-min\-rate\ {\fIval\fR}] [\-\-disk\-timeout\ {\fIval\fR}] [\-\-read\-balancing\ {prefer\-local\ |\ prefer\-remote\ |\ round\-robin\ |\ least\-pending\ |\ when\-congested\-remote\ |\ 32K\-striping\ |\ 64K\-striping\ |\ 128K\-striping\ |\ 256K\-striping\ |\ 512K\-striping\ |\ 1M\-striping}] [\-\-rs\-discard\-granularity\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR connect \fIresource\fR \fIlocal_addr\fR \fIremote_addr\fR [\-\-tentative] [\-\-discard\-my\-data] [\-\-protocol\ {A\ |\ B\ |\ C}] [\-\-timeout\ {\fIval\fR}] [\-\-max\-epoch\-size\ {\fIval\fR}] [\-\-max\-buffers\ {\fIval\fR}] [\-\-unplug\-watermark\ {\fIval\fR}] [\-\-connect\-int\ {\fIval\fR}] [\-\-ping\-int\ {\fIval\fR}] [\-\-sndbuf\-size\ {\fIval\fR}] [\-\-rcvbuf\-size\ {\fIval\fR}] [\-\-ko\-count\ {\fIval\fR}] [\-\-allow\-two\-primaries] [\-\-cram\-hmac\-alg\ {\fIval\fR}] [\-\-shared\-secret\ {\fIval\fR}] [\-\-after\-sb\-0pri\ {disconnect\ |\ discard\-younger\-primary\ |\ discard\-older\-primary\ |\ discard\-zero\-changes\ |\ discard\-least\-changes\ |\ discard\-local\ |\ discard\-remote}] [\-\-after\-sb\-1pri\ {disconnect\ |\ consensus\ |\ discard\-secondary\ |\ call\-pri\-lost\-after\-sb\ |\ violently\-as0p}] [\-\-after\-sb\-2pri\ {disconnect\ |\ call\-pri\-lost\-after\-sb\ |\ violently\-as0p}] [\-\-always\-asbp] [\-\-rr\-conflict\ {disconnect\ |\ call\-pri\-lost\ |\ violently}] [\-\-ping\-timeout\ {\fIval\fR}] [\-\-data\-integrity\-alg\ {\fIval\fR}] [\-\-tcp\-cork] [\-\-on\-congestion\ {block\ |\ pull\-ahead\ |\ disconnect}] [\-\-congestion\-fill\ {\fIval\fR}] [\-\-congestion\-extents\ {\fIval\fR}] [\-\-csums\-alg\ {\fIval\fR}] [\-\-csums\-after\-crash\-only] [\-\-verify\-alg\ {\fIval\fR}] [\-\-use\-rle] [\-\-socket\-check\-timeout\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
-\fBdrbdsetup\fR disk\-options \fIminor\fR [\-\-on\-io\-error\ {pass_on\ |\ call\-local\-io\-error\ |\ detach}] [\-\-fencing\ {dont\-care\ |\ resource\-only\ |\ resource\-and\-stonith}] [\-\-disk\-barrier] [\-\-disk\-flushes] [\-\-disk\-drain] [\-\-md\-flushes] [\-\-resync\-rate\ {\fIval\fR}] [\-\-resync\-after\ {\fIval\fR}] [\-\-al\-extents\ {\fIval\fR}] [\-\-al\-updates] [\-\-c\-plan\-ahead\ {\fIval\fR}] [\-\-c\-delay\-target\ {\fIval\fR}] [\-\-c\-fill\-target\ {\fIval\fR}] [\-\-c\-max\-rate\ {\fIval\fR}] [\-\-c\-min\-rate\ {\fIval\fR}] [\-\-disk\-timeout\ {\fIval\fR}] [\-\-read\-balancing\ {prefer\-local\ |\ prefer\-remote\ |\ round\-robin\ |\ least\-pending\ |\ when\-congested\-remote\ |\ 32K\-striping\ |\ 64K\-striping\ |\ 128K\-striping\ |\ 256K\-striping\ |\ 512K\-striping\ |\ 1M\-striping}]
+\fBdrbdsetup\fR disk\-options \fIminor\fR [\-\-on\-io\-error\ {pass_on\ |\ call\-local\-io\-error\ |\ detach}] [\-\-fencing\ {dont\-care\ |\ resource\-only\ |\ resource\-and\-stonith}] [\-\-disk\-barrier] [\-\-disk\-flushes] [\-\-disk\-drain] [\-\-md\-flushes] [\-\-resync\-rate\ {\fIval\fR}] [\-\-resync\-after\ {\fIval\fR}] [\-\-al\-extents\ {\fIval\fR}] [\-\-al\-updates] [\-\-discard\-zeroes\-if\-aligned] [\-\-c\-plan\-ahead\ {\fIval\fR}] [\-\-c\-delay\-target\ {\fIval\fR}] [\-\-c\-fill\-target\ {\fIval\fR}] [\-\-c\-max\-rate\ {\fIval\fR}] [\-\-c\-min\-rate\ {\fIval\fR}] [\-\-disk\-timeout\ {\fIval\fR}] [\-\-read\-balancing\ {prefer\-local\ |\ prefer\-remote\ |\ round\-robin\ |\ least\-pending\ |\ when\-congested\-remote\ |\ 32K\-striping\ |\ 64K\-striping\ |\ 128K\-striping\ |\ 256K\-striping\ |\ 512K\-striping\ |\ 1M\-striping}] [\-\-rs\-discard\-granularity\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR net\-options \fIlocal_addr\fR \fIremote_addr\fR [\-\-protocol\ {A\ |\ B\ |\ C}] [\-\-timeout\ {\fIval\fR}] [\-\-max\-epoch\-size\ {\fIval\fR}] [\-\-max\-buffers\ {\fIval\fR}] [\-\-unplug\-watermark\ {\fIval\fR}] [\-\-connect\-int\ {\fIval\fR}] [\-\-ping\-int\ {\fIval\fR}] [\-\-sndbuf\-size\ {\fIval\fR}] [\-\-rcvbuf\-size\ {\fIval\fR}] [\-\-ko\-count\ {\fIval\fR}] [\-\-allow\-two\-primaries] [\-\-cram\-hmac\-alg\ {\fIval\fR}] [\-\-shared\-secret\ {\fIval\fR}] [\-\-after\-sb\-0pri\ {disconnect\ |\ discard\-younger\-primary\ |\ discard\-older\-primary\ |\ discard\-zero\-changes\ |\ discard\-least\-changes\ |\ discard\-local\ |\ discard\-remote}] [\-\-after\-sb\-1pri\ {disconnect\ |\ consensus\ |\ discard\-secondary\ |\ call\-pri\-lost\-after\-sb\ |\ violently\-as0p}] [\-\-after\-sb\-2pri\ {disconnect\ |\ call\-pri\-lost\-after\-sb\ |\ violently\-as0p}] [\-\-always\-asbp] [\-\-rr\-conflict\ {disconnect\ |\ call\-pri\-lost\ |\ violently}] [\-\-ping\-timeout\ {\fIval\fR}] [\-\-data\-integrity\-alg\ {\fIval\fR}] [\-\-tcp\-cork] [\-\-on\-congestion\ {block\ |\ pull\-ahead\ |\ disconnect}] [\-\-congestion\-fill\ {\fIval\fR}] [\-\-congestion\-extents\ {\fIval\fR}] [\-\-csums\-alg\ {\fIval\fR}] [\-\-csums\-after\-crash\-only] [\-\-verify\-alg\ {\fIval\fR}] [\-\-use\-rle] [\-\-socket\-check\-timeout\ {\fIval\fR}]
 .HP \w'\fBdrbdsetup\fR\ 'u
@@ -94,6 +94,10 @@ drbdsetup \- Setup tool for DRBD .\" drbdsetup
 \fBdrbdsetup\fR suspend\-io \fIminor\fR
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR resume\-io \fIminor\fR
+.HP \w'\fBdrbdsetup\fR\ 'u
+\fBdrbdsetup\fR status {\fIresource\fR | \fIall\fR} [\-\-color\ {\fIval\fR}]
+.HP \w'\fBdrbdsetup\fR\ 'u
+\fBdrbdsetup\fR events2 {\fIresource\fR | \fIall\fR}
 .HP \w'\fBdrbdsetup\fR\ 'u
 \fBdrbdsetup\fR events {\fIresource\fR | \fIminor\fR | \fIall\fR}
 .HP \w'\fBdrbdsetup\fR\ 'u
@@ -386,6 +390,27 @@ The default value of
 is 0, which stands for an infinite timeout\&. Timeouts are specified in units of 0\&.1 seconds\&. This option is available since DRBD 8\&.3\&.12\&.
 .RE
 .PP
+\fB\-\-discard\-zeroes\-if\-aligned \fR\fB{yes | no}\fR
+.RS 4
+Setting
+\fBdiscard\-zeroes\-if\-aligned\fR
+to
+\fBno\fR
+will cause DRBD to always fall\-back to zero\-out on the receiving side, and to not even announce discard capabilities on the Primary, if the respective backend announces discard_zeroes_data=false\&.
+.sp
+Setting
+\fBdiscards\-zeroes\-if\-aligned\fR
+to
+\fByes\fR
+will allow DRBD to use discards, and to announce discard_zeroes=true, even on backends that announce discard_zeroes_data=false\&.
+.sp
+We used to ignore the discard_zeroes_data setting completely\&. To not break established and expected behaviour, the default value is
+\fByes\fR\&.
+.sp
+This option is available since 8\&.4\&.7\&. See also
+\fBdrbd.conf\fR(5)\&.
+.RE
+.PP
 \fB\-\-read\-balancing \fR\fB\fImethod\fR\fR
 .RS 4
 The supported
@@ -407,6 +432,19 @@ and
 .sp
 The default value of is
 \fBprefer\-local\fR\&. This option is available since 8\&.4\&.1\&.
+.RE
+.PP
+\fB\-\-rs\-discard\-granularity \fR\fB\fIbytes\fR\fR
+.RS 4
+When
+\fBrs\-discard\-granularity\fR
+is set to a non zero, positive value then DRBD tries to do a resync operation in requests of this size\&. In case such a block contains only zero bytes on the sync source node, the sync target node will issue a discard/trim/unmap command for the area\&.
+.sp
+The value is constrained by the discard granularity of the backing block device\&. In case
+\fBrs\-discard\-granularity\fR
+is not a multiplier of the discard granularity of the backing block device DRBD rounds it up\&. The feature only gets active if the backing block device reads back zeroes after a discard command\&.
+.sp
+The default value of is 0\&. This option is available since 8\&.4\&.7\&.
 .RE
 .SS "connect, net\-options"
 .\" drbdsetup: net
@@ -1018,8 +1056,12 @@ Displays the device\*(Aqs data generation identifiers\&.
 .SS "show"
 .\" drbdsetup: show
 .PP
-Shows all available configuration information of the
-\fIdevice\fR\&.
+Shows all available configuration information of a resource, or of all resources\&. Available options:
+.PP
+\fB\-\-show\-defaults\fR
+.RS 4
+Show all configuration parameters, even the ones with default values\&. Normally, parameters with default values are not shown\&.
+.RE
 .SS "suspend\-io"
 .\" drbdsetup: suspend-io
 .PP
@@ -1030,8 +1072,106 @@ This command is of no apparent use and just provided for the sake of completenes
 If the fence\-peer handler fails to stonith the peer node, and your
 \fBfencing\fR
 policy is set to resource\-and\-stonith, you can unfreeze IO operations with this command\&.
+.SS "status"
+.\" drbdsetup: status
+.PP
+Show the status of a resource, or of all resources\&. The output consists of one paragraph for each configured resource\&. Each paragraph contains one line for each resource, followed by one line for each device, and one line for each connection\&. The device and connection lines are indented\&. The connection lines are followed by one line for each peer device; these lines are indented against the connection line\&.
+.PP
+Long lines are wrapped around at terminal width, and indented to indicate how the lines belongs together\&. Available options:
+.PP
+\fB\-\-verbose\fR
+.RS 4
+Include more information in the output even when it is likely redundant or irrelevant\&.
+.RE
+.PP
+\fB\-\-statistics\fR
+.RS 4
+Include data transfer statistics in the output\&.
+.RE
+.PP
+\fB\-\-color=\fR\fB{always | auto | never}\fR\fB \fR
+.RS 4
+Colorize the output\&. With
+\fB\-\-color=auto\fR,
+\fBdrbdsetup\fR
+emits color codes only when standard output is connected to a terminal\&.
+.RE
+.PP
+For example, the non\-verbose output for a resource with only one connection and only one volume could look like this:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+fs\-backoffice role:Primary
+  disk:UpToDate
+  peer role:Secondary
+    replication:Established peer\-disk:UpToDate
+	      
+.fi
+.if n \{\
+.RE
+.\}
+.PP
+With the
+\fB\-\-verbose\fR\fB\-\-statistics\fR
+options, the same resource could be reported as:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+fs\-data role:Primary suspended:no
+    write\-ordering:drain
+  volume:0 minor:1 disk:UpToDate
+      size:10616472 read:134465 written:144800 al\-writes:18 bm\-writes:0
+      upper\-pending:0 lower\-pending:0 al\-suspended:no blocked:no
+  peer connection:Connected role:Secondary congested:no
+    volume:0 replication:Established peer\-disk:UpToDate resync\-suspended:no
+        received:122596 sent:22204 out\-of\-sync:0 pending:0 unacked:0
+	      
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+.SS "events2"
+.\" drbdsetup: events2
+.PP
+Show the current state of all configured DRBD objects, followed by all changes to the state\&.
+.PP
+The output format is meant to be human as well as machine readable\&. Each line starts with the event number, which is followed by an asterisk if the event continues in the next line\&. The second word in each line indicates the kind of event:
+\fBexists\fR
+for an existing object;
+\fBcreate\fR,
+\fBdestroy\fR, and
+\fBchange\fR
+if an object is created, destroyed, or changed; or
+\fBcall\fR
+or
+\fBresponse\fR
+if an event handler is called or it returns\&. The third word indicates the object the event applies to:
+\fBresource\fR,
+\fBdevice\fR,
+\fBconnection\fR,
+\fBpeer\-device\fR,
+\fBhelper\fR, or a dash (\fB\-\fR) to indicate that the current state has been dumped completely\&.
+.PP
+The remaining words identify the object and describe the state that he object is in\&. Available options:
+.PP
+\fB\-\-now\fR
+.RS 4
+Terminate after reporting the current state\&. The default is to continuously listen and report state changes\&.
+.RE
+.PP
+\fB\-\-statistics\fR
+.RS 4
+Include statistics in the output\&.
+.RE
 .SS "events"
 .\" drbdsetup: events
+.PP
+Deprecated\&. If possible, change to the events2 subcommand instead\&.
 .PP
 Displays every state change of DRBD and all calls to helper programs\&. This might be used to get notified of DRBD\*(Aqs state changes by piping the output to another program\&.
 .PP

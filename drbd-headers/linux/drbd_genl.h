@@ -95,6 +95,7 @@ GENL_struct(DRBD_NLA_CFG_REPLY, 1, drbd_cfg_reply,
  * and/or the replication group (aka resource) name,
  * and the volume id within the resource. */
 GENL_struct(DRBD_NLA_CFG_CONTEXT, 2, drbd_cfg_context,
+	__u32_field(6, DRBD_GENLA_F_MANDATORY,	ctx_peer_node_id)
 	__u32_field(1, DRBD_GENLA_F_MANDATORY,	ctx_volume)
 	__str_field(2, DRBD_GENLA_F_MANDATORY,	ctx_resource_name, 128)
 	__bin_field(3, DRBD_GENLA_F_MANDATORY,	ctx_my_addr, 128)
@@ -124,7 +125,9 @@ GENL_struct(DRBD_NLA_DISK_CONF, 3, disk_conf,
 	__u32_field_def(20,	DRBD_GENLA_F_MANDATORY,	disk_timeout, DRBD_DISK_TIMEOUT_DEF)
 	__u32_field_def(21, DRBD_GENLA_F_MANDATORY,     read_balancing, DRBD_READ_BALANCING_DEF)
 	__u32_field_def(22,	DRBD_GENLA_F_MANDATORY,	unplug_watermark, DRBD_UNPLUG_WATERMARK_DEF)
+	__u32_field_def(25, 0 /* OPTIONAL */,           rs_discard_granularity, DRBD_RS_DISCARD_GRANULARITY_DEF)
 	__flg_field_def(23,     0 /* OPTIONAL */,	al_updates, DRBD_AL_UPDATES_DEF)
+	__flg_field_def(24,     0 /* OPTIONAL */,       discard_zeroes_if_aligned, DRBD_DISCARD_ZEROES_IF_ALIGNED_DEF)
 )
 
 GENL_struct(DRBD_NLA_RESOURCE_OPTS, 4, res_opts,
@@ -136,6 +139,7 @@ GENL_struct(DRBD_NLA_RESOURCE_OPTS, 4, res_opts,
 	__u32_field_def(6,	DRBD_GENLA_F_MANDATORY,	twopc_timeout, DRBD_TWOPC_TIMEOUT_DEF)
 	__u32_field_def(7,	DRBD_GENLA_F_MANDATORY, twopc_retry_timeout, DRBD_TWOPC_RETRY_TIMEOUT_DEF)
 	__u32_field_def(8,	0 /* OPTIONAL */,	peer_ack_delay, DRBD_PEER_ACK_DELAY_DEF)
+	__u32_field_def(9,	0 /* OPTIONAL */,	auto_promote_timeout, DRBD_AUTO_PROMOTE_TIMEOUT_DEF)
 )
 
 GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
@@ -162,14 +166,12 @@ GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
 	__u32_field_def(22,	DRBD_GENLA_F_MANDATORY,	cong_fill, DRBD_CONG_FILL_DEF)
 	__u32_field_def(23,	DRBD_GENLA_F_MANDATORY,	cong_extents, DRBD_CONG_EXTENTS_DEF)
 	__flg_field_def(24, DRBD_GENLA_F_MANDATORY,	two_primaries, DRBD_ALLOW_TWO_PRIMARIES_DEF)
-	__flg_field(25, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	discard_my_data)
 	__flg_field_def(26, DRBD_GENLA_F_MANDATORY,	tcp_cork, DRBD_TCP_CORK_DEF)
 	__flg_field_def(27, DRBD_GENLA_F_MANDATORY,	always_asbp, DRBD_ALWAYS_ASBP_DEF)
-	__flg_field(28, DRBD_GENLA_F_MANDATORY | DRBD_F_INVARIANT,	tentative)
 	__flg_field_def(29,	DRBD_GENLA_F_MANDATORY,	use_rle, DRBD_USE_RLE_DEF)
 	__u32_field_def(30,	DRBD_GENLA_F_MANDATORY,	fencing_policy, DRBD_FENCING_DEF)
 	__str_field_def(31,	DRBD_GENLA_F_MANDATORY, name, SHARED_SECRET_MAX)
-	__u32_field(32,		DRBD_F_REQUIRED | DRBD_F_INVARIANT,	peer_node_id)
+	/* moved into ctx_peer_node_id: __u32_field(32,		DRBD_F_REQUIRED | DRBD_F_INVARIANT,	peer_node_id) */
 	__flg_field_def(33, 0 /* OPTIONAL */,	csums_after_crash_only, DRBD_CSUMS_AFTER_CRASH_ONLY_DEF)
 	__u32_field_def(34, 0 /* OPTIONAL */, sock_check_timeo, DRBD_SOCKET_CHECK_TIMEO_DEF)
 	__str_field_def(35, DRBD_F_INVARIANT, transport_name, SHARED_SECRET_MAX)
@@ -299,6 +301,20 @@ GENL_struct(DRBD_NLA_PEER_DEVICE_OPTS, 27, peer_device_conf,
 	__u32_field_def(6,	DRBD_GENLA_F_MANDATORY,	c_min_rate, DRBD_C_MIN_RATE_DEF)
 )
 
+GENL_struct(DRBD_NLA_PATH_PARMS, 28, path_parms,
+	__bin_field(1, DRBD_GENLA_F_MANDATORY,	my_addr, 128)
+	__bin_field(2, DRBD_GENLA_F_MANDATORY,	peer_addr, 128)
+)
+
+GENL_struct(DRBD_NLA_CONNECT_PARMS, 29, connect_parms,
+	__flg_field_def(1,	DRBD_GENLA_F_MANDATORY,	tentative, 0)
+	__flg_field_def(2,	DRBD_GENLA_F_MANDATORY,	discard_my_data, 0)
+)
+
+GENL_struct(DRBD_NLA_PATH_INFO, 30, drbd_path_info,
+	__flg_field(1, 0, path_established)
+)
+
 /*
  * Notifications and commands (genlmsghdr->cmd)
  */
@@ -323,11 +339,29 @@ GENL_op(DRBD_ADM_RESOURCE_OPTS, 9,
 	GENL_tla_expected(DRBD_NLA_RESOURCE_OPTS, DRBD_GENLA_F_MANDATORY)
 )
 
-GENL_op(
-	DRBD_ADM_CONNECT, 10,
-	GENL_doit(drbd_adm_connect),
+GENL_op(DRBD_ADM_NEW_PEER, 44, GENL_doit(drbd_adm_new_peer),
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
-	GENL_tla_expected(DRBD_NLA_NET_CONF, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_NET_CONF, DRBD_GENLA_F_MANDATORY)
+)
+
+GENL_op(DRBD_ADM_NEW_PATH, 45, GENL_doit(drbd_adm_new_path),
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_PATH_PARMS, DRBD_F_REQUIRED)
+)
+
+GENL_op(DRBD_ADM_DEL_PEER, 46, GENL_doit(drbd_adm_del_peer),
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_DISCONNECT_PARMS, DRBD_GENLA_F_MANDATORY)
+)
+
+GENL_op(DRBD_ADM_DEL_PATH, 47, GENL_doit(drbd_adm_del_path),
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_PATH_PARMS, DRBD_F_REQUIRED)
+)
+
+GENL_op(DRBD_ADM_CONNECT, 10, GENL_doit(drbd_adm_connect),
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_CONNECT_PARMS, DRBD_GENLA_F_MANDATORY)
 )
 
 GENL_op(
@@ -338,7 +372,9 @@ GENL_op(
 )
 
 GENL_op(DRBD_ADM_DISCONNECT, 11, GENL_doit(drbd_adm_disconnect),
-	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED))
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_DISCONNECT_PARMS, DRBD_GENLA_F_MANDATORY)
+)
 
 GENL_op(DRBD_ADM_ATTACH, 12,
 	GENL_doit(drbd_adm_attach),
@@ -464,6 +500,7 @@ GENL_notification(
 	DRBD_CONNECTION_STATE, 36, events,
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
 	GENL_tla_expected(DRBD_NLA_NOTIFICATION_HEADER, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_PATH_PARMS, DRBD_GENLA_F_MANDATORY)
 	GENL_tla_expected(DRBD_NLA_CONNECTION_INFO, DRBD_F_REQUIRED)
 	GENL_tla_expected(DRBD_NLA_CONNECTION_STATISTICS, DRBD_F_REQUIRED))
 
@@ -498,3 +535,8 @@ GENL_op(DRBD_ADM_CHG_PEER_DEVICE_OPTS, 43,
 	GENL_doit(drbd_adm_peer_device_opts),
 	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
 	GENL_tla_expected(DRBD_NLA_PEER_DEVICE_OPTS, DRBD_F_REQUIRED))
+
+GENL_notification(
+	DRBD_PATH_STATE, 48, events,
+	GENL_tla_expected(DRBD_NLA_CFG_CONTEXT, DRBD_F_REQUIRED)
+	GENL_tla_expected(DRBD_NLA_PATH_INFO, DRBD_F_REQUIRED))

@@ -43,8 +43,8 @@ OPCHAR		[{};\[\]:]
 DQSTRING	\"([^\"\\\n]|\\[^\n]){0,255}\"
 LONG_DQSTRING	\"([^\"\\\n]|\\[^\n]){255}.
 ERR_DQSTRING	\"([^\"\\\n]|\\[^\n]){0,255}[\\\n]
-STRING		[a-zA-Z0-9/._-]{1,80}
-LONG_STRING	[a-zA-Z0-9/._-]{81}
+STRING		[a-zA-Z0-9/._-]{1,128}
+LONG_STRING	[a-zA-Z0-9/._-]{129}
 
 %%
 
@@ -100,6 +100,7 @@ fencing			{ DP; CP; return TK_DISK_OPTION;	}
 max-bio-bvecs		{ DP; CP; return TK_DISK_OPTION;	}
 disk-timeout		{ DP; CP; return TK_DISK_OPTION;	}
 read-balancing		{ DP; CP; return TK_DISK_OPTION;	}
+rs-discard-granularity	{ DP; CP; return TK_DISK_OPTION;	}
 use-bmbv		{ DP; CP; return TK_DISK_FLAG;		}
 disk-barrier		{ DP; CP; return TK_DISK_FLAG;		}
 disk-flushes		{ DP; CP; return TK_DISK_FLAG;		}
@@ -143,6 +144,7 @@ csums-alg               { DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_OPTION;     
 csums-after-crash-only  { DP; CP; return TK_NET_FLAG; }
 al-extents		{ DP; CP; RC(AL_EXTENTS); return TK_SYNCER_OLD_OPT | TK_DISK_OPTION;}
 al-updates		{ DP; CP; return TK_DISK_FLAG; 	}
+discard-zeroes-if-aligned { DP; CP; return TK_DISK_FLAG; 	}
 cpu-mask		{ DP; CP; return TK_SYNCER_OLD_OPT | TK_RES_OPTION;	}
 use-rle			{ DP; CP; return TK_SYNCER_OLD_OPT | TK_NET_FLAG;	}
 delay-probe-volume	{ DP; CP; return TK_DEPRECATED_OPTION;  }
@@ -168,6 +170,7 @@ initial-split-brain    { DP; CP; return TK_HANDLER_OPTION;     }
 split-brain		{ DP; CP; return TK_HANDLER_OPTION;     }
 outdate-peer		{ DP; CP; return TK_HANDLER_OPTION;	}
 fence-peer		{ DP; CP; return TK_HANDLER_OPTION;	}
+unfence-peer		{ DP; CP; return TK_HANDLER_OPTION;	}
 local-io-error		{ DP; CP; return TK_HANDLER_OPTION;     }
 before-resync-target	{ DP; CP; return TK_HANDLER_OPTION;	}
 after-resync-target	{ DP; CP; return TK_HANDLER_OPTION;	}

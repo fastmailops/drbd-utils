@@ -212,7 +212,9 @@ void range_check(const enum range_checks what, const char *name,
 		M_STRTOLL_RANGE(RESYNC_RATE);
 		break;
 	case R_AL_EXTENTS:
-		M_STRTOLL_RANGE(AL_EXTENTS);
+		/* ignore; auto-clamped by kernel.
+		 * M_STRTOLL_RANGE(AL_EXTENTS);
+		 */
 		break;
 	case R_PORT:
 		M_STRTOLL_RANGE(PORT);
@@ -334,6 +336,9 @@ static void pperror(struct d_host_info *host, struct d_proxy_info *proxy, char *
  *   )
  *     since nobody (?) will actually use more than a dozen minors,
  *     this should be more than enough.
+ *
+ * Furthermore, the names of files that have been read are
+ * registered here, to avoid reading the same file multiple times.
  */
 struct hsearch_data global_htable;
 void check_uniq_init(void)
@@ -689,7 +694,9 @@ static struct d_option *parse_options_d(int token_flag, int token_no_flag, int t
 		token = REMOVE_GROUP_FROM_TOKEN(token_group);
 		fline = line;
 		opt_name = yylval.txt;
-		if (token == token_flag) {
+		if (token <= 0) {
+			pe_expected("an option");
+		} else if (token == token_flag) {
 			switch(yylex()) {
 			case TK_YES:
 				current_option = new_opt(opt_name, strdup("yes"));
@@ -720,8 +727,8 @@ static struct d_option *parse_options_d(int token_flag, int token_no_flag, int t
 			range_check(rc, opt_name, yylval.txt);
 			current_option = new_opt(opt_name, yylval.txt);
 			options = APPEND(options, current_option);
-		} else if (token == token_delegate ||
-				GET_TOKEN_GROUP(token_delegate & token_group)) {
+		} else if (ctx && (token == token_delegate ||
+					GET_TOKEN_GROUP(token_delegate & token_group))) {
 			delegate(ctx);
 			continue;
 		} else if (token == TK_DEPRECATED_OPTION) {
@@ -1749,10 +1756,16 @@ void proxy_delegate(void *ctx)
 
 	options = NULL;
 	while (1) {
+		line = NULL;
 		pnp = &line;
 		while (1) {
 			yylval.txt = NULL;
 			token = yylex();
+			if (token <= 0) {
+				err("%s:%d: Unexpected end-of-file\n",
+				    config_file, fline);
+				exit(E_CONFIG_INVALID);
+			}
 			if (token == ';')
 				break;
 			if (token == '}') {
@@ -2025,6 +2038,42 @@ void post_parse(struct d_resource *config, enum pp_flags flags)
 			set_disk_in_res(res);
 }
 
+/* Returns the "previous" count, ie. 0 if this file wasn't seen before. */
+int was_file_already_seen(char *fn)
+{
+	ENTRY e, *ep;
+	char *real_path;
+
+	real_path = realpath(fn, NULL);
+	if (!real_path)
+		real_path = fn;
+
+	ep = NULL;
+	e.key = real_path;
+	e.data = real_path;
+	hsearch_r(e, FIND, &ep, &global_htable);
+	if (ep) {
+		/* Can be freed, it's just a queried key. */
+		if (real_path != fn)
+			free(real_path);
+		return 1;
+	}
+
+	e.key = real_path;
+	e.data = real_path;
+	hsearch_r(e, ENTER, &ep, &global_htable);
+	if (!ep) {
+		err("hash table entry (%s => %s) failed\n", e.key, (char *)e.data);
+		exit(E_THINKO);
+	}
+
+
+	/* Must not be freed, because it's still referenced by the hash table. */
+	/* free(real_path); */
+
+	return 0;
+}
+
 void include_stmt(char *str)
 {
 	char *last_slash, *tmp;
@@ -2055,6 +2104,9 @@ void include_stmt(char *str)
 	r = glob(str, 0, NULL, &glob_buf);
 	if (r == 0) {
 		for (i=0; i<glob_buf.gl_pathc; i++) {
+			if (was_file_already_seen(glob_buf.gl_pathv[i]))
+				continue;
+
 			f = fopen(glob_buf.gl_pathv[i], "re");
 			if (f) {
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
@@ -2092,6 +2144,9 @@ void my_parse(void)
 		check_uniq_init();
 		global_htable_init = 1;
 	}
+
+	/* Remember that we're reading that file. */
+	was_file_already_seen(config_file);
 
 	while (1) {
 		int token = yylex();

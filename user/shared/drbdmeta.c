@@ -2420,6 +2420,13 @@ unsigned long bm_bytes(const struct md_cpu const *md, uint64_t sectors)
 
 	/* we announced 1 PiB as "supported" iirc. */
 	ASSERT(sectors <= (1ULL << (50-9)));
+	/* sectors_per_bit == 0 would trigger a division by zero.
+	 * At some point we will want to store sectors_per_bit directly,
+	 * and not bytes_per_bit.
+	 * To keep sanity, we limit ourselves to tracking only power-of-two
+	 * multiples of 4k */
+	ASSERT(md->bm_bytes_per_bit >= 4096);
+	ASSERT((md->bm_bytes_per_bit & (md->bm_bytes_per_bit - 1)) == 0);
 
 	/* round up storage sectors to full "bitmap sectors per bit", then
 	 * convert to number of bits needed, and round that up to 64bit words
@@ -3051,7 +3058,7 @@ int meta_dstate(struct format *cfg, char **argv __attribute((unused)), int argc)
 	if(cfg->md.flags & MDF_CONSISTENT) {
 		if(cfg->md.flags & MDF_WAS_UP_TO_DATE) {
 			if (cfg->md.flags & MDF_PEER_OUT_DATED)
-				printf("UpToDated\n");
+				printf("UpToDate\n");
 			else
 				printf("Consistent\n");
 		} else {
@@ -3637,6 +3644,13 @@ int verify_dumpfile_or_restore(struct format *cfg, char **argv, int argc, int pa
 	if (format_version(cfg) >= DRBD_V08) {
 		EXP(TK_BM_BYTE_PER_BIT); EXP(TK_NUM); EXP(';');
 		cfg->md.bm_bytes_per_bit = yylval.u64;
+		/* Check whether the value of bm_bytes_per_bit is
+		 * a power-of-two multiple of 4k. */
+		if (yylval.u64 < 4096 || (yylval.u64 & (yylval.u64 -1)) != 0) {
+			fprintf(stderr, "Invalid value for bm-byte-per-bit: "
+				"value must be a power-of-two multiple of 4096\n");
+			exit(10);
+		}
 		EXP(TK_DEVICE_UUID); EXP(TK_U64); EXP(';');
 		cfg->md.device_uuid = yylval.u64;
 		EXP(TK_LA_BIO_SIZE); EXP(TK_NUM); EXP(';');
@@ -3798,6 +3812,14 @@ void md_convert_08_to_07(struct format *cfg)
 
 void md_convert_08_to_09(struct format *cfg)
 {
+	int p;
+
+	for (p = 0; p < DRBD_NODE_ID_MAX; p++) {
+		cfg->md.peers[p].bitmap_uuid = 0;
+		cfg->md.peers[p].flags = 0;
+		cfg->md.peers[p].bitmap_index = -1;
+	}
+
 	if (cfg->md.flags & MDF_CONNECTED_IND)
 		cfg->md.peers[0].flags |= MDF_PEER_CONNECTED;
 
@@ -4797,17 +4819,17 @@ static enum drbd_disk_state drbd_str_disk(const char *str)
 	/* drbd 8.4 and earlier provide "Local/Remote"
 	 * drbd 9. only "Local". */
 	const char *slash = strchr(str, '/');
-	const char *tmp;
+	size_t len;
 	int n;
 
 	if (slash)
-		tmp = strndupa(str, slash - str);
+		len = slash - str;
 	else
-		tmp = str;
+		len = strlen(str);
 
 	for (n = 0; n < drbd_disk_state_names.size; n++) {
 		if (drbd_disk_state_names.names[n] &&
-		    !strcmp(tmp, drbd_disk_state_names.names[n]))
+		    !strncmp(str, drbd_disk_state_names.names[n], len))
 			return (enum drbd_disk_state)n;
 	}
 	if (!strcmp(str, "Unconfigured"))
@@ -4839,7 +4861,8 @@ int is_attached(int minor)
 		exit(20);
 	}
 	if (pid == 0) {
-		fclose(stderr);
+		freopen("/dev/null", "w", stderr);
+
 		close(pipes[0]);
 		dup2(pipes[1], 1);
 

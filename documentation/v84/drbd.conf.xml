@@ -109,7 +109,7 @@
 
       <variablelist>
         <varlistentry>
-          <term><option>skip</option></term>
+          <term xml:id="skip"><option>skip</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -125,7 +125,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>global</option></term>
+          <term xml:id="global"><option>global</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -140,7 +140,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>common</option></term>
+          <term xml:id="common"><option>common</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -155,7 +155,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>resource <replaceable>name</replaceable></option></term>
+          <term xml:id="resource"><option>resource <replaceable>name</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -171,7 +171,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>on <replaceable>host-name</replaceable></option></term>
+          <term xml:id="on"><option>on <replaceable>host-name</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -209,7 +209,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>volume <replaceable>vnr</replaceable></option></term>
+          <term xml:id="volume"><option>volume <replaceable>vnr</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -225,7 +225,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>stacked-on-top-of <replaceable>resource</replaceable></option></term>
+          <term xml:id="stacked-on-top-of"><option>stacked-on-top-of <replaceable>resource</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -240,7 +240,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>floating <replaceable>AF addr:port</replaceable></option></term>
+          <term xml:id="floating"><option>floating <replaceable>AF addr:port</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -275,7 +275,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>disk</option></term>
+          <term xml:id="s-disk"><option>disk</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -296,12 +296,14 @@
             <option>c-plan-ahead</option>, <option>c-fill-target</option>,
             <option>c-delay-target</option>, <option>c-max-rate</option>,
             <option>c-min-rate</option>, <option>disk-timeout</option>,
+	    <option>discard-zeroes-if-aligned</option>,
+	    <option>rs-discard-granularity</option>,
 	    <option>read-balancing</option>.</para>
           </listitem>
         </varlistentry>
 
         <varlistentry>
-          <term><option>net</option></term>
+          <term xml:id="net"><option>net</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -331,7 +333,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>startup</option></term>
+          <term xml:id="startup"><option>startup</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -351,7 +353,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>options</option></term>
+          <term xml:id="options"><option>options</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -370,7 +372,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>handlers</option></term>
+          <term xml:id="handlers"><option>handlers</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -420,7 +422,7 @@
 
       <variablelist>
         <varlistentry>
-          <term><option>minor-count <replaceable>count</replaceable></option></term>
+          <term xml:id="minor-count"><option>minor-count <replaceable>count</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -437,7 +439,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>dialog-refresh <replaceable>time</replaceable></option></term>
+          <term xml:id="dialog-refresh"><option>dialog-refresh <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -453,7 +455,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>disable-ip-verification</option></term>
+          <term xml:id="disable-ip-verification"><option>disable-ip-verification</option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -470,7 +472,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>usage-count <replaceable>val</replaceable></option></term>
+          <term xml:id="usage-count"><option>usage-count <replaceable>val</replaceable></option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -488,7 +490,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>protocol <replaceable>prot-id</replaceable></option></term>
+          <term xml:id="protocol"><option>protocol <replaceable>prot-id</replaceable></option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -512,7 +514,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>device <replaceable>name</replaceable> minor
+          <term xml:id="device"><option>device <replaceable>name</replaceable> minor
           <replaceable>nr</replaceable></option></term>
 
           <listitem>
@@ -535,7 +537,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>disk <replaceable>name</replaceable></option></term>
+          <term xml:id="disk"><option>disk <replaceable>name</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -553,7 +555,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>address <replaceable>AF addr:port</replaceable></option></term>
+          <term xml:id="address"><option>address <replaceable>AF addr:port</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -576,7 +578,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>meta-disk internal</option></term>
+          <term xml:id="meta-disk"><option>meta-disk internal</option></term>
 
           <term><option>meta-disk <replaceable>device</replaceable></option></term>
 
@@ -608,7 +610,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>on-io-error <replaceable>handler</replaceable></option></term>
+          <term xml:id="on-io-error"><option>on-io-error <replaceable>handler</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -633,7 +635,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>fencing <replaceable>fencing_policy</replaceable></option></term>
+          <term xml:id="fencing"><option>fencing <replaceable>fencing_policy</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -647,7 +649,7 @@
 
             <variablelist>
               <varlistentry>
-                <term><option>dont-care</option></term>
+                <term xml:id="dont-care"><option>dont-care</option></term>
 
                 <listitem>
                   <para>This is the default policy. No fencing actions are taken.</para>
@@ -655,7 +657,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>resource-only</option></term>
+                <term xml:id="resource-only"><option>resource-only</option></term>
 
                 <listitem>
                   <para>If a node becomes a disconnected primary, it tries to fence the peer's
@@ -666,7 +668,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>resource-and-stonith</option></term>
+                <term xml:id="resource-and-stonith"><option>resource-and-stonith</option></term>
 
                 <listitem>
                   <para>If a node becomes a disconnected primary, it freezes all its IO operations
@@ -682,11 +684,11 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>disk-barrier</option></term>
+          <term xml:id="disk-barrier"><option>disk-barrier</option></term>
 
-          <term><option>disk-flushes</option></term>
+          <term xml:id="disk-flushes"><option>disk-flushes</option></term>
 
-          <term><option>disk-drain</option></term>
+          <term xml:id="disk-drain"><option>disk-drain</option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -781,7 +783,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>md-flushes</option></term>
+          <term xml:id="md-flushes"><option>md-flushes</option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -796,7 +798,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>max-bio-bvecs</option></term>
+          <term xml:id="max-bio-bvecs"><option>max-bio-bvecs</option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -870,6 +872,66 @@
         </varlistentry>
 
         <varlistentry>
+          <term xml:id="discard-zeroes-if-aligned"><option>discard-zeroes-if-aligned <group choice="req" rep="norepeat">
+	     <arg choice="plain" rep="norepeat">yes</arg>
+	     <arg choice="plain" rep="norepeat">no</arg>
+	  </group></option></term>
+          <listitem>
+	    <para>
+            <indexterm significance="normal">
+              <primary>drbd.conf</primary>
+              <secondary>discard-zeroes-if-aligned</secondary>
+            </indexterm>
+	There are several aspects to discard/trim/unmap support on linux
+	block devices.  Even if discard is supported in general, it may fail
+	silently, or may partially ignore discard requests.  Devices also
+	announce whether reading from unmapped blocks returns defined data
+	(usually zeroes), or undefined data (possibly old data, possibly
+	garbage).
+	</para><para>
+	If on different nodes, DRBD is backed by devices with differing discard
+	characteristics, discards may lead to data divergence (old data or
+	garbage left over on one backend, zeroes due to unmapped areas on the
+	other backend). Online verify would now potentially report tons of
+	spurious differences.  While probably harmless for most use cases
+	(fstrim on a file system), DRBD cannot have that.
+	</para><para>
+	To play safe, we have to disable discard support, if our local backend
+	(on a Primary) does not support "discard_zeroes_data=true".  We also have to
+	translate discards to explicit zero-out on the receiving side, unless
+	the receiving side (Secondary) supports "discard_zeroes_data=true",
+	thereby allocating areas what were supposed to be unmapped.
+	</para><para>
+	There are some devices (notably the LVM/DM thin provisioning) that are
+	capable of discard, but announce discard_zeroes_data=false.  In the case of
+	DM-thin, discards aligned to the chunk size will be unmapped, and
+	reading from unmapped sectors will return zeroes. However, unaligned
+	partial head or tail areas of discard requests will be silently ignored.
+	</para><para>
+	If we now add a helper to explicitly zero-out these unaligned partial
+	areas, while passing on the discard of the aligned full chunks, we
+	effectively achieve discard_zeroes_data=true on such devices.
+	</para><para>
+	Setting <option>discard-zeroes-if-aligned</option> to <option>yes</option>
+	will allow DRBD to use discards, and to announce discard_zeroes_data=true,
+	even on backends that announce discard_zeroes_data=false.
+	</para><para>
+	Setting <option>discard-zeroes-if-aligned</option> to <option>no</option>
+	will cause DRBD to always fall-back to zero-out on the receiving side,
+	and to not even announce discard capabilities on the Primary,
+	if the respective backend announces discard_zeroes_data=false.
+	</para><para>
+	We used to ignore the discard_zeroes_data setting completely.  To not
+	break established and expected behaviour, and suddenly cause fstrim on
+	thin-provisioned LVs to run out-of-space instead of freeing up space,
+	the default value is <option>yes</option>.
+	</para><para>
+	This option is available since 8.4.7.
+	</para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
           <term>
             <option>read-balancing <replaceable>method</replaceable></option>
           </term>
@@ -893,7 +955,32 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>sndbuf-size <replaceable>size</replaceable></option></term>
+          <term xml:id="rs-discard-granularity">
+            <option>rs-discard-granularity <replaceable>byte</replaceable></option>
+          </term>
+          <listitem>
+            <indexterm significance="normal">
+              <primary>drbd.conf</primary>
+              <secondary>rs-discard-granularity</secondary>
+            </indexterm>
+	    <para>
+	      When <option>rs-discard-granularity</option> is set to a non zero, positive
+	      value then DRBD tries to do a resync operation in requests of this size.
+	      In case such a block contains only zero bytes on the sync source node,
+	      the sync target node will issue a discard/trim/unmap command for
+	      the area.</para>
+	      <para>The value is constrained by the discard granularity of the backing
+	      block device. In case <option>rs-discard-granularity</option> is not a
+	      multiplier of the discard granularity of the backing block device DRBD
+	      rounds it up. The feature only gets active if the backing block device
+	      reads back zeroes after a discard command.</para>
+	      <para> The default value of is 0. This option is available since 8.4.7.
+	      </para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
+          <term xml:id="sndbuf-size"><option>sndbuf-size <replaceable>size</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -910,7 +997,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>rcvbuf-size <replaceable>size</replaceable></option></term>
+          <term xml:id="rcvbuf-size"><option>rcvbuf-size <replaceable>size</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -926,7 +1013,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>timeout <replaceable>time</replaceable></option></term>
+          <term xml:id="timeout"><option>timeout <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -942,7 +1029,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>connect-int <replaceable>time</replaceable></option></term>
+          <term xml:id="connect-int"><option>connect-int <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -956,7 +1043,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>ping-int <replaceable>time</replaceable></option></term>
+          <term xml:id="ping-int"><option>ping-int <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -971,7 +1058,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>ping-timeout <replaceable>time</replaceable></option></term>
+          <term xml:id="ping-timeout"><option>ping-timeout <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -985,7 +1072,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>max-buffers <replaceable>number</replaceable></option></term>
+          <term xml:id="max-buffers"><option>max-buffers <replaceable>number</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1008,7 +1095,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>ko-count <replaceable>number</replaceable></option></term>
+          <term xml:id="ko-count"><option>ko-count <replaceable>number</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1025,7 +1112,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>max-epoch-size <replaceable>number</replaceable></option></term>
+          <term xml:id="max-epoch-size"><option>max-epoch-size <replaceable>number</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1038,7 +1125,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>allow-two-primaries</option></term>
+          <term xml:id="allow-two-primaries"><option>allow-two-primaries</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1053,7 +1140,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>unplug-watermark <replaceable>number</replaceable></option></term>
+          <term xml:id="unplug-watermark"><option>unplug-watermark <replaceable>number</replaceable></option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1075,7 +1162,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>cram-hmac-alg</option></term>
+          <term xml:id="cram-hmac-alg"><option>cram-hmac-alg</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1090,7 +1177,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>shared-secret</option></term>
+          <term xml:id="shared-secret"><option>shared-secret</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1104,7 +1191,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>after-sb-0pri </option> <replaceable>policy</replaceable></term>
+          <term xml:id="after-sb-0pri"><option>after-sb-0pri </option> <replaceable>policy</replaceable></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1117,7 +1204,7 @@
 
             <variablelist>
               <varlistentry>
-                <term><option>disconnect</option></term>
+                <term xml:id="disconnect"><option>disconnect</option></term>
 
                 <listitem>
                   <para>No automatic resynchronization, simply disconnect.</para>
@@ -1125,7 +1212,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-younger-primary</option></term>
+                <term xml:id="discard-younger-primary"><option>discard-younger-primary</option></term>
 
                 <listitem>
                   <para>Auto sync from the node that was primary before the split-brain situation
@@ -1134,7 +1221,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-older-primary</option></term>
+                <term xml:id="discard-older-primary"><option>discard-older-primary</option></term>
 
                 <listitem>
                   <para>Auto sync from the node that became primary as second during the
@@ -1143,7 +1230,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-zero-changes</option></term>
+                <term xml:id="discard-zero-changes"><option>discard-zero-changes</option></term>
 
                 <listitem>
                   <para>In case one node did not write anything since the split brain became
@@ -1155,7 +1242,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-least-changes</option></term>
+                <term xml:id="discard-least-changes"><option>discard-least-changes</option></term>
 
                 <listitem>
                   <para>Auto sync from the node that touched more blocks during the split brain
@@ -1164,7 +1251,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-node-NODENAME</option></term>
+                <term xml:id="discard-node-NODENAME"><option>discard-node-NODENAME</option></term>
 
                 <listitem>
                   <para>Auto sync to the named node.</para>
@@ -1175,7 +1262,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>after-sb-1pri </option> <replaceable>policy</replaceable></term>
+          <term xml:id="after-sb-1pri"><option>after-sb-1pri </option> <replaceable>policy</replaceable></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1188,7 +1275,7 @@
 
             <variablelist>
               <varlistentry>
-                <term><option>disconnect</option></term>
+                <term xml:id="sb1-disconnect"><option>disconnect</option></term>
 
                 <listitem>
                   <para>No automatic resynchronization, simply disconnect.</para>
@@ -1196,7 +1283,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>consensus</option></term>
+                <term xml:id="consensus"><option>consensus</option></term>
 
                 <listitem>
                   <para>Discard the version of the secondary if the outcome of the
@@ -1206,7 +1293,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>violently-as0p</option></term>
+                <term xml:id="sb1-violently-as0p"><option>violently-as0p</option></term>
 
                 <listitem>
                   <para>Always take the decision of the <option>after-sb-0pri</option> algorithm,
@@ -1219,7 +1306,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>discard-secondary</option></term>
+                <term xml:id="discard-secondary"><option>discard-secondary</option></term>
 
                 <listitem>
                   <para>Discard the secondary's version.</para>
@@ -1227,7 +1314,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>call-pri-lost-after-sb</option></term>
+                <term xml:id="sb1-call-pri-lost-after-sb"><option>call-pri-lost-after-sb</option></term>
 
                 <listitem>
                   <para>Always honor the outcome of the <option>after-sb-0pri </option> algorithm.
@@ -1240,7 +1327,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>after-sb-2pri </option> <replaceable>policy</replaceable></term>
+          <term xml:id="after-sb-2pri"><option>after-sb-2pri </option> <replaceable>policy</replaceable></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1253,7 +1340,7 @@
 
             <variablelist>
               <varlistentry>
-                <term><option>disconnect</option></term>
+                <term xml:id="sb2-disconnect"><option>disconnect</option></term>
 
                 <listitem>
                   <para>No automatic resynchronization, simply disconnect.</para>
@@ -1261,7 +1348,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>violently-as0p</option></term>
+                <term xml:id="sb2-violently-as0p"><option>violently-as0p</option></term>
 
                 <listitem>
                   <para>Always take the decision of the <option>after-sb-0pri</option> algorithm,
@@ -1274,7 +1361,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>call-pri-lost-after-sb</option></term>
+                <term xml:id="sb2-call-pri-lost-after-sb"><option>call-pri-lost-after-sb</option></term>
 
                 <listitem>
                   <para>Call the "pri-lost-after-sb" helper program on one of the machines. This
@@ -1286,7 +1373,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>always-asbp</option></term>
+          <term xml:id="always-asbp"><option>always-asbp</option></term>
 
           <listitem>
             <para>Normally the automatic after-split-brain policies are only used if current
@@ -1300,7 +1387,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>rr-conflict </option> <replaceable>policy</replaceable></term>
+          <term xml:id="rr-conflict"><option>rr-conflict </option> <replaceable>policy</replaceable></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1314,7 +1401,7 @@
 
             <variablelist>
               <varlistentry>
-                <term><option>disconnect</option></term>
+                <term xml:id="rr-disconnect"><option>disconnect</option></term>
 
                 <listitem>
                   <para>No automatic resynchronization, simply disconnect.</para>
@@ -1322,7 +1409,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>violently</option></term>
+                <term xml:id="violently"><option>violently</option></term>
 
                 <listitem>
                   <para>Sync to the primary node is allowed, violating the assumption that data on
@@ -1332,7 +1419,7 @@
               </varlistentry>
 
               <varlistentry>
-                <term><option>call-pri-lost</option></term>
+                <term xml:id="call-pri-lost"><option>call-pri-lost</option></term>
 
                 <listitem>
                   <para>Call the "pri-lost" helper program on one of the machines. This program is
@@ -1344,7 +1431,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>data-integrity-alg </option> <replaceable>alg</replaceable></term>
+          <term xml:id="data-integrity-alg"><option>data-integrity-alg </option> <replaceable>alg</replaceable></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1367,7 +1454,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>tcp-cork</option></term>
+          <term xml:id="tcp-cork"><option>tcp-cork</option></term>
 
           <listitem>
             <indexterm significance="normal">
@@ -1386,11 +1473,11 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>on-congestion <replaceable>congestion_policy</replaceable></option></term>
+          <term xml:id="on-congestion"><option>on-congestion <replaceable>congestion_policy</replaceable></option></term>
 
-          <term><option>congestion-fill <replaceable>fill_threshold</replaceable></option></term>
+          <term xml:id="congestion-fill"><option>congestion-fill <replaceable>fill_threshold</replaceable></option></term>
 
-          <term><option>congestion-extents
+          <term xml:id="congestion-extents"><option>congestion-extents
           <replaceable>active_extents_threshold</replaceable></option></term>
 
           <listitem>
@@ -1420,7 +1507,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>wfc-timeout <replaceable>time</replaceable></option></term>
+          <term xml:id="wfc-timeout"><option>wfc-timeout <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para>Wait for connection timeout. <indexterm significance="normal">
@@ -1439,7 +1526,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>degr-wfc-timeout <replaceable>time</replaceable></option></term>
+          <term xml:id="degr-wfc-timeout"><option>degr-wfc-timeout <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1454,7 +1541,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>outdated-wfc-timeout <replaceable>time</replaceable></option></term>
+          <term xml:id="outdated-wfc-timeout"><option>outdated-wfc-timeout <replaceable>time</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1469,7 +1556,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>wait-after-sb</option></term>
+          <term xml:id="wait-after-sb"><option>wait-after-sb</option></term>
 
           <listitem>
             <para>By setting this option you can make the init script to continue to wait even if
@@ -1478,7 +1565,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>become-primary-on <replaceable>node-name</replaceable></option></term>
+          <term xml:id="become-primary-on"><option>become-primary-on <replaceable>node-name</replaceable></option></term>
 
           <listitem>
             <para>Sets on which node the device should be promoted to primary role by the init
@@ -1490,7 +1577,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>stacked-timeouts</option></term>
+          <term xml:id="stacked-timeouts"><option>stacked-timeouts</option></term>
 
           <listitem>
             <para>Usually <option>wfc-timeout</option> and <option>degr-wfc-timeout</option> are
@@ -1504,7 +1591,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>resync-rate <replaceable>rate</replaceable></option></term>
+          <term xml:id="resync-rate"><option>resync-rate <replaceable>rate</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1519,7 +1606,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>use-rle</option></term>
+          <term xml:id="use-rle"><option>use-rle</option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1541,7 +1628,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>socket-check-timeout <replaceable>value</replaceable></option></term>
+          <term xml:id="socket-check-timeout"><option>socket-check-timeout <replaceable>value</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1566,7 +1653,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>resync-after <replaceable>res-name</replaceable></option></term>
+          <term xml:id="resync-after"><option>resync-after <replaceable>res-name</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1581,7 +1668,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>al-extents <replaceable>extents</replaceable></option></term>
+          <term xml:id="al-extents"><option>al-extents <replaceable>extents</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1610,7 +1697,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>al-updates <group choice="req" rep="norepeat">
+          <term xml:id="al-updates"><option>al-updates <group choice="req" rep="norepeat">
 	     <arg choice="plain" rep="norepeat">yes</arg>
 	     <arg choice="plain" rep="norepeat">no</arg>
 	  </group></option></term>
@@ -1630,7 +1717,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>verify-alg <replaceable>hash-alg</replaceable></option></term>
+          <term xml:id="verify-alg"><option>verify-alg <replaceable>hash-alg</replaceable></option></term>
 
           <listitem>
             <para>During online verification (as initiated by the <command
@@ -1648,7 +1735,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>csums-alg <replaceable>hash-alg</replaceable></option></term>
+          <term xml:id="csums-alg"><option>csums-alg <replaceable>hash-alg</replaceable></option></term>
 
           <listitem>
             <para>A resync process sends all marked data blocks from the source to the destination
@@ -1665,13 +1752,13 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>c-plan-ahead <replaceable>plan_time</replaceable></option></term>
+          <term xml:id="c-plan-ahead"><option>c-plan-ahead <replaceable>plan_time</replaceable></option></term>
 
-          <term><option>c-fill-target <replaceable>fill_target</replaceable></option></term>
+          <term xml:id="c-fill-target"><option>c-fill-target <replaceable>fill_target</replaceable></option></term>
 
-          <term><option>c-delay-target <replaceable>delay_target</replaceable></option></term>
+          <term xml:id="c-delay-target"><option>c-delay-target <replaceable>delay_target</replaceable></option></term>
 
-          <term><option>c-max-rate <replaceable>max_rate</replaceable></option></term>
+          <term xml:id="c-max-rate"><option>c-max-rate <replaceable>max_rate</replaceable></option></term>
 
           <listitem>
             <para>The dynamic resync speed controller gets enabled with setting
@@ -1705,7 +1792,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>c-min-rate <replaceable>min_rate</replaceable></option></term>
+          <term xml:id="c-min-rate"><option>c-min-rate <replaceable>min_rate</replaceable></option></term>
 
           <listitem>
             <para>A node that is primary and sync-source has to schedule application IO requests
@@ -1728,7 +1815,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>on-no-data-accessible
+          <term xml:id="on-no-data-accessible"><option>on-no-data-accessible
           <replaceable>ond-policy</replaceable></option></term>
 
           <listitem>
@@ -1747,7 +1834,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>cpu-mask <replaceable>cpu-mask</replaceable></option></term>
+          <term xml:id="cpu-mask"><option>cpu-mask <replaceable>cpu-mask</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1762,7 +1849,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>pri-on-incon-degr <replaceable>cmd</replaceable></option></term>
+          <term xml:id="pri-on-incon-degr"><option>pri-on-incon-degr <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1775,7 +1862,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>pri-lost-after-sb <replaceable>cmd</replaceable></option></term>
+          <term xml:id="pri-lost-after-sb"><option>pri-lost-after-sb <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1788,7 +1875,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>pri-lost <replaceable>cmd</replaceable></option></term>
+          <term xml:id="pri-lost"><option>pri-lost <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1801,7 +1888,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>fence-peer <replaceable>cmd</replaceable></option></term>
+          <term xml:id="fence-peer"><option>fence-peer <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1815,7 +1902,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>local-io-error <replaceable>cmd</replaceable></option></term>
+          <term xml:id="local-io-error"><option>local-io-error <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1827,7 +1914,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>initial-split-brain <replaceable>cmd</replaceable></option></term>
+          <term xml:id="initial-split-brain"><option>initial-split-brain <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1841,7 +1928,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>split-brain <replaceable>cmd</replaceable></option></term>
+          <term xml:id="split-brain"><option>split-brain <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1854,7 +1941,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>before-resync-target <replaceable>cmd</replaceable></option></term>
+          <term xml:id="before-resync-target"><option>before-resync-target <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1868,7 +1955,7 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>after-resync-target <replaceable>cmd</replaceable></option></term>
+          <term xml:id="after-resync-target"><option>after-resync-target <replaceable>cmd</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">
@@ -1889,7 +1976,7 @@
 
       <variablelist>
         <varlistentry>
-          <term><option>include <replaceable>file-pattern</replaceable></option></term>
+          <term xml:id="include"><option>include <replaceable>file-pattern</replaceable></option></term>
 
           <listitem>
             <para><indexterm significance="normal">

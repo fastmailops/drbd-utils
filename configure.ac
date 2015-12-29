@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.2, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.5, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -49,6 +49,7 @@ WITH_HEARTBEAT=yes
 WITH_RGMANAGER=no
 WITH_BASHCOMPLETION=yes
 WITH_NOARCH_SUBPACKAGES=no
+WITH_MANUAL=yes
 AC_ARG_WITH([83support],
 	[AS_HELP_STRING([--without-83support],
 			[Do not include support for drbd driver/module <= 8.3])],
@@ -98,6 +99,10 @@ AC_ARG_ENABLE([spec],
 			[Rather than creating Makefiles, create an RPM spec file only])],
 	[SPECMODE=$enableval],
 	[SPECMODE=""])
+AC_ARG_WITH([manual],
+	[AS_HELP_STRING([--without-manual],
+			[Do not include manual pages])],
+	[WITH_MANUAL=$withval])
 
 AC_SUBST(WITH_83_SUPPORT)
 AC_SUBST(WITH_84_SUPPORT)
@@ -107,6 +112,7 @@ AC_SUBST(WITH_PACEMAKER)
 AC_SUBST(WITH_HEARTBEAT)
 AC_SUBST(WITH_RGMANAGER)
 AC_SUBST(WITH_BASHCOMPLETION)
+AC_SUBST(WITH_MANUAL)
 
 dnl Do we know where systemd unit files go?
 PKG_PROG_PKG_CONFIG

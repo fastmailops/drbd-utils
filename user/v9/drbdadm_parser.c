@@ -43,6 +43,7 @@
 #include "drbdtool_common.h"
 #include "drbdadm_parser.h"
 #include "shared_parser.h"
+#include <config_flags.h>
 
 YYSTYPE yylval;
 
@@ -50,8 +51,8 @@ YYSTYPE yylval;
 
 static int c_section_start;
 static int parse_proxy_options(struct options *, struct options *);
-void my_parse(void);
 static void parse_skip(void);
+static struct d_resource *template_file(const char *res_name);
 
 struct d_name *names_from_str(char* str)
 {
@@ -155,8 +156,6 @@ void m_strtoll_range(const char *s, char def_unit,
 void range_check(const enum range_checks what, const char *name,
 		 char *value)
 {
-	char proto = 0;
-
 	/*
 	 * FIXME: Handle signed/unsigned values correctly by checking the
 	 * F_field_name_IS_SIGNED defines.
@@ -168,49 +167,11 @@ void range_check(const enum range_checks what, const char *name,
 				DRBD_ ## x ## _MAX)
 
 	switch (what) {
-	case R_NO_CHECK:
-		break;
-	default:
-		err("%s:%d: unknown range for %s => %s\n", config_file, fline, name, value);
-		break;
 	case R_MINOR_COUNT:
 		M_STRTOLL_RANGE(MINOR_COUNT);
 		break;
 	case R_DIALOG_REFRESH:
 		M_STRTOLL_RANGE(DIALOG_REFRESH);
-		break;
-	case R_DISK_SIZE:
-		M_STRTOLL_RANGE(DISK_SIZE);
-		break;
-	case R_TIMEOUT:
-		M_STRTOLL_RANGE(TIMEOUT);
-		break;
-	case R_CONNECT_INT:
-		M_STRTOLL_RANGE(CONNECT_INT);
-		break;
-	case R_PING_INT:
-		M_STRTOLL_RANGE(PING_INT);
-		break;
-	case R_MAX_BUFFERS:
-		M_STRTOLL_RANGE(MAX_BUFFERS);
-		break;
-	case R_MAX_EPOCH_SIZE:
-		M_STRTOLL_RANGE(MAX_EPOCH_SIZE);
-		break;
-	case R_SNDBUF_SIZE:
-		M_STRTOLL_RANGE(SNDBUF_SIZE);
-		break;
-	case R_RCVBUF_SIZE:
-		M_STRTOLL_RANGE(RCVBUF_SIZE);
-		break;
-	case R_KO_COUNT:
-		M_STRTOLL_RANGE(KO_COUNT);
-		break;
-	case R_RATE:
-		M_STRTOLL_RANGE(RESYNC_RATE);
-		break;
-	case R_AL_EXTENTS:
-		M_STRTOLL_RANGE(AL_EXTENTS);
 		break;
 	case R_PORT:
 		M_STRTOLL_RANGE(PORT);
@@ -220,58 +181,11 @@ void range_check(const enum range_checks what, const char *name,
 		M_STRTOLL_RANGE(META_IDX);
 		break;
 	*/
-	case R_WFC_TIMEOUT:
-		M_STRTOLL_RANGE(WFC_TIMEOUT);
-		break;
-	case R_DEGR_WFC_TIMEOUT:
-		M_STRTOLL_RANGE(DEGR_WFC_TIMEOUT);
-		break;
-	case R_OUTDATED_WFC_TIMEOUT:
-		M_STRTOLL_RANGE(OUTDATED_WFC_TIMEOUT);
-		break;
-
-	case R_C_PLAN_AHEAD:
-		M_STRTOLL_RANGE(C_PLAN_AHEAD);
-		break;
-
-	case R_C_DELAY_TARGET:
-		M_STRTOLL_RANGE(C_DELAY_TARGET);
-		break;
-
-	case R_C_FILL_TARGET:
-		M_STRTOLL_RANGE(C_FILL_TARGET);
-		break;
-
-	case R_C_MAX_RATE:
-		M_STRTOLL_RANGE(C_MAX_RATE);
-		break;
-
-	case R_C_MIN_RATE:
-		M_STRTOLL_RANGE(C_MIN_RATE);
-		break;
-
-	case R_CONG_FILL:
-		M_STRTOLL_RANGE(CONG_FILL);
-		break;
-
-	case R_CONG_EXTENTS:
-		M_STRTOLL_RANGE(CONG_EXTENTS);
-		break;
-	case R_PROTOCOL:
-		if (value && value[0] && value[1] == 0) {
-			proto = value[0] & ~0x20; /* toupper */
-			if (proto == 'A' || proto == 'B' || proto == 'C')
-				value[0] = proto;
-			else
-				proto = 0;
-		}
-		if (!proto && config_valid <= 1) {
-			config_valid = 0;
-			err("unknown protocol '%s', should be one of A,B,C\n", value);
-		}
-		break;
 	case R_NODE_ID:
 		M_STRTOLL_RANGE(NODE_ID);
+		break;
+	default:
+		err("%s:%d: unknown range for %s => %s\n", config_file, fline, name, value);
 		break;
 	}
 }
@@ -322,6 +236,9 @@ static void pperror(struct d_proxy_info *proxy, char *text)
  *   )
  *     since nobody (?) will actually use more than a dozen minors,
  *     this should be more than enough.
+ *
+ * Furthermore, the names of files that have been read are
+ * registered here, to avoid reading the same file multiple times.
  */
 struct hsearch_data global_htable;
 void check_uniq_init(void)
@@ -455,22 +372,6 @@ static void pe_expected_got(const char *exp, int got)
 	token;							\
 })
 
-static void expect_STRING_or_INT(void)
-{
-	int token = yylex();
-	switch(token) {
-	case TK_INTEGER:
-	case TK_STRING:
-		break;
-	case TK_ON:
-		yylval.txt = strdup(yytext);
-		break;
-	default:
-		check_string_error(token);
-		pe_expected_got("TK_STRING | TK_INTEGER", token);
-	}
-}
-
 static void parse_global(void)
 {
 	fline = line;
@@ -538,33 +439,139 @@ static void parse_global(void)
 	}
 }
 
-static void check_and_change_deprecated_alias(char **name, int token)
+static char *check_deprecated_alias(char *name)
 {
 	int i;
 	static struct {
-		enum yytokentype token;
 		char *old_name, *new_name;
 	} table[] = {
-		{ TK_HANDLER_OPTION, "outdate-peer", "fence-peer" },
-		{ TK_DISK_OPTION, "rate", "resync-rate" },
-		{ TK_DISK_OPTION, "after", "resync-after" },
+		{ "outdate-peer", "fence-peer" },
+		{ "rate", "resync-rate" },
+		{ "after", "resync-after" },
 	};
 
 	for (i = 0; i < ARRAY_SIZE(table); i++) {
-		if (table[i].token == token &&
-		    !strcmp(table[i].old_name, *name)) {
-			free(*name);
-			*name = strdup(table[i].new_name);
-		}
+		if (!strcmp(table[i].old_name, name))
+			return table[i].new_name;
 	}
+	return name;
 }
+
+static void pe_valid_enums(const char **map, int nr_enums)
+{
+	int i, size = 0;
+	char *buffer, *p;
+
+	for (i = 0; i < nr_enums; i++) {
+		if (map[i])
+			size += strlen(map[i]) + 3;
+	}
+
+	assert(size >= 3);
+
+	buffer = alloca(size);
+	p = buffer;
+	for (i = 0; i < nr_enums; i++) {
+		if (map[i])
+			p += sprintf(p, "%s | ", map[i]);
+	}
+
+	buffer[size - 3] = 0; /* Eliminate last " | " */
+	err("Allowed values are: %s\n", buffer);
+}
+
+static void pe_field(struct field_def *field, enum check_codes e, char *value)
+{
+	static const char *err_strings[] = {
+		[CC_NOT_AN_ENUM] = "not valid",
+		[CC_NOT_A_BOOL] = "not 'yes' or 'no'",
+		[CC_NOT_A_NUMBER] = "not a number",
+		[CC_TOO_SMALL] = "too small",
+		[CC_TOO_BIG] = "too big",
+	};
+	err("%s:%u: Parse error: while parsing value ('%s') for %s. Value is %s.\n",
+	    config_file, line, value, field->name, err_strings[e]);
+
+	if (e == CC_NOT_AN_ENUM)
+		pe_valid_enums(field->u.e.map, field->u.e.size);
+
+	if (config_valid <= 1)
+		config_valid = 0;
+}
+
+static void pe_options(struct context_def *options_def)
+{
+	struct field_def *field;
+	char *buffer, *p;
+	int size = 0;
+
+	for (field = options_def->fields; field->name; field++)
+		size += strlen(field->name) + 3;
+
+	assert(size >= 3);
+
+	buffer = alloca(size);
+	p = buffer;
+	for (field = options_def->fields; field->name; field++)
+		p += sprintf(p, "%s | ", field->name);
+	buffer[size - 3] = 0; /* Eliminate last " | " */
+	pe_expected(buffer);
+}
+
+static struct field_def *find_field(bool *no_prefix, struct context_def *options_def,
+				    const char *name)
+{
+	struct field_def *field;
+	bool ignored_no_prefix;
+
+	if (no_prefix == NULL)
+		no_prefix = &ignored_no_prefix;
+
+	if (!strncmp(name, "no-", 3)) {
+		name += 3;
+		*no_prefix = true;
+	} else {
+		*no_prefix = false;
+	}
+
+	for (field = options_def->fields; field->name; field++) {
+		if (!strcmp(field->name, name))
+			return field;
+	}
+
+	return NULL;
+}
+
+static char *parse_option_value(struct field_def *field_def, bool no_prefix)
+{
+	char *value;
+	int token;
+
+	token = yylex();
+	if (token == ';') {
+		value = strdup(no_prefix ? "no" : "yes");
+	} else {
+		enum check_codes e;
+		if (!field_def->checked_in_postparse) {
+			e = field_def->ops->check(field_def, yytext);
+			if (e != CC_OK)
+				pe_field(field_def, e, yytext);
+		}
+		value = strdup(yytext);
+		EXP(';');
+	}
+
+	return value;
+}
+
 
 /* The syncer section is deprecated. Distribute the options to the disk or net options. */
 void parse_options_syncer(struct d_resource *res)
 {
-	char *opt_name;
+	struct field_def *field_def;
+	bool no_prefix;
+	char *text, *value;
 	int token;
-	enum range_checks rc;
 
 	struct options *options = NULL;
 	c_section_start = line;
@@ -573,156 +580,89 @@ void parse_options_syncer(struct d_resource *res)
 	while (1) {
 		token = yylex();
 		fline = line;
-		if (token >= TK_GLOBAL && !(token & TK_SYNCER_OLD_OPT))
-			pe_expected("a syncer option keyword");
-		token &= ~TK_SYNCER_OLD_OPT;
-		switch (token) {
-		case TK_NET_FLAG:
-		case TK_NET_NO_FLAG:
-		case TK_NET_OPTION:
-			options = &res->net_options;
-			break;
-		case TK_DISK_FLAG:
-		case TK_DISK_NO_FLAG:
-		case TK_DISK_OPTION:
-			options = &res->disk_options;
-			break;
-		case TK_RES_OPTION:
-			options = &res->res_options;
-			break;
-		case '}':
+
+		if (token == '}')
 			return;
-		default:
-			pe_expected("a syncer option keyword");
-		}
-		opt_name = yylval.txt;
-		switch (token) {
-		case TK_NET_FLAG:
-		case TK_DISK_FLAG:
-			token = yylex();
-			switch(token) {
-			case TK_NO:
-				insert_tail(options, new_opt(opt_name, strdup("no")));
-				token = yylex();
-				break;
-			default:
-				insert_tail(options, new_opt(opt_name, strdup("yes")));
-				if (token == TK_YES)
-					token = yylex();
-				break;
+
+		text = check_deprecated_alias(yytext);
+		field_def = find_field(&no_prefix, &show_net_options_ctx, text);
+		if (field_def) {
+			options = &res->net_options;
+		} else {
+			field_def = find_field(&no_prefix, &attach_cmd_ctx, text);
+			if (field_def) {
+				options = &res->disk_options;
+			} else {
+				field_def = find_field(&no_prefix, &resource_options_ctx,
+						       text);
+				if (field_def)
+					options = &res->res_options;
+				else
+					pe_expected("a syncer option keyword");
 			}
-			break;
-		case TK_NET_NO_FLAG:
-		case TK_DISK_NO_FLAG:
-			/* Backward compatibility with the old config file syntax. */
-			assert(!strncmp(opt_name, "no-", 3));
-			insert_tail(options, new_opt(strdup(opt_name + 3), strdup("no")));
-			free(opt_name);
-			token = yylex();
-			break;
-		case TK_NET_OPTION:
-		case TK_DISK_OPTION:
-		case TK_RES_OPTION:
-			check_and_change_deprecated_alias(&opt_name, token);
-			rc = yylval.rc;
-			expect_STRING_or_INT();
-			range_check(rc, opt_name, yylval.txt);
-			insert_tail(options, new_opt(opt_name, yylval.txt));
-			token = yylex();
-			break;
 		}
-		switch (token) {
-		case ';':
-			break;
-		default:
-			pe_expected(";");
-		}
+
+		value = parse_option_value(field_def, no_prefix);
+		insert_tail(options, new_opt((char *)field_def->name, value));
 	}
 }
 
-static struct options parse_options_d(int token_flag, int token_no_flag, int token_option,
-				      int token_delegate, void (*delegate)(void*),
-				      void *ctx)
+static struct options __parse_options(struct context_def *options_def,
+				      void (*delegate)(void*),
+				      void *delegate_context)
 {
-	char *opt_name;
-	int token, token_group;
-	enum range_checks rc;
 	struct options options = STAILQ_HEAD_INITIALIZER(options);
+	struct field_def *field_def;
+	char *value;
+	bool no_prefix;
+	int token;
 
 	c_section_start = line;
 	fline = line;
 
 	while (1) {
-		token_group = yylex();
-		/* Keep the higher bits in token_option, remove them from token. */
-		token = REMOVE_GROUP_FROM_TOKEN(token_group);
-		fline = line;
-		opt_name = yylval.txt;
-		if (token == token_delegate ||
-				GET_TOKEN_GROUP(token_delegate & token_group)) {
-			delegate(ctx);
-			continue;
-		} else if (token == token_flag) {
-			switch(yylex()) {
-			case TK_YES:
-				insert_tail(&options, new_opt(opt_name, strdup("yes")));
-				break;
-			case TK_NO:
-				insert_tail(&options, new_opt(opt_name, strdup("no")));
-				break;
-			case ';':
-				/* Flag value missing; assume yes.  */
-				insert_tail(&options, new_opt(opt_name, strdup("yes")));
-				continue;
-			default:
-				pe_expected("yes | no | ;");
-			}
-		} else if (token == token_no_flag) {
-			/* Backward compatibility with the old config file syntax. */
-			assert(!strncmp(opt_name, "no-", 3));
-			insert_tail(&options, new_opt(strdup(opt_name + 3), strdup("no")));
-			free(opt_name);
-		} else if (token == token_option ||
-				GET_TOKEN_GROUP(token_option & token_group)) {
-			check_and_change_deprecated_alias(&opt_name, token_option);
-			rc = yylval.rc;
-			expect_STRING_or_INT();
-			range_check(rc, opt_name, yylval.txt);
-			insert_tail(&options, new_opt(opt_name, yylval.txt));
-		} else if (token == TK_DEPRECATED_OPTION) {
-			/* err("Warn: Ignoring deprecated option '%s'\n", yylval.txt); */
-			expect_STRING_or_INT();
-		} else if (token == '}') {
+		token = yylex();
+		if (token == '}')
 			return options;
-		} else {
-			pe_expected("an option keyword");
+
+		field_def = find_field(&no_prefix, options_def, yytext);
+		if (!field_def) {
+			if (delegate) {
+				delegate(delegate_context);
+				continue;
+			} else {
+				pe_options(options_def);
+			}
 		}
-		EXP(';');
+
+		value = parse_option_value(field_def, no_prefix);
+		insert_tail(&options, new_opt((char *)field_def->name, value));
 	}
 }
 
-static struct options parse_options(int token_flag, int token_no_flag, int token_option)
+static struct options parse_options(struct context_def *options_def)
 {
-	return parse_options_d(token_flag, token_no_flag, token_option, 0, NULL, NULL);
+	return __parse_options(options_def, NULL, NULL);
 }
 
-static void insert_options_delegate(void *ctx)
+static void insert_pd_options_delegate(void *ctx)
 {
 	struct options *options = ctx;
-	char *opt_name = yylval.txt;
-	enum range_checks rc;
+	struct field_def *field_def;
+	bool no_prefix;
+	char *value;
 
-	rc = yylval.rc;
-	expect_STRING_or_INT();
-	range_check(rc, opt_name, yylval.txt);
-	insert_tail(options, new_opt(opt_name, yylval.txt));
-	EXP(';');
+	field_def = find_field(&no_prefix, &peer_device_options_ctx, yytext);
+	if (!field_def)
+		pe_options(&peer_device_options_ctx);
+	value = parse_option_value(field_def, no_prefix);
+	insert_tail(options, new_opt((char *)field_def->name, value));
 }
 
 static void parse_disk_options(struct options *disk_options, struct options *peer_device_options)
 {
-	*disk_options = parse_options_d(TK_DISK_FLAG, TK_DISK_NO_FLAG, TK_DISK_OPTION,
-					TK_PEER_DEVICE, insert_options_delegate,
+	*disk_options = __parse_options(&attach_cmd_ctx,
+					insert_pd_options_delegate,
 					peer_device_options);
 }
 
@@ -754,6 +694,8 @@ static void __parse_address(struct d_address *a)
 	default:
 		pe_expected("ssocks | sdp | ipv4 | ipv6 | <ipv4 address> ");
 	}
+
+	assert(a->af != NULL);
 
 	a->addr = yylval.txt;
 	if (!strcmp(a->af, "ipv6"))
@@ -1199,9 +1141,7 @@ static void parse_host_section(struct d_resource *res,
 			break;
 		case TK_OPTIONS:
 			EXP('{');
-			host->res_options = parse_options(TK_RES_FLAG,
-							  0,
-							  TK_RES_OPTION);
+			host->res_options = parse_options(&resource_options_ctx);
 			break;
 		case TK_SKIP:
 			parse_skip();
@@ -1390,8 +1330,8 @@ static int parse_proxy_options(struct options *proxy_options, struct options *pr
 	struct options opts;
 
 	EXP('{');
-	opts = parse_options_d(0, 0, TK_PROXY_OPTION | TK_PROXY_GROUP,
-			       TK_PROXY_DELEGATE, proxy_delegate, proxy_plugins);
+	opts = __parse_options(&proxy_options_ctx,
+			       proxy_delegate, proxy_plugins);
 
 	if (proxy_options)
 		*proxy_options = opts;
@@ -1414,7 +1354,7 @@ int parse_proxy_options_section(struct d_proxy_info **pp)
 	return parse_proxy_options(&proxy->options, &proxy->plugins);
 }
 
-static struct hname_address *parse_hname_address_pair(struct connection *conn, int prev_token)
+static struct hname_address *parse_hname_address_pair(struct path *path, int prev_token)
 {
 	struct hname_address *ha;
 	int token;
@@ -1429,11 +1369,11 @@ static struct hname_address *parse_hname_address_pair(struct connection *conn, i
 		goto parse_address;
 	case TK__THIS_HOST:
 		ha->name = "_this_host";
-		conn->my_address = &ha->address;
+		path->my_address = &ha->address;
 		goto parse_address;
 	case TK__REMOTE_HOST:
 		ha->name = "_remote_host";
-		conn->connect_to = &ha->address;
+		path->connect_to = &ha->address;
 		goto parse_address;
 	default:
 		assert(0);
@@ -1486,7 +1426,7 @@ struct connection *alloc_connection()
 		err("calloc: %m\n");
 		exit(E_EXEC_ERROR);
 	}
-	STAILQ_INIT(&conn->hname_address_pairs);
+	STAILQ_INIT(&conn->paths);
 	STAILQ_INIT(&conn->net_options);
 	STAILQ_INIT(&conn->peer_devices);
 	STAILQ_INIT(&conn->pd_options);
@@ -1524,10 +1464,96 @@ static struct peer_device *parse_peer_device(int vnr)
 	EXP('{');
 	EXP(TK_DISK);
 	EXP('{');
-	peer_device->pd_options = parse_options(0, 0, TK_PEER_DEVICE);
+	peer_device->pd_options = parse_options(&peer_device_options_ctx);
 	EXP('}');
 
 	return peer_device;
+}
+
+static struct d_host_info *parse_peer_node_id(void)
+{
+	struct d_host_info *host;
+
+	host = calloc(1,sizeof(struct d_host_info));
+	STAILQ_INIT(&host->res_options);
+	STAILQ_INIT(&host->volumes);
+	STAILQ_INIT(&host->on_hosts);
+
+	host->config_line = c_section_start;
+	host->implicit = 1;
+	host->require_minor = 0;
+
+	EXP(TK_INTEGER);
+	range_check(R_NODE_ID, "node-id", yylval.txt);
+	host->node_id = yylval.txt;
+	EXP(';');
+
+	return host;
+}
+
+struct path *alloc_path()
+{
+	struct path *path;
+
+	path = calloc(1, sizeof(struct path));
+	if (path == NULL) {
+		err("calloc: %m\n");
+		exit(E_EXEC_ERROR);
+	}
+	STAILQ_INIT(&path->hname_address_pairs);
+
+	return path;
+}
+
+static struct path *path0(struct connection *conn)
+{
+	struct path *path = STAILQ_FIRST(&conn->paths);
+
+	if (!path) {
+		path = alloc_path();
+		path->implicit = true;
+		path->config_line = line;
+
+		insert_tail(&conn->paths, path);
+	} else {
+		if (!path->implicit) {
+			config_valid = 0;
+			err("%s:%d: Explicit and implicit paths not allowed\n",
+			    config_file, line);
+		}
+	}
+	return path;
+}
+
+static struct path *parse_path()
+{
+	struct path *path;
+	int hosts = 0, token;
+
+	path = alloc_path();
+	path->config_line = line;
+
+	EXP('{');
+	while (1) {
+		token = yylex();
+		switch(token) {
+		case TK_ADDRESS:
+		case TK_HOST:
+		case TK__THIS_HOST:
+		case TK__REMOTE_HOST:
+			insert_tail(&path->hname_address_pairs, parse_hname_address_pair(path, token));
+			if (++hosts >= 3) {
+				err("%s:%d: only two 'host' keywords per path allowed\n",
+				    config_file, fline);
+				config_valid = 0;
+			}
+			break;
+		case '}':
+			return path;
+		default:
+			pe_expected_got( "host | }", token);
+		}
+	}
 }
 
 static struct connection *parse_connection(enum pr_flags flags)
@@ -1535,6 +1561,7 @@ static struct connection *parse_connection(enum pr_flags flags)
 	struct connection *conn;
 	struct peer_device *peer_device;
 	int hosts = 0, token;
+	struct path *path;
 
 	conn = alloc_connection();
 	conn->config_line = line;
@@ -1557,12 +1584,16 @@ static struct connection *parse_connection(enum pr_flags flags)
 		case TK_HOST:
 		case TK__THIS_HOST:
 		case TK__REMOTE_HOST:
-			insert_tail(&conn->hname_address_pairs, parse_hname_address_pair(conn, token));
+			path = path0(conn);
+			insert_tail(&path->hname_address_pairs, parse_hname_address_pair(path, token));
 			if (++hosts >= 3) {
 				err("%s:%d: only two 'host' keywords per connection allowed\n",
 				    config_file, fline);
 				config_valid = 0;
 			}
+			break;
+		case TK__PEER_NODE_ID:
+			conn->peer = parse_peer_node_id();
 			break;
 		case TK_NET:
 			if (!STAILQ_EMPTY(&conn->net_options)) {
@@ -1571,21 +1602,28 @@ static struct connection *parse_connection(enum pr_flags flags)
 				config_valid = 0;
 			}
 			EXP('{');
-			conn->net_options = parse_options_d(TK_NET_FLAG, TK_NET_NO_FLAG, TK_NET_OPTION,
-							    TK_NET_DELEGATE, &net_delegate, (void *)flags);
+			conn->net_options = __parse_options(&show_net_options_ctx,
+							    &net_delegate, (void *)flags);
 			break;
 		case TK_SKIP:
 			parse_skip();
 			break;
 		case TK_DISK:
 			EXP('{');
-			conn->pd_options = parse_options(0, 0, TK_PEER_DEVICE);
+			conn->pd_options = parse_options(&peer_device_options_ctx);
 			break;
 		case TK_VOLUME:
 			EXP(TK_INTEGER);
 			peer_device = parse_peer_device(atoi(yylval.txt));
 			peer_device->connection = conn;
 			STAILQ_INSERT_TAIL(&conn->peer_devices, peer_device, connection_link);
+			break;
+		case TK__IS_STANDALONE:
+			conn->is_standalone = 1;
+			EXP(';');
+			break;
+		case TK_PATH:
+			insert_tail(&conn->paths, parse_path());
 			break;
 		case '}':
 			return conn;
@@ -1597,32 +1635,34 @@ static struct connection *parse_connection(enum pr_flags flags)
 
 void parse_connection_mesh(struct d_resource *res, enum pr_flags flags)
 {
+	struct mesh *mesh;
 	int token;
 
 	EXP('{');
+	mesh = calloc(1, sizeof(struct mesh));
+	STAILQ_INIT(&mesh->hosts);
+	STAILQ_INIT(&mesh->net_options);
+
 	while (1) {
 		token = yylex();
 		switch(token) {
 		case TK_HOSTS:
-			if (!STAILQ_EMPTY(&res->mesh)) {
-				err("%s:%d: only one 'connection-mesh' keyword is allowed\n",
-				    config_file, fline);
-				config_valid = 0;
-			}
-			parse_hosts(&res->mesh, ';');
+			parse_hosts(&mesh->hosts, ';');
 			break;
 		case TK_NET:
-			if (!STAILQ_EMPTY(&res->mesh_net_options)) {
+			if (!STAILQ_EMPTY(&mesh->net_options)) {
 				err("%s:%d: only one 'net' section allowed\n",
 				    config_file, fline);
 				config_valid = 0;
 			}
 			EXP('{');
-			res->mesh_net_options =
-				parse_options_d(TK_NET_FLAG, TK_NET_NO_FLAG, TK_NET_OPTION,
-						TK_NET_DELEGATE, &net_delegate, (void *)flags);
+			mesh->net_options =
+				__parse_options(&show_net_options_ctx,
+						&net_delegate,
+						(void *)flags);
 			break;
 		case '}':
+			insert_tail(&res->meshes, mesh);
 			return;
 		default:
 			pe_expected_got( "hosts | net | }", token);
@@ -1632,10 +1672,11 @@ void parse_connection_mesh(struct d_resource *res, enum pr_flags flags)
 
 struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 {
+	struct field_def *proto_f;
+	char *proto_v;
 	struct d_resource* res;
 	struct names host_names;
 	struct options options;
-	char *opt_name;
 	int token;
 
 	check_upr_init();
@@ -1653,8 +1694,7 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 	STAILQ_INIT(&res->handlers);
 	STAILQ_INIT(&res->proxy_options);
 	STAILQ_INIT(&res->proxy_plugins);
-	STAILQ_INIT(&res->mesh);
-	STAILQ_INIT(&res->mesh_net_options);
+	STAILQ_INIT(&res->meshes);
 	res->name = res_name;
 	res->config_file = config_save;
 	res->start_line = line;
@@ -1663,15 +1703,13 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		token = yylex();
 		fline = line;
 		switch(token) {
-		case TK_NET_OPTION:
+		case TK_STRING:
 			if (strcmp(yylval.txt, "protocol"))
 				goto goto_default;
 			check_upr("protocol statement","%s: protocol",res->name);
-			opt_name = yylval.txt;
-			EXP(TK_STRING);
-			range_check(R_PROTOCOL, opt_name, yylval.txt);
-			insert_tail(&res->net_options, new_opt(opt_name, yylval.txt));
-			EXP(';');
+			proto_f = find_field(NULL, &net_options_ctx, yylval.txt);
+			proto_v = parse_option_value(proto_f, false);
+			insert_tail(&res->net_options, new_opt((char *)proto_f->name, proto_v));
 			break;
 		case TK_ON:
 			STAILQ_INIT(&host_names);
@@ -1711,8 +1749,9 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		case TK_NET:
 			check_upr("net section", "%s:net", res->name);
 			EXP('{');
-			options = parse_options_d(TK_NET_FLAG, TK_NET_NO_FLAG, TK_NET_OPTION,
-						  TK_NET_DELEGATE, &net_delegate, (void *)flags);
+			options = __parse_options(&show_net_options_ctx,
+						  &net_delegate, (void *)flags);
+
 			STAILQ_CONCAT(&res->net_options, &options);
 			break;
 		case TK_SYNCER:
@@ -1723,17 +1762,14 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		case TK_STARTUP:
 			check_upr("startup section", "%s:startup", res->name);
 			EXP('{');
-			res->startup_options = parse_options_d(TK_STARTUP_FLAG,
-							       0,
-							       TK_STARTUP_OPTION,
-							       TK_STARTUP_DELEGATE,
+			res->startup_options = __parse_options(&startup_options_ctx,
 							       &startup_delegate,
 							       res);
 			break;
 		case TK_HANDLER:
 			check_upr("handlers section", "%s:handlers", res->name);
 			EXP('{');
-			res->handlers =  parse_options(0, 0, TK_HANDLER_OPTION);
+			res->handlers = parse_options(&handlers_ctx);
 			break;
 		case TK_PROXY:
 			check_upr("proxy section", "%s:proxy", res->name);
@@ -1752,7 +1788,7 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 		case TK_OPTIONS:
 			check_upr("resource options section", "%s:res_options", res->name);
 			EXP('{');
-			options = parse_options(TK_RES_FLAG, 0, TK_RES_OPTION);
+			options = parse_options(&resource_options_ctx);
 			STAILQ_CONCAT(&res->res_options, &options);
 			break;
 		case TK_CONNECTION:
@@ -1760,6 +1796,9 @@ struct d_resource* parse_resource(char* res_name, enum pr_flags flags)
 			break;
 		case TK_CONNECTION_MESH:
 			parse_connection_mesh(res, flags);
+			break;
+		case TK_TEMPLATE_FILE:
+			res->template = template_file(res_name);
 			break;
 		case TK_SKIP:
 			parse_skip();
@@ -1808,43 +1847,132 @@ struct d_resource* parse_resource_for_adjust(const struct cfg_ctx *ctx)
 	return parse_resource(ctx->res->name, PARSE_FOR_ADJUST);
 }
 
-void include_stmt(char *str)
+/* Returns the "previous" count, ie. 0 if this file wasn't seen before. */
+int was_file_already_seen(char *fn)
+{
+	ENTRY e, *ep;
+	char *real_path;
+
+	real_path = realpath(fn, NULL);
+	if (!real_path)
+		real_path = fn;
+
+	ep = NULL;
+	e.key = real_path;
+	e.data = real_path;
+	hsearch_r(e, FIND, &ep, &global_htable);
+	if (ep) {
+		/* Can be freed, it's just a queried key. */
+		if (real_path != fn)
+			free(real_path);
+		return 1;
+	}
+
+	e.key = real_path;
+	e.data = real_path;
+	hsearch_r(e, ENTER, &ep, &global_htable);
+	if (!ep) {
+		err("hash table entry (%s => %s) failed\n", e.key, (char *)e.data);
+		exit(E_THINKO);
+	}
+
+
+	/* Must not be freed, because it's still referenced by the hash table. */
+	/* free(real_path); */
+
+	return 0;
+}
+
+/* In order to allow relative paths in include statements we change
+ * directory to the location of the current configuration file.
+ * Before we start parsing, we canonicalize the full path name stored in
+ * config_save, which means config_save always contains at least one slash.
+ * Unless we are currently parsing STDIN (then it is the fixed string STDIN).
+ */
+static int pushd_to_current_config_file_unless_stdin(void)
 {
 	char *last_slash, *tmp;
+
+	/* config_save was canonicalized before, unless it is STDIN */
+	tmp = strdupa(config_save);
+	last_slash = strrchr(tmp, '/');
+	if (!last_slash)
+		/* Currently parsing stdin, stay where we are.
+		 * FIXME introduce DRBD_INCLUDE_PATH?
+		 * I don't feel comfortable "trusting" the current directory
+		 * for relative include file paths.
+		 */
+		return -1;
+
+	/* If last_slash == tmp, config_save is in the top level directory. */
+	if (last_slash == tmp)
+		tmp = "/";
+	else
+		*last_slash = 0;
+
+	return pushd(tmp);
+}
+
+static struct d_resource *template_file(const char *res_name)
+{
+	struct d_resource *template = NULL;
+	char *file_name;
+	FILE *f;
+	int cwd;
+
+	cwd = pushd_to_current_config_file_unless_stdin();
+
+	EXP(TK_STRING);
+	file_name = yylval.txt;
+	EXP(';');
+
+	f = fopen(file_name, "re");
+	if (f) {
+		struct include_file_buffer buffer;
+		char *tn = ssprintf("template-%s", res_name);
+
+		save_parse_context(&buffer, f, file_name);
+
+		EXP(TK_COMMON);
+		EXP('{');
+		template = parse_resource(tn, NO_HOST_SECT_ALLOWED);
+
+		restore_parse_context(&buffer);
+		fclose(f);
+	} else {
+		err("%s:%d: Failed to open template file '%s'.\n",
+		    config_save, line, file_name);
+		config_valid = 0;
+	}
+
+	popd(cwd);
+
+	return template;
+}
+
+void include_stmt(char *str)
+{
 	glob_t glob_buf;
-	int cwd_fd;
+	int cwd;
 	FILE *f;
 	size_t i;
 	int r;
 
-	/* in order to allow relative paths in include statements we change
-	   directory to the location of the current configuration file. */
-	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
-	if (cwd_fd < 0) {
-		err("open(\".\") failed: %m\n");
-		exit(E_USAGE);
-	}
-
-	tmp = strdupa(config_save);
-	last_slash = strrchr(tmp, '/');
-	if (last_slash)
-		*last_slash = 0;
-
-	if (chdir(tmp)) {
-		err("chdir(\"%s\") failed: %m\n", tmp);
-		exit(E_USAGE);
-	}
+	cwd = pushd_to_current_config_file_unless_stdin();
 
 	r = glob(str, 0, NULL, &glob_buf);
 	if (r == 0) {
 		for (i=0; i<glob_buf.gl_pathc; i++) {
+			if (was_file_already_seen(glob_buf.gl_pathv[i]))
+				continue;
+
 			f = fopen(glob_buf.gl_pathv[i], "re");
 			if (f) {
 				include_file(f, strdup(glob_buf.gl_pathv[i]));
 				fclose(f);
 			} else {
 				err("%s:%d: Failed to open include file '%s'.\n",
-				    config_file, line, yylval.txt);
+				    config_save, line, yylval.txt);
 				config_valid = 0;
 			}
 		}
@@ -1852,7 +1980,7 @@ void include_stmt(char *str)
 	} else if (r == GLOB_NOMATCH) {
 		if (!strchr(str, '?') && !strchr(str, '*') && !strchr(str, '[')) {
 			err("%s:%d: Failed to open include file '%s'.\n",
-			    config_file, line, yylval.txt);
+			    config_save, line, yylval.txt);
 			config_valid = 0;
 		}
 	} else {
@@ -1860,12 +1988,7 @@ void include_stmt(char *str)
 		exit(E_USAGE);
 	}
 
-	if (fchdir(cwd_fd) < 0) {
-		err("fchdir() failed: %m\n");
-		exit(E_USAGE);
-	}
-
-	close(cwd_fd);
+	popd(cwd);
 }
 
 void my_parse(void)
@@ -1875,6 +1998,10 @@ void my_parse(void)
 		check_uniq_init();
 		global_htable_init = 1;
 	}
+
+	/* Remember that we're reading that file. */
+	was_file_already_seen(config_file);
+
 
 	while (1) {
 		int token = yylex();

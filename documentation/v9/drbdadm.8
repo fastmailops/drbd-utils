@@ -57,7 +57,8 @@ for all defined resources\&.
 .PP
 \fIdevice\fR
 .RS 4
-A device, specified by minor number (\fBminor\-\fR\fIminor\fR) or by resource and volume number (\fIresource\fR/\fIvolume\fR)\&. If only a
+A device, specified by minor number (\fBminor\-\fR\fIminornumber\fR, e\&.g\&.
+\fBminor\-\fR\fI0\fR) or by resource and volume number (\fIresource\fR/\fIvolume\fR)\&. If only a
 \fIresource\fR
 is specified, the command iterates over all devices of that resource\&.
 .RE
@@ -179,7 +180,11 @@ command can succeed\&.
 connect {\fIconnection\fR}
 .RS 4
 .\" drbdadm: connect
-Connect a resource to a peer host\&. See
+Activate an exisiting connection to a peer\&. The connection needs to be created first with the
+\fBnew\-peer\fR
+command, and have at least one path created with the
+\fBnew\-path\fR
+command\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
 .RE
@@ -204,16 +209,6 @@ detach {\fIdevice\fR}
 .RS 4
 .\" drbdadm: detach
 Detach the lower\-level device of a replicated device\&. See
-\fBdrbdsetup\fR(8)
-for details\&.
-.RE
-.PP
-direct\-connect {\fIresource\fR}
-.RS 4
-.\" drbdadm: direct-connect
-Bring up the specified resource, but skip proxy\&. This command is similar to
-\fBup\fR
-and is mainly meant for (proxy) developers to ease debugging\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
 .RE

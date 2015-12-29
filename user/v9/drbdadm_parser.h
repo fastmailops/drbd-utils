@@ -26,34 +26,10 @@
 
 enum range_checks
 {
-	R_NO_CHECK,
 	R_MINOR_COUNT,
 	R_DIALOG_REFRESH,
-	R_DISK_SIZE,
-	R_TIMEOUT,
-	R_CONNECT_INT,
-	R_PING_INT,
-	R_MAX_BUFFERS,
-	R_MAX_EPOCH_SIZE,
-	R_SNDBUF_SIZE,
-	R_RCVBUF_SIZE,
-	R_KO_COUNT,
-	R_RATE,
-	R_GROUP,
-	R_AL_EXTENTS,
 	R_PORT,
 	R_META_IDX,
-	R_WFC_TIMEOUT,
-	R_DEGR_WFC_TIMEOUT,
-	R_OUTDATED_WFC_TIMEOUT,
-	R_C_PLAN_AHEAD,
-	R_C_DELAY_TARGET,
-	R_C_FILL_TARGET,
-	R_C_MAX_RATE,
-	R_C_MIN_RATE,
-	R_CONG_FILL,
-	R_CONG_EXTENTS,
-	R_PROTOCOL,
 	R_NODE_ID,
 };
 
@@ -83,30 +59,18 @@ enum yytokentype {
 	TK_INTEGER,
 	TK_STRING,
 	TK_ELSE,
-	TK_DISK_FLAG,
-	TK_DISK_NO_FLAG,
-	TK_DISK_OPTION,
-	TK_NET_FLAG,
-	TK_NET_NO_FLAG,
-	TK_NET_OPTION,
-	TK_SYNCER_FLAG,
-	TK_SYNCER_OPTION,
-	TK_STARTUP_FLAG,
-	TK_STARTUP_OPTION,
-	TK_STARTUP_DELEGATE,
-	TK_HANDLER_OPTION,
 	TK_USAGE_COUNT,
 	TK_ASK,
 	TK_YES,
 	TK_NO,
 	TK__THIS_HOST,
 	TK__REMOTE_HOST,
+	TK__PEER_NODE_ID,
+	TK__IS_STANDALONE,
 	TK_PROXY,
 	TK_INSIDE,
 	TK_OUTSIDE,
 	TK_MEMLIMIT,
-	TK_PROXY_OPTION,
-	TK_PROXY_DELEGATE,
 	TK_ERR_STRING_TOO_LONG,
 	TK_ERR_DQSTRING_TOO_LONG,
 	TK_ERR_DQSTRING,
@@ -116,17 +80,13 @@ enum yytokentype {
 	TK_IPV4,
 	TK_IPV6,
 	TK_IPADDR6,
-	TK_NET_DELEGATE,
 	TK_INCLUDE,
 	TK_BWLIMIT,
 	TK_FLOATING,
-	TK_DEPRECATED_OPTION,
 	TK_VOLUME,
 	TK_CMD_TIMEOUT_SHORT,
 	TK_CMD_TIMEOUT_MEDIUM,
 	TK_CMD_TIMEOUT_LONG,
-	TK_RES_OPTION,
-	TK_RES_FLAG,
 	TK_OPTIONS,
 	TK_CONNECTION,
 	TK_HOST,
@@ -134,19 +94,12 @@ enum yytokentype {
 	TK_CONNECTION_MESH,
 	TK_HOSTS,
 	TK_VIA,
-	TK__GROUPING_BASE = 0x1000,
-	TK_SYNCER_OLD_OPT = 0x2000, /* Might be or'ed to TK_[NET|DISK]_[OPTION|SWITCH] */
-	TK_PROXY_GROUP =    0x3000, /* Gets or'ed to some options */
-	TK_PEER_DEVICE =    0x4000, /* A peer_device option */
+	TK_TEMPLATE_FILE,
+	TK_PATH,
 };
-
-/* The higher bits define one or more token groups. */
-#define GET_TOKEN_GROUP(__x)         ((__x) & ~(TK__GROUPING_BASE - 1))
-#define REMOVE_GROUP_FROM_TOKEN(__x) ((__x) &  (TK__GROUPING_BASE - 1))
 
 typedef struct YYSTYPE {
 	char* txt;
-	enum range_checks rc;
 } YYSTYPE;
 
 #define yystype YYSTYPE /* obsolescent; will be withdrawn */
@@ -156,6 +109,8 @@ typedef struct YYSTYPE {
 extern yystype yylval;
 extern char* yytext;
 extern FILE* yyin;
+
+void my_parse(void);
 
 /* avoid compiler warnings about implicit declaration */
 int yylex(void);
