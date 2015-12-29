@@ -87,6 +87,21 @@ static FILE *m_popen(int *pid,char** argv)
 	return fdopen(pipes[0],"r");
 }
 
+__attribute__((format(printf, 2, 3)))
+void report_compare(bool differs, const char *fmt, ...)
+{
+	va_list ap;
+	if (verbose <= (3 - differs))
+		return;
+	if (differs)
+		fprintf(stderr, " [ne] ");
+	else
+		fprintf(stderr, " [eq] ");
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+}
+
 struct field_def *field_def_of(const char *opt_name, struct context_def *ctx)
 {
 	struct field_def *field;
@@ -104,14 +119,14 @@ static int is_equal(struct context_def *ctx, struct d_option *a, struct d_option
 {
 	struct field_def *field = field_def_of(a->name, ctx);
 
-	return field->is_equal(field, a->value, b->value);
+	return field->ops->is_equal(field, a->value, b->value);
 }
 
 static bool is_default(struct context_def *ctx, struct d_option *opt)
 {
 	struct field_def *field = field_def_of(opt->name, ctx);
 
-	return field->is_default(field, opt->value);
+	return field->ops->is_default(field, opt->value);
 }
 
 static int opts_equal(struct context_def *ctx, struct options *conf, struct options *run_base)
@@ -168,11 +183,11 @@ opt_equal(struct context_def *ctx, const char *opt_name, struct options *conf, s
 	struct d_option *run_opt = find_opt(run_base, opt_name);
 
 	if (opt && run_opt)
-		return field->is_equal(field, opt->value, run_opt->value);
+		return field->ops->is_equal(field, opt->value, run_opt->value);
 	else if (opt)
-		return field->is_default(field, opt->value);
+		return field->ops->is_default(field, opt->value);
 	else if (run_opt)
-		return field->is_default(field, run_opt->value);
+		return field->ops->is_default(field, run_opt->value);
 
 	return 1; /* Both not set */
 }
@@ -184,6 +199,45 @@ static int addr_equal(struct d_address *a1, struct d_address *a2)
 		!strcmp(a1->af, a2->af);
 }
 
+static struct path *find_path_by_addrs(struct connection *conn, struct path *pattern)
+{
+	struct path *path;
+
+	for_each_path(path, &conn->paths) {
+		if (addr_equal(path->my_address, pattern->my_address) &&
+		    addr_equal(path->connect_to, pattern->connect_to))
+			return path;
+	}
+
+	return NULL;
+}
+
+static int adjust_paths(const struct cfg_ctx *ctx, struct connection *running_conn)
+{
+	struct connection *configured_conn = ctx->conn;
+	struct path *configured_path, *running_path;
+	struct cfg_ctx tmp_ctx = *ctx;
+
+	for_each_path(configured_path, &configured_conn->paths) {
+		running_path = find_path_by_addrs(running_conn, configured_path);
+		if (!running_path) {
+			tmp_ctx.path = configured_path;
+			schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+		} else {
+			running_path->adj_seen = 1;
+		}
+	}
+
+	for_each_path(running_path, &running_conn->paths) {
+		if (!running_path->adj_seen) {
+			tmp_ctx.path = running_path;
+			schedule_deferred_cmd(&del_path_cmd, &tmp_ctx, CFG_NET_PREP_DOWN);
+		}
+	}
+
+	return 1;
+}
+
 static struct connection *matching_conn(struct connection *pattern, struct connections *pool)
 {
 	struct connection *conn;
@@ -191,8 +245,7 @@ static struct connection *matching_conn(struct connection *pattern, struct conne
 	for_each_connection(conn, pool) {
 		if (conn->ignore)
 			continue;
-		if (addr_equal(pattern->my_address, conn->my_address) &&
-		    addr_equal(pattern->connect_to, conn->connect_to))
+		if (!strcmp(pattern->peer->node_id, conn->peer->node_id))
 			return conn;
 	}
 
@@ -211,15 +264,26 @@ static int disk_equal(struct d_volume *conf, struct d_volume *running)
 
 	if (conf->disk == NULL && running->disk == NULL)
 		return 1;
-	if (conf->disk == NULL || running->disk == NULL)
+	if (conf->disk == NULL) {
+		report_compare(1, "minor %u (vol:%u) %s missing from config\n",
+			running->device_minor, running->vnr, running->disk);
 		return 0;
+	} else if (running->disk == NULL) {
+		report_compare(1, "minor %u (vol:%u) %s missing from kernel\n",
+			conf->device_minor, conf->vnr, conf->disk);
+		return 0;
+	}
 
-	eq &= !strcmp(conf->disk, running->disk);
-	eq &= int_eq(conf->meta_disk, running->meta_disk);
-	if (!strcmp(conf->meta_disk, "internal"))
-		return eq;
-	eq &= !strcmp(conf->meta_disk, running->meta_disk);
-
+	eq = !strcmp(conf->disk, running->disk);
+	report_compare(!eq, "minor %u (vol:%u) disk: r=%s c=%s\n",
+		running->device_minor, running->vnr, running->disk, conf->disk);
+	if (eq) {
+		eq = int_eq(conf->meta_disk, running->meta_disk);
+		if (eq && strcmp(conf->meta_disk, "internal") != 0)
+			eq = !strcmp(conf->meta_disk, running->meta_disk);
+	}
+	report_compare(!eq, "minor %u (vol:%u) meta-disk: r=%s c=%s\n",
+		running->device_minor, running->vnr, running->meta_disk, conf->meta_disk);
 	return eq;
 }
 
@@ -299,6 +363,8 @@ static int proxy_reconf(const struct cfg_ctx *ctx, struct connection *running_co
 {
 	int reconn = 0;
 	struct connection *conn = ctx->conn;
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
+	struct path *running_path = STAILQ_FIRST(&running_conn->paths); /* multiple paths via proxy, later! */
 	struct d_option* res_o, *run_o;
 	unsigned long long v1, v2, minimum;
 	char *plugin_changes[MAX_PLUGINS], *cp, *conn_name;
@@ -313,8 +379,8 @@ static int proxy_reconf(const struct cfg_ctx *ctx, struct connection *running_co
 	if (!running_conn)
 		goto redo_whole_conn;
 
-	res_o = find_opt(&conn->my_proxy->options, "memlimit");
-	run_o = find_opt(&running_conn->my_proxy->options, "memlimit");
+	res_o = find_opt(&path->my_proxy->options, "memlimit");
+	run_o = find_opt(&running_path->my_proxy->options, "memlimit");
 	v1 = res_o ? m_strtoll(res_o->value, 1) : 0;
 	v2 = run_o ? m_strtoll(run_o->value, 1) : 0;
 	minimum = v1 < v2 ? v1 : v2;
@@ -327,9 +393,9 @@ redo_whole_conn:
 		/* As the memory is in use while the connection is allocated we have to
 		 * completely destroy and rebuild the connection. */
 
-		schedule_deferred_cmd(&proxy_conn_down_cmd, ctx, CFG_NET_PREREQ);
-		schedule_deferred_cmd(&proxy_conn_up_cmd, ctx, CFG_NET_PREREQ);
-		schedule_deferred_cmd(&proxy_conn_plugins_cmd, ctx, CFG_NET_PREREQ);
+		schedule_deferred_cmd(&proxy_conn_down_cmd, ctx, CFG_NET_PREP_DOWN);
+		schedule_deferred_cmd(&proxy_conn_up_cmd, ctx, CFG_NET_PREP_UP);
+		schedule_deferred_cmd(&proxy_conn_plugins_cmd, ctx, CFG_NET_PREP_UP);
 
 		/* With connection cleanup and reopen everything is rebuild anyway, and
 		 * DRBD will get a reconnect too.  */
@@ -337,10 +403,10 @@ redo_whole_conn:
 	}
 
 
-	res_o = STAILQ_FIRST(&conn->my_proxy->plugins);
-	run_o = STAILQ_FIRST(&running_conn->my_proxy->plugins);
+	res_o = STAILQ_FIRST(&path->my_proxy->plugins);
+	run_o = STAILQ_FIRST(&running_path->my_proxy->plugins);
 	used = 0;
-	conn_name = proxy_connection_name(ctx);
+	conn_name = proxy_connection_name(ctx->res, running_conn);
 	for(i=0; i<MAX_PLUGINS; i++)
 	{
 		if (used >= sizeof(plugin_changes)-1) {
@@ -465,30 +531,32 @@ void compare_size(struct d_volume *conf, struct d_volume *kern)
 	/* size options differ */
 	if (k && c && !is_equal(&attach_cmd_ctx, c, k))
 		conf->adj_resize = 1;
+
+	report_compare(conf->adj_resize, "minor %u (vol:%u) size: r=%s c=%s\n",
+		conf->device_minor, conf->vnr,
+		k ? k->value : "-", c ? c->value : "-");
 }
 
 void compare_volume(struct d_volume *conf, struct d_volume *kern)
 {
-	/* Special case "size", we need to issue a resize command to change that.
-	 * Move both options to the head of the disk_options list,
-	 * so we can easily skip them in the opts_equal, later.
-	 */
-
 	conf->adj_new_minor = conf->device_minor != kern->device_minor;
+	/* Why only del-minor if attached?
+	 * Don't we need to always del-minor, and optionally detach first? */
 	conf->adj_del_minor = conf->adj_new_minor && kern->disk;
 
+	if (conf->adj_new_minor)
+		report_compare(1, "vol:%u minor differs: r=%u c=%u\n",
+			conf->vnr, kern->device_minor, conf->device_minor);
+
 	if (!disk_equal(conf, kern)) {
-		if (conf->disk && kern->disk) {
-			conf->adj_attach = 1;
-			conf->adj_detach = 1;
-		} else {
-			conf->adj_attach = conf->disk != NULL;
-			conf->adj_detach = kern->disk != NULL;
-		}
+		conf->adj_attach = conf->disk != NULL;
+		conf->adj_detach = kern->disk != NULL;
 	}
 
-	/* do we need to resize? */
-	compare_size(conf, kern);
+	/* Do we need to resize?
+	 * Though, if we are already going to attach, skip the resize. */
+	if (!conf->adj_attach)
+		compare_size(conf, kern);
 
 	/* is it sufficient to only adjust the disk options? */
 	if (!(conf->adj_detach || conf->adj_attach) && conf->disk)
@@ -536,11 +604,16 @@ void compare_volumes(struct volumes *conf_head, struct volumes *kern_head)
 	while (conf || kern) {
 		if (kern && (conf == NULL || kern->vnr < conf->vnr)) {
 			insert_volume(&to_be_deleted, new_to_be_deleted_minor_from_template(kern));
+			if (verbose > 2)
+				err("Deleting minor %u (vol:%u) from kernel, not in config\n",
+					kern->device_minor, kern->vnr);
 			kern = STAILQ_NEXT(kern, link);
 		} else if (conf && (kern == NULL || kern->vnr > conf->vnr)) {
 			conf->adj_new_minor = 1;
 			if (conf->disk)
 				conf->adj_attach = 1;
+			if (verbose > 2)
+				err("New minor %u (vol:%u)\n", conf->device_minor, conf->vnr);
 			conf = STAILQ_NEXT(conf, link);
 		} else {
 			ASSERT(conf);
@@ -584,6 +657,41 @@ adjust_peer_devices(const struct cfg_ctx *ctx, struct connection *conn, struct c
 		}
 		if (!opts_equal(oc, &peer_device->pd_options, &running_pd->pd_options))
 			schedule_deferred_cmd(cmd, &tmp_ctx, CFG_PEER_DEVICE);
+	}
+}
+
+void schedule_peer_device_options(const struct cfg_ctx *ctx)
+{
+	struct adm_cmd *cmd = &peer_device_options_defaults_cmd;
+	struct cfg_ctx tmp_ctx = *ctx;
+	struct peer_device *peer_device;
+
+	if (!tmp_ctx.vol && !tmp_ctx.conn) {
+		err("Call schedule_peer_devices_options() with vol or conn set!");
+		exit(E_THINKO);
+	} else if (!tmp_ctx.vol) {
+		STAILQ_FOREACH(peer_device, &tmp_ctx.conn->peer_devices, connection_link) {
+
+			if (STAILQ_EMPTY(&peer_device->pd_options))
+				continue;
+
+			tmp_ctx.vol = peer_device->volume;
+			schedule_deferred_cmd(cmd, &tmp_ctx, CFG_PEER_DEVICE | SCHEDULE_ONCE);
+		}
+	} else if (!tmp_ctx.conn) {
+		STAILQ_FOREACH(peer_device, &tmp_ctx.vol->peer_devices, volume_link) {
+
+// ö			if (!peer_device->connection->my_address || !peer_device->connection->connect_to)
+//ö				continue;
+			if (STAILQ_EMPTY(&peer_device->pd_options))
+				continue;
+
+			tmp_ctx.conn = peer_device->connection;
+			schedule_deferred_cmd(cmd, &tmp_ctx, CFG_PEER_DEVICE | SCHEDULE_ONCE);
+		}
+	} else {
+		err("vol and conn set in schedule_peer_devices_options()!");
+		exit(E_THINKO);
 	}
 }
 
@@ -636,10 +744,10 @@ int adm_adjust(const struct cfg_ctx *ctx)
 		struct resources running_as_list;
 		STAILQ_INIT(&running_as_list);
 		insert_tail(&running_as_list, running);
-		post_parse(&running_as_list, 0);
+		post_parse(&running_as_list, DRBDSETUP_SHOW);
 
-		set_me_in_resource(running, 0);
-		set_peer_in_resource(running, 0);
+		set_me_in_resource(running, DRBDSETUP_SHOW);
+		set_peer_in_resource(running, DRBDSETUP_SHOW);
 	}
 
 
@@ -650,19 +758,23 @@ int adm_adjust(const struct cfg_ctx *ctx)
 	if (running) {
 		for_each_connection(conn, &running->connections) {
 			struct connection *configured_conn = NULL;
+			struct path *configured_path;
+			struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 			struct cfg_ctx tmp_ctx = { .res = ctx->res };
 			char *show_conn;
 			int r;
 
 			configured_conn = matching_conn(conn, &ctx->res->connections);
-			if (!configured_conn ||
-			    !configured_conn->peer_proxy || !configured_conn->peer_proxy)
+			if (!configured_conn)
+				continue;
+			configured_path = STAILQ_FIRST(&configured_conn->paths);
+			if (!configured_path->peer_proxy)
 				continue;
 
 			tmp_ctx.conn = configured_conn;
 
 			line = 1;
-			m_asprintf(&show_conn, "show proxy-settings %s", proxy_connection_name(&tmp_ctx));
+			m_asprintf(&show_conn, "show proxy-settings %s", proxy_connection_name(tmp_ctx.res, configured_conn));
 			sprintf(config_file_dummy, "drbd-proxy-ctl -c '%s'", show_conn);
 			config_file = config_file_dummy;
 
@@ -674,8 +786,7 @@ int adm_adjust(const struct cfg_ctx *ctx)
 
 			/* actually parse "drbd-proxy-ctl show" output */
 			yyin = m_popen(&pid, argv);
-			r = !parse_proxy_options_section(&conn->my_proxy);
-			printf("r=%d\n", r);
+			r = !parse_proxy_options_section(&path->my_proxy);
 			can_do_proxy &= r;
 			fclose(yyin);
 
@@ -698,13 +809,14 @@ int adm_adjust(const struct cfg_ctx *ctx)
 			configured_conn = matching_conn(conn, &ctx->res->connections);
 			if (!configured_conn) {
 				struct cfg_ctx tmp_ctx = { .res = running, .conn = conn };
-				schedule_deferred_cmd(&disconnect_cmd, &tmp_ctx, CFG_NET);
+				schedule_deferred_cmd(&del_peer_cmd, &tmp_ctx, CFG_NET_PREP_DOWN);
 			}
 		}
 	}
 
 	for_each_connection(conn, &ctx->res->connections) {
 		struct connection *running_conn = NULL;
+		struct path *path;
 		const struct cfg_ctx tmp_ctx = { .res = ctx->res, .conn = conn };
 
 		if (conn->ignore)
@@ -713,24 +825,50 @@ int adm_adjust(const struct cfg_ctx *ctx)
 		if (running)
 			running_conn = matching_conn(conn, &running->connections);
 		if (!running_conn) {
-			schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET);
+			schedule_deferred_cmd(&new_peer_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+			schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+			schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET_CONNECT);
+			schedule_peer_device_options(&tmp_ctx);
 		} else {
 			struct context_def *oc = &show_net_options_ctx;
 			struct options *conf_o = &conn->net_options;
 			struct options *runn_o = &running_conn->net_options;
+			bool connect = false, new_path = false;
+
+			if (running_conn->is_standalone)
+				connect = true;
 
 			if (!opts_equal(oc, conf_o, runn_o)) {
 				if (!opt_equal(oc, "transport", conf_o, runn_o)) {
-					schedule_deferred_cmd(&disconnect_cmd, &tmp_ctx, CFG_NET);
-					schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET);
+					/* disconnect implicit by del-peer */
+					schedule_deferred_cmd(&del_peer_cmd, &tmp_ctx, CFG_NET_PREP_DOWN);
+					schedule_deferred_cmd(&new_peer_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+					new_path = true;
+					connect = true;
+					schedule_peer_device_options(&tmp_ctx);
 				} else {
+					struct d_option *opt;
+					if ((opt = find_opt(&tmp_ctx.conn->net_options, "transport"))) {
+						STAILQ_REMOVE(&tmp_ctx.conn->net_options, opt, d_option, link);
+						free_opt(opt);
+					}
 					schedule_deferred_cmd(&net_options_defaults_cmd, &tmp_ctx, CFG_NET);
 				}
 			}
+
+			if (new_path)
+				schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+			else
+				adjust_paths(&tmp_ctx, running_conn);
+
+			if (connect)
+				schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET_CONNECT);
+
 			adjust_peer_devices(&tmp_ctx, conn, running_conn);
 		}
 
-		if (conn->my_proxy && can_do_proxy)
+		path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
+		if (path->my_proxy && can_do_proxy)
 			proxy_reconf(ctx, running_conn);
 	}
 
@@ -744,11 +882,13 @@ int adm_adjust(const struct cfg_ctx *ctx)
 	for_each_volume(vol, &ctx->res->me->volumes) {
 		struct cfg_ctx tmp_ctx = { .res = ctx->res, .vol = vol };
 		if (vol->adj_detach)
-			schedule_deferred_cmd(&detach_cmd, &tmp_ctx, CFG_PREREQ);
+			schedule_deferred_cmd(&detach_cmd, &tmp_ctx, CFG_DISK_PREP_DOWN);
 		if (vol->adj_del_minor)
-			schedule_deferred_cmd(&del_minor_cmd, &tmp_ctx, CFG_PREREQ);
-		if (vol->adj_new_minor)
-			schedule_deferred_cmd(&new_minor_cmd, &tmp_ctx, CFG_DISK_PREREQ);
+			schedule_deferred_cmd(&del_minor_cmd, &tmp_ctx, CFG_DISK_PREP_DOWN);
+		if (vol->adj_new_minor) {
+			schedule_deferred_cmd(&new_minor_cmd, &tmp_ctx, CFG_DISK_PREP_UP);
+			schedule_peer_device_options(&tmp_ctx);
+		}
 		if (vol->adj_attach)
 			schedule_deferred_cmd(&attach_cmd, &tmp_ctx, CFG_DISK);
 		if (vol->adj_disk_opts)

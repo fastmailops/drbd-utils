@@ -341,6 +341,19 @@ static void url_encode(char* in, char* out)
 	*out = 0;
 }
 
+/* returns 1, if either svn_revision or git_hash are known,
+ * returns 0 otherwise.  */
+int have_vcs_hash(const struct version *v)
+{
+	int i;
+	if (v->svn_revision)
+		return 1;
+	for (i = 0; i < GIT_HASH_BYTE; i++)
+		if (v->git_hash[i])
+			return 1;
+	return 0;
+}
+
 /* Ensure that the node is counted on http://usage.drbd.org
  */
 #define ANSWER_SIZE 80
@@ -371,6 +384,14 @@ void uc_node(enum usage_count_type type)
 		get_random_bytes(&ni.node_uuid,sizeof(ni.node_uuid));
 		ni.rev = *driver_version;
 		send = 1;
+	} else if (!have_vcs_hash(driver_version)) {
+		/* If we don't know the current version control system hash,
+		 * we found the version via "modprobe -F version drbd",
+		 * and did not find a /proc/drbd to read it from.
+		 * Avoid flipping between "hash-some-value" and "hash-all-zero",
+		 * Re-registering every time...
+		 */
+		send = 0;
 	} else {
 		// read_node_id() was successful
 		if (!version_equal(&ni.rev, driver_version)) {
@@ -508,14 +529,12 @@ int adm_create_md(const struct cfg_ctx *ctx)
 	char *tb;
 	int rv,fd;
 	char *r, *max_peers_str = NULL;
-	struct d_name *b_opt;
+	struct d_name *b_opt_max_peers;
 	const char *opt_max_peers = "--max-peers=";
 
-	b_opt = find_backend_option(opt_max_peers);
-	if (b_opt) {
-		max_peers_str = ssprintf("%s", b_opt->name + strlen(opt_max_peers));
-		STAILQ_REMOVE(&backend_options, b_opt, d_name, link);
-		free(b_opt);
+	b_opt_max_peers = find_backend_option(opt_max_peers);
+	if (b_opt_max_peers) {
+		max_peers_str = ssprintf("%s", b_opt_max_peers->name + strlen(opt_max_peers));
 	} else {
 		int max_peers = 0;
 
@@ -533,8 +552,17 @@ int adm_create_md(const struct cfg_ctx *ctx)
 	device_uuid = strto_u64(tb,NULL,16);
 	free(tb);
 
-	/* this is "drbdmeta ... create-md" */
+	/* drbdmeta create-md does not understand "--max-peers=",
+	 * so we drop it from the option list here... */
+	if (b_opt_max_peers)
+		STAILQ_REMOVE(&backend_options, b_opt_max_peers, d_name, link);
+	/* This is "drbdmeta ... create-md".
+	 * It implicitly adds all backend_options to the command line. */
 	rv = _adm_drbdmeta(ctx, SLEEPS_VERY_LONG, max_peers_str);
+	/* ... now add back "--max-peers=", if any,
+	 * in case the caller loops over several volumes. */
+	if (b_opt_max_peers)
+		insert_head(&backend_options, b_opt_max_peers);
 
 	if(rv || dry_run) return rv;
 

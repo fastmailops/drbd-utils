@@ -20,7 +20,11 @@
 #include "config.h"
 #include "shared_main.h"
 
-#define API_VERSION 1
+/* FIXME keep in sync with GENL_MAGIC_VERSION,
+ * without including all the genl magic...
+ */
+#define API_VERSION 2
+
 struct d_name
 {
 	char *name;
@@ -145,19 +149,31 @@ struct hname_address
 };
 STAILQ_HEAD(hname_address_pairs, hname_address);
 
-struct connection
+struct path
 {
-	char *name; /* parsed */
-	struct hname_address_pairs hname_address_pairs; /* parsed here */
 	int config_line; /* parsed here */
+	struct hname_address_pairs hname_address_pairs; /* parsed here */
 
-	struct peer_devices peer_devices;
-	struct d_host_info *peer;
 	struct d_address *my_address; /* determined in set_me_in_resource() */
 	struct d_address *peer_address;
 	struct d_address *connect_to;
 	struct d_proxy_info *my_proxy;
 	struct d_proxy_info *peer_proxy;
+
+	unsigned int implicit:1;
+	unsigned int adj_seen:1;
+	STAILQ_ENTRY(path) link;
+};
+STAILQ_HEAD(paths, path);
+
+struct connection
+{
+	char *name; /* parsed */
+	struct paths paths;
+	int config_line; /* parsed here */
+
+	struct peer_devices peer_devices;
+	struct d_host_info *peer;
 
 	struct options net_options; /* parsed here, inherited from res, used here */
 	struct options pd_options; /* parsed here, inherited into the peer_devices */
@@ -168,22 +184,31 @@ struct connection
 	 * this avoids direct maniuplation/restore of the ignore flag itself */
 	unsigned int ignore_tmp:1;
 	unsigned int implicit:1;
+	unsigned int is_standalone:1;
 	STAILQ_ENTRY(connection) link;
 };
 STAILQ_HEAD(connections, connection);
+
+struct mesh
+{
+	struct names hosts; /* parsed here. Expanded to connections in post_parse */
+	struct options net_options;
+	STAILQ_ENTRY(mesh) link;
+};
+STAILQ_HEAD(meshes, mesh);
 
 struct d_resource
 {
 	char* name;
 
+	struct d_resource *template;
 	struct volumes volumes;
 	struct connections connections;
 
 	struct d_host_info* me;
 	struct hosts all_hosts;
 
-	struct names mesh; /* parsed here. Expanded to connections in post_parse */
-	struct options mesh_net_options;
+	struct meshes meshes;
 
 	struct options net_options; /* parsed here, inherited to connections */
 	struct options disk_options;
@@ -247,6 +272,7 @@ struct adm_cmd {
 	unsigned int uc_dialog:1; /* May show usage count dialog */
 	unsigned int test_config:1; /* Allow -t option */
 	unsigned int disk_required:1; /* cmd needs vol->disk or vol->meta_[disk|index] */
+	unsigned int iterate_paths:1; /* cmd needs path set, eventually iterate over all */
 };
 
 struct cfg_ctx {
@@ -259,11 +285,15 @@ struct cfg_ctx {
 
 	struct connection *conn;
 
+	struct path *path;
+
 	const struct adm_cmd *cmd;
 };
 
 
 extern char *canonify_path(char *path);
+extern int pushd(const char *path);
+extern void popd(int fd);
 
 extern int adm_adjust(const struct cfg_ctx *);
 
@@ -275,6 +305,10 @@ extern struct adm_cmd attach_cmd;
 extern struct adm_cmd disk_options_cmd;
 extern struct adm_cmd disk_options_defaults_cmd;
 extern struct adm_cmd resize_cmd;
+extern struct adm_cmd new_peer_cmd;
+extern struct adm_cmd del_peer_cmd;
+extern struct adm_cmd new_path_cmd;
+extern struct adm_cmd del_path_cmd;
 extern struct adm_cmd connect_cmd;
 extern struct adm_cmd net_options_cmd;
 extern struct adm_cmd net_options_defaults_cmd;
@@ -302,23 +336,30 @@ enum drbd_cfg_stage {
 	CFG_RESOURCE,
 
 	/* detach/attach local disks, */
-	CFG_DISK_PREREQ,
+	/* detach, del-minor */
+	CFG_DISK_PREP_DOWN,
+	/* new-minor */
+	CFG_DISK_PREP_UP,
+	/* attach, disk-options, resize */
 	CFG_DISK,
 
-	/* The stage to discard network configuration, during adjust.
-	 * This is after the DISK stage, because we don't want to cut access to
-	 * good data while in primary role.  And before the SETTINGS stage, as
-	 * some proxy or syncer settings may cause side effects and additional
-	 * handshakes while we have an established connection.
-	 */
-	CFG_NET_PREREQ,
+	/* down, disconnect, del-peer, proxy down */
+	CFG_NET_PREP_DOWN,
+	/* add-peer, add-path, proxy up */
+	CFG_NET_PREP_UP,
 
 	/* discard/set connection parameters */
 	CFG_NET,
 
 	CFG_PEER_DEVICE,
+
+	/* actually start with connection attempts */
+	CFG_NET_CONNECT,
+
 	__CFG_LAST
 };
+
+#define SCHEDULE_ONCE 0x1000
 
 extern void schedule_deferred_cmd(struct adm_cmd *, const struct cfg_ctx *, enum drbd_cfg_stage);
 extern void maybe_exec_legacy_drbdadm(char **argv);
@@ -337,6 +378,7 @@ extern struct d_resource* parse_resource_for_adjust(const struct cfg_ctx *ctx);
 extern struct d_resource* parse_resource(char*, enum pr_flags);
 extern void post_parse(struct resources *, enum pp_flags);
 extern struct connection *alloc_connection();
+extern struct path *alloc_path();
 extern struct d_volume *alloc_volume(void);
 extern struct peer_device *alloc_peer_device();
 extern void free_connection(struct connection *connection);
@@ -356,10 +398,10 @@ extern void set_me_in_resource(struct d_resource* res, int match_on_proxy);
 extern void set_peer_in_resource(struct d_resource* res, int peer_required);
 extern void set_on_hosts_in_res(struct d_resource *res);
 extern void set_disk_in_res(struct d_resource *res);
-extern int _proxy_connect_name_len(const struct cfg_ctx *ctx);
-extern char *_proxy_connection_name(char *conn_name, const struct cfg_ctx *ctx);
-#define proxy_connection_name(RES) \
-	_proxy_connection_name(alloca(_proxy_connect_name_len(RES)), RES)
+extern int _proxy_connect_name_len(const struct d_resource *res, const struct connection *conn);
+extern char *_proxy_connection_name(char *conn_name, const struct d_resource *res, const struct connection *conn);
+#define proxy_connection_name(RES, CONN) \
+	_proxy_connection_name(alloca(_proxy_connect_name_len(RES, CONN)), RES, CONN)
 extern struct d_resource *res_by_name(const char *name);
 extern struct d_host_info *find_host_info_by_name(struct d_resource* res, char *name);
 int parse_proxy_options_section(struct d_proxy_info **proxy);
@@ -450,6 +492,7 @@ extern struct names backend_options;
 #define for_each_volume_safe(var, next, head) STAILQ_FOREACH_SAFE(var, next, head, link)
 #define for_each_host(var, head) STAILQ_FOREACH(var, head, link)
 #define for_each_connection(var, head) STAILQ_FOREACH(var, head, link)
+#define for_each_path(var, head) STAILQ_FOREACH(var, head, link)
 
 #define insert_volume(head, elem) STAILQ_INSERT_ORDERED(head, elem, link)
 

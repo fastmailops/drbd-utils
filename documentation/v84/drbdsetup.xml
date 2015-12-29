@@ -91,6 +91,10 @@
 
     <xi:include href="drbdsetup_resume-io.xml" xmlns:xi="http://www.w3.org/2001/XInclude" />
 
+    <xi:include href="drbdsetup_status.xml" xmlns:xi="http://www.w3.org/2001/XInclude" />
+
+    <xi:include href="drbdsetup_events2.xml" xmlns:xi="http://www.w3.org/2001/XInclude" />
+
     <xi:include href="drbdsetup_events.xml" xmlns:xi="http://www.w3.org/2001/XInclude" />
 
     <xi:include href="drbdsetup_new-current-uuid.xml" xmlns:xi="http://www.w3.org/2001/XInclude" />
@@ -535,6 +539,32 @@
         </varlistentry>
 
         <varlistentry>
+          <term><option>--discard-zeroes-if-aligned <group choice="req" rep="norepeat">
+	     <arg choice="plain" rep="norepeat">yes</arg>
+	     <arg choice="plain" rep="norepeat">no</arg>
+	  </group></option></term>
+          <listitem>
+	    <para>
+	Setting <option>discard-zeroes-if-aligned</option> to <option>no</option>
+	will cause DRBD to always fall-back to zero-out on the receiving side,
+	and to not even announce discard capabilities on the Primary,
+	if the respective backend announces discard_zeroes_data=false.
+	</para><para>
+	Setting <option>discards-zeroes-if-aligned</option> to <option>yes</option>
+	will allow DRBD to use discards, and to announce discard_zeroes=true,
+	even on backends that announce discard_zeroes_data=false.
+	</para><para>
+	We used to ignore the discard_zeroes_data setting completely.
+	To not break established and expected behaviour,
+	the default value is <option>yes</option>.
+	</para><para>
+	This option is available since 8.4.7.
+	See also <citerefentry><refentrytitle>drbd.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>.
+	</para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
           <term>
             <option>--read-balancing <replaceable>method</replaceable></option>
           </term>
@@ -549,6 +579,27 @@
 	      and <option>1M-striping</option>.</para>
 	      <para> The default value of is <option>prefer-local</option>.
 	      This option is available since 8.4.1.
+	      </para>
+          </listitem>
+        </varlistentry>
+
+        <varlistentry>
+          <term>
+            <option>--rs-discard-granularity <replaceable>bytes</replaceable></option>
+          </term>
+          <listitem>
+	    <para>
+	      When <option>rs-discard-granularity</option> is set to a non zero, positive
+	      value then DRBD tries to do a resync operation in requests of this size.
+	      In case such a block contains only zero bytes on the sync source node,
+	      the sync target node will issue a discard/trim/unmap command for
+	      the area.</para>
+	      <para>The value is constrained by the discard granularity of the backing
+	      block device. In case <option>rs-discard-granularity</option> is not a
+	      multiplier of the discard granularity of the backing block device DRBD
+	      rounds it up. The feature only gets active if the backing block device
+	      reads back zeroes after a discard command.</para>
+	      <para> The default value of is 0. This option is available since 8.4.7.
 	      </para>
           </listitem>
         </varlistentry>
@@ -1611,8 +1662,19 @@
         <secondary>show</secondary>
       </indexterm>
 
-      <para>Shows all available configuration information of the
-      <replaceable>device</replaceable>.</para>
+		<para>Shows all available configuration information of a resource, or of all resources. Available options:
+			<variablelist>
+				<varlistentry>
+					<term><option>--show-defaults</option></term>
+
+					<listitem>
+						<para>Show all configuration parameters, even the ones with
+							default values.  Normally, parameters with default values are
+							not shown.</para>
+					</listitem>
+				</varlistentry>
+			</variablelist>
+		</para>
     </refsect2>
 
     <refsect2>
@@ -1643,6 +1705,138 @@
     </refsect2>
 
     <refsect2>
+      <title>status</title>
+	  <indexterm significance="normal">
+	    <primary>drbdsetup</primary>
+	    <secondary>status</secondary>
+	  </indexterm>
+
+	  <para>Show the status of a resource, or of all resources.  The
+	  output consists of one paragraph for each configured resource.  Each
+	  paragraph contains one line for each resource, followed by one line
+	  for each device, and one line for each connection.  The device and
+	  connection lines are indented.  The connection lines are followed by
+	  one line for each peer device; these lines are indented against the
+	  connection line.</para>
+
+	  <para>Long lines are wrapped around at terminal width, and indented
+	  to indicate how the lines belongs together.  Available options:
+
+	    <variablelist>
+	      <varlistentry>
+		<term><option>--verbose</option></term>
+
+		<listitem>
+		  <para>Include more information in the output even when it is
+		  likely redundant or irrelevant.</para>
+		</listitem>
+	      </varlistentry>
+
+	      <varlistentry>
+		<term><option>--statistics</option></term>
+
+		<listitem>
+		  <para>Include data transfer statistics in the output.</para>
+		</listitem>
+	      </varlistentry>
+
+	      <varlistentry>
+		<term>
+		  <option>--color=<group choice="req" rep="norepeat">
+		      <arg choice="plain" rep="norepeat">always</arg>
+		      <arg choice="plain" rep="norepeat">auto</arg>
+		      <arg choice="plain" rep="norepeat">never</arg>
+		    </group>
+		  </option>
+		</term>
+
+		<listitem>
+		  <para>Colorize the output.  With
+		    <option>--color=auto</option>, <option>drbdsetup</option>
+		    emits color codes only when standard output is connected to
+		    a terminal.
+		  </para>
+		</listitem>
+	      </varlistentry>
+	    </variablelist>
+	  </para>
+
+	  <para>For example, the non-verbose output for a resource with only
+	  one connection and only one volume could look like this:
+	      <programlisting format="linespecific">
+fs-backoffice role:Primary
+  disk:UpToDate
+  peer role:Secondary
+    replication:Established peer-disk:UpToDate
+	      </programlisting>
+	    </para>
+
+	    <para>With the <option>--verbose</option> <option>--statistics</option> options, the same resource
+	    could be reported as:
+	      <programlisting format="linespecific">
+fs-data role:Primary suspended:no
+    write-ordering:drain
+  volume:0 minor:1 disk:UpToDate
+      size:10616472 read:134465 written:144800 al-writes:18 bm-writes:0
+      upper-pending:0 lower-pending:0 al-suspended:no blocked:no
+  peer connection:Connected role:Secondary congested:no
+    volume:0 replication:Established peer-disk:UpToDate resync-suspended:no
+        received:122596 sent:22204 out-of-sync:0 pending:0 unacked:0
+	      </programlisting>
+	    </para>
+    </refsect2>
+
+    <refsect2>
+      <title>events2</title>
+      <indexterm significance="normal">
+	<primary>drbdsetup</primary>
+	<secondary>events2</secondary>
+      </indexterm>
+
+	  <para>Show the current state of all configured DRBD objects, followed
+	    by all changes to the state.</para>
+
+	  <para>The output format is meant to be human as well as machine
+	    readable.  Each line starts with the event number, which is
+	    followed by an asterisk if the event continues in the next line.
+	    The second word in each line indicates the kind of event:
+	    <option>exists</option> for an existing object;
+	    <option>create</option>, <option>destroy</option>, and
+	    <option>change</option> if an object is created, destroyed, or
+	    changed; or <option>call</option> or <option>response</option> if
+	    an event handler is called or it returns.  The third word indicates
+	    the object the event applies to: <option>resource</option>,
+	    <option>device</option>, <option>connection</option>,
+	    <option>peer-device</option>, <option>helper</option>, or a dash
+	    (<option>-</option>) to indicate that the current state has been
+	    dumped completely.</para>
+
+	  <para>The remaining words identify the object and describe the state
+	    that he object is in.  Available options:
+
+	    <variablelist>
+	      <varlistentry>
+		<term><option>--now</option></term>
+
+		<listitem>
+		  <para>Terminate after reporting the current state.  The
+		    default is to continuously listen and report state
+		    changes.</para>
+		</listitem>
+	      </varlistentry>
+
+	      <varlistentry>
+		<term><option>--statistics</option></term>
+
+		<listitem>
+		  <para>Include statistics in the output.</para>
+		</listitem>
+	      </varlistentry>
+	    </variablelist>
+	  </para>
+    </refsect2>
+
+    <refsect2>
       <title>events</title>
 
       <indexterm significance="normal">
@@ -1651,6 +1845,7 @@
         <secondary>events</secondary>
       </indexterm>
 
+      <para>Deprecated. If possible, change to the events2 subcommand instead.</para>
       <para>Displays every state change of DRBD and all calls to helper programs. This might be
       used to get notified of DRBD's state changes by piping the output to another program.
       <variablelist>

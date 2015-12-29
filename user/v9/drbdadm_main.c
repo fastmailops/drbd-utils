@@ -56,6 +56,7 @@
 #include "config_flags.h"
 #include "drbdadm_dump.h"
 #include "shared_main.h"
+#include "drbdadm_parser.h"
 
 #define MAX_ARGS 40
 
@@ -84,7 +85,6 @@ struct option general_admopt[] = {
 };
 struct option *admopt = general_admopt;
 
-extern void my_parse();
 extern int yydebug;
 extern FILE *yyin;
 
@@ -92,6 +92,8 @@ static int adm_new_minor(const struct cfg_ctx *ctx);
 static int adm_resource(const struct cfg_ctx *);
 static int adm_attach(const struct cfg_ctx *);
 static int adm_connect(const struct cfg_ctx *);
+static int adm_new_peer(const struct cfg_ctx *);
+static int adm_path(const struct cfg_ctx *);
 static int adm_resize(const struct cfg_ctx *);
 static int adm_up(const struct cfg_ctx *);
 static int adm_wait_c(const struct cfg_ctx *);
@@ -185,6 +187,15 @@ int adm_adjust_wp(const struct cfg_ctx *ctx)
 	.verify_ips = 0,		\
 	.uc_dialog = 1,			\
 
+#define ACF1_MINOR_ONLY			\
+	.show_in_usage = 1,		\
+	.res_name_required = 1,		\
+	.backend_res_name = 0,		\
+	.iterate_volumes = 1,		\
+	.verify_ips = 0,		\
+	.uc_dialog = 1,			\
+	.disk_required = 1,		\
+
 #define ACF1_RESNAME			\
 	.show_in_usage = 1,		\
 	.res_name_required = 1,		\
@@ -203,7 +214,7 @@ int adm_adjust_wp(const struct cfg_ctx *ctx)
 #define ACF1_DISCONNECT			\
 	.show_in_usage = 1,		\
 	.res_name_required = 1,		\
-	.backend_res_name = 0,		\
+	.backend_res_name = 1,		\
 	.need_peer = 1,			\
 	.uc_dialog = 1,			\
 
@@ -300,19 +311,22 @@ int adm_adjust_wp(const struct cfg_ctx *ctx)
 	.res_name_required = 0,		\
 	.verify_ips = 0,		\
 
-/*  */ struct adm_cmd attach_cmd = {"attach", adm_attach, &attach_cmd_ctx, ACF1_DEFAULT .disk_required = 1};
-/*  */ struct adm_cmd disk_options_cmd = {"disk-options", adm_attach, &attach_cmd_ctx, ACF1_DEFAULT .disk_required = 1};
-/*  */ struct adm_cmd detach_cmd = {"detach", adm_drbdsetup, &detach_cmd_ctx, ACF1_DEFAULT .takes_long = 1};
+/*  */ struct adm_cmd attach_cmd = {"attach", adm_attach, &attach_cmd_ctx, ACF1_MINOR_ONLY };
+/*  */ struct adm_cmd disk_options_cmd = {"disk-options", adm_attach, &attach_cmd_ctx, ACF1_MINOR_ONLY };
+/*  */ struct adm_cmd detach_cmd = {"detach", adm_drbdsetup, &detach_cmd_ctx, .takes_long = 1, ACF1_MINOR_ONLY };
+/*  */ struct adm_cmd new_peer_cmd = {"new-peer", adm_new_peer, &new_peer_cmd_ctx, ACF1_CONNECT};
+/*  */ struct adm_cmd del_peer_cmd = {"del-peer", adm_drbdsetup, &disconnect_cmd_ctx, ACF1_CONNECT};
+/*  */ struct adm_cmd new_path_cmd = {"new-path", adm_path, &path_cmd_ctx, ACF1_CONNECT .iterate_paths = 1};
+/*  */ struct adm_cmd del_path_cmd = {"del-path", adm_path, &path_cmd_ctx, ACF1_CONNECT .iterate_paths = 1};
 /*  */ struct adm_cmd connect_cmd = {"connect", adm_connect, &connect_cmd_ctx, ACF1_CONNECT};
-/*  */ struct adm_cmd net_options_cmd = {"net-options", adm_connect, &net_options_ctx, ACF1_CONNECT};
+/*  */ struct adm_cmd net_options_cmd = {"net-options", adm_new_peer, &net_options_ctx, ACF1_CONNECT};
 /*  */ struct adm_cmd disconnect_cmd = {"disconnect", adm_drbdsetup, &disconnect_cmd_ctx, ACF1_DISCONNECT};
 static struct adm_cmd up_cmd = {"up", adm_up, ACF1_RESNAME };
-static struct adm_cmd direct_connect_cmd = {"direct-connect", adm_up, ACF1_RESNAME };
 /*  */ struct adm_cmd res_options_cmd = {"resource-options", adm_resource, &resource_options_ctx, ACF1_RESNAME};
 static struct adm_cmd down_cmd = {"down", adm_drbdsetup, ACF1_RESNAME .takes_long = 1};
 static struct adm_cmd primary_cmd = {"primary", adm_drbdsetup, &primary_cmd_ctx, ACF1_RESNAME .takes_long = 1};
 static struct adm_cmd secondary_cmd = {"secondary", adm_drbdsetup, ACF1_RESNAME .takes_long = 1};
-static struct adm_cmd invalidate_cmd = {"invalidate", adm_invalidate, ACF1_DEFAULT .disk_required = 1};
+static struct adm_cmd invalidate_cmd = {"invalidate", adm_invalidate, ACF1_MINOR_ONLY };
 static struct adm_cmd invalidate_remote_cmd = {"invalidate-remote", adm_drbdsetup, ACF1_PEER_DEVICE .takes_long = 1};
 static struct adm_cmd outdate_cmd = {"outdate", adm_outdate, ACF1_DEFAULT};
 /*  */ struct adm_cmd resize_cmd = {"resize", adm_resize, ACF1_DEFNET .disk_required = 1};
@@ -326,19 +340,19 @@ static struct adm_cmd wait_sync_cmd = {"wait-sync", adm_wait_c, ACF1_WAIT};
 static struct adm_cmd wait_ci_cmd = {"wait-con-int", adm_wait_ci, .show_in_usage = 1,.verify_ips = 1,};
 static struct adm_cmd role_cmd = {"role", adm_drbdsetup, ACF1_RESNAME};
 static struct adm_cmd cstate_cmd = {"cstate", adm_drbdsetup, ACF1_DISCONNECT};
-static struct adm_cmd dstate_cmd = {"dstate", adm_setup_and_meta, ACF1_DEFAULT .disk_required = 1};
-static struct adm_cmd status_cmd = {"status", adm_drbdsetup, .show_in_usage = 1, .uc_dialog = 1};
+static struct adm_cmd dstate_cmd = {"dstate", adm_setup_and_meta, ACF1_MINOR_ONLY };
+static struct adm_cmd status_cmd = {"status", adm_drbdsetup, .show_in_usage = 1, .uc_dialog = 1, .backend_res_name=1};
 static struct adm_cmd peer_device_options_cmd = {"peer-device-options", adm_peer_device,
 						 &peer_device_options_ctx, ACF1_PEER_DEVICE};
 static struct adm_cmd dump_cmd = {"dump", adm_dump, ACF1_DUMP};
 static struct adm_cmd dump_xml_cmd = {"dump-xml", adm_dump_xml, ACF1_DUMP};
 
-static struct adm_cmd create_md_cmd = {"create-md", adm_create_md, &create_md_ctx, ACF1_DEFAULT .disk_required = 1};
+static struct adm_cmd create_md_cmd = {"create-md", adm_create_md, &create_md_ctx, ACF1_MINOR_ONLY };
 static struct adm_cmd show_gi_cmd = {"show-gi", adm_setup_and_meta, ACF1_PEER_DEVICE .disk_required = 1};
 static struct adm_cmd get_gi_cmd = {"get-gi", adm_setup_and_meta, ACF1_PEER_DEVICE .disk_required = 1};
-static struct adm_cmd dump_md_cmd = {"dump-md", adm_drbdmeta, ACF1_DEFAULT .disk_required = 1};
-static struct adm_cmd wipe_md_cmd = {"wipe-md", adm_drbdmeta, ACF1_DEFAULT .disk_required = 1};
-static struct adm_cmd apply_al_cmd = {"apply-al", adm_drbdmeta, ACF1_DEFAULT .disk_required = 1};
+static struct adm_cmd dump_md_cmd = {"dump-md", adm_drbdmeta, ACF1_MINOR_ONLY };
+static struct adm_cmd wipe_md_cmd = {"wipe-md", adm_drbdmeta, ACF1_MINOR_ONLY };
+static struct adm_cmd apply_al_cmd = {"apply-al", adm_drbdmeta, ACF1_MINOR_ONLY };
 static struct adm_cmd forget_peer_cmd = {"forget-peer", adm_forget_peer, ACF1_DISCONNECT };
 
 static struct adm_cmd hidden_cmd = {"hidden-commands", hidden_cmds,.show_in_usage = 1,};
@@ -362,7 +376,7 @@ static struct adm_cmd proxy_down_cmd = {"proxy-down", adm_proxy_down, ACF2_PROXY
 
 /*  */ struct adm_cmd new_resource_cmd = {"new-resource", adm_resource, ACF2_SH_RESNAME};
 /*  */ struct adm_cmd new_minor_cmd = {"new-minor", adm_new_minor, ACF4_ADVANCED};
-/*  */ struct adm_cmd del_minor_cmd = {"del-minor", adm_drbdsetup, ACF1_DEFAULT	.show_in_usage = 4 };
+/*  */ struct adm_cmd del_minor_cmd = {"del-minor", adm_drbdsetup, ACF1_MINOR_ONLY .show_in_usage = 4 };
 
 static struct adm_cmd khelper01_cmd = {"before-resync-target", adm_khelper, ACF3_RES_HANDLER};
 static struct adm_cmd khelper02_cmd = {"after-resync-target", adm_khelper, ACF3_RES_HANDLER};
@@ -376,10 +390,10 @@ static struct adm_cmd khelper09_cmd = {"initial-split-brain", adm_khelper, ACF3_
 static struct adm_cmd khelper10_cmd = {"split-brain", adm_khelper, ACF3_RES_HANDLER};
 static struct adm_cmd khelper11_cmd = {"out-of-sync", adm_khelper, ACF3_RES_HANDLER};
 
-static struct adm_cmd suspend_io_cmd = {"suspend-io", adm_drbdsetup, ACF4_ADVANCED};
-static struct adm_cmd resume_io_cmd = {"resume-io", adm_drbdsetup, ACF4_ADVANCED};
+static struct adm_cmd suspend_io_cmd = {"suspend-io", adm_drbdsetup, ACF4_ADVANCED  .backend_res_name = 0 };
+static struct adm_cmd resume_io_cmd = {"resume-io", adm_drbdsetup, ACF4_ADVANCED  .backend_res_name = 0 };
 static struct adm_cmd set_gi_cmd = {"set-gi", adm_drbdmeta, .disk_required = 1, .need_peer = 1, ACF4_ADVANCED_NEED_VOL};
-static struct adm_cmd new_current_uuid_cmd = {"new-current-uuid", adm_drbdsetup, &new_current_uuid_cmd_ctx, ACF4_ADVANCED_NEED_VOL};
+static struct adm_cmd new_current_uuid_cmd = {"new-current-uuid", adm_drbdsetup, &new_current_uuid_cmd_ctx, ACF4_ADVANCED_NEED_VOL .backend_res_name = 0};
 static struct adm_cmd check_resize_cmd = {"check-resize", adm_chk_resize, ACF4_ADVANCED};
 
 struct adm_cmd *cmds[] = {
@@ -394,11 +408,14 @@ struct adm_cmd *cmds[] = {
 	&attach_cmd,
 	&disk_options_cmd,
 	&detach_cmd,
+	&new_peer_cmd,
+	&del_peer_cmd,
+	&new_path_cmd,
+	&del_path_cmd,
 	&connect_cmd,
 	&net_options_cmd,
 	&disconnect_cmd,
 	&up_cmd,
-	&direct_connect_cmd,
 	&res_options_cmd,
 	&peer_device_options_cmd,
 	&down_cmd,
@@ -484,11 +501,11 @@ struct adm_cmd *cmds[] = {
 	"disk-options",
 	adm_attach,
 	&attach_cmd_ctx,
-	ACF1_DEFAULT .disk_required = 1
+	ACF1_MINOR_ONLY
 };
 /*  */ struct adm_cmd net_options_defaults_cmd = {
 	"net-options",
-	adm_connect,
+	adm_new_peer,
 	&net_options_ctx,
 	ACF1_CONNECT
 };
@@ -505,20 +522,13 @@ struct adm_cmd *cmds[] = {
 static const struct adm_cmd invalidate_setup_cmd = {
 	"invalidate",
 	__adm_drbdsetup_silent,
-	ACF1_DEFAULT .disk_required = 1
+	ACF1_MINOR_ONLY
 };
 
 static const struct adm_cmd forget_peer_setup_cmd = {
 	"forget-peer",
 	__adm_drbdsetup_silent,
-	ACF1_DISCONNECT .backend_res_name = 1, .need_peer = 0
-};
-
-static struct adm_cmd connect_direct_cmd = {
-	"connect",
-	adm_connect,
-	&connect_cmd_ctx,
-	ACF1_CONNECT
+	ACF1_DISCONNECT
 };
 
 static void initialize_deferred_cmds()
@@ -533,6 +543,18 @@ void schedule_deferred_cmd(struct adm_cmd *cmd,
 			   enum drbd_cfg_stage stage)
 {
 	struct deferred_cmd *d;
+
+	if (stage & SCHEDULE_ONCE) {
+		stage &= ~SCHEDULE_ONCE;
+
+		STAILQ_FOREACH(d, &deferred_cmds[stage], link) {
+			if (d->ctx.cmd == cmd &&
+			    d->ctx.res == ctx->res &&
+			    d->ctx.conn == ctx->conn &&
+			    d->ctx.vol == ctx->vol)
+				return;
+		}
+	}
 
 	d = calloc(1, sizeof(struct deferred_cmd));
 	if (d == NULL) {
@@ -550,7 +572,10 @@ enum on_error { KEEP_RUNNING, EXIT_ON_FAIL };
 static int __call_cmd_fn(const struct cfg_ctx *ctx, enum on_error on_error)
 {
 	struct d_volume *vol = ctx->vol;
-	int rv;
+	bool iterate_paths;
+	int rv = 0;
+
+	iterate_paths = ctx->path ? 0 : ctx->cmd->iterate_paths;
 
 	if (ctx->cmd->disk_required &&
 	    (!vol->disk || !vol->meta_disk || !vol->meta_index)) {
@@ -562,10 +587,25 @@ static int __call_cmd_fn(const struct cfg_ctx *ctx, enum on_error on_error)
 		return rv;
 	}
 
-	rv = ctx->cmd->function(ctx);
-	if (rv >= 20) {
-		if (on_error == EXIT_ON_FAIL)
-			exit(rv);
+	if (iterate_paths) {
+		struct cfg_ctx tmp_ctx = *ctx;
+		struct path *path;
+
+		for_each_path(path, &tmp_ctx.conn->paths) {
+			tmp_ctx.path = path;
+			rv = tmp_ctx.cmd->function(&tmp_ctx);
+			if (rv >= 20) {
+				if (on_error == EXIT_ON_FAIL)
+					exit(rv);
+			}
+
+		}
+	} else {
+		rv = ctx->cmd->function(ctx);
+		if (rv >= 20) {
+			if (on_error == EXIT_ON_FAIL)
+				exit(rv);
+		}
 	}
 	return rv;
 }
@@ -638,11 +678,14 @@ out:
 static char *drbd_cfg_stage_string[] = {
 	[CFG_PREREQ] = "create res",
 	[CFG_RESOURCE] = "adjust res",
-	[CFG_DISK_PREREQ] = "prepare disk",
+	[CFG_DISK_PREP_DOWN] = "prepare disk",
+	[CFG_DISK_PREP_UP] = "prepare disk",
 	[CFG_DISK] = "adjust disk",
-	[CFG_NET_PREREQ] = "prepare net",
+	[CFG_NET_PREP_DOWN] = "prepare net",
+	[CFG_NET_PREP_UP] = "prepare net",
 	[CFG_NET] = "adjust net",
 	[CFG_PEER_DEVICE] = "adjust peer_devices",
+	[CFG_NET_CONNECT] = "attempt to connect",
 };
 
 int _run_deferred_cmds(enum drbd_cfg_stage stage)
@@ -680,7 +723,11 @@ int _run_deferred_cmds(enum drbd_cfg_stage stage)
 				 * options, or failed to attach, we still want
 				 * to adjust other options, or try to connect.
 				 */
-				if (stage == CFG_PREREQ || stage == CFG_DISK_PREREQ)
+				if (stage == CFG_PREREQ
+				||  stage == CFG_DISK_PREP_DOWN
+				||  stage == CFG_DISK_PREP_UP
+				||  stage == CFG_NET_PREP_DOWN
+				||  stage == CFG_NET_PREP_UP)
 					d->ctx.res->skip_further_deferred_command = 1;
 				if (adjust_with_progress)
 					printf(":failed(%s:%u)", d->ctx.cmd->name, r);
@@ -891,7 +938,6 @@ static void free_options(struct options *options)
 {
 	struct d_option *f, *option = STAILQ_FIRST(options);
 	while (option) {
-		free(option->name);
 		free(option->value);
 		f = option;
 		option = STAILQ_NEXT(option, link);
@@ -1042,7 +1088,6 @@ struct d_option *find_opt(struct options *base, const char *name)
 
 int adm_new_minor(const struct cfg_ctx *ctx)
 {
-	struct peer_device *peer_device;
 	char *argv[MAX_ARGS];
 	int argc = 0, ex;
 
@@ -1056,19 +1101,6 @@ int adm_new_minor(const struct cfg_ctx *ctx)
 	ex = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
 	if (!ex && do_register)
 		register_minor(ctx->vol->device_minor, config_save);
-
-	STAILQ_FOREACH(peer_device, &ctx->vol->peer_devices, volume_link) {
-		struct cfg_ctx tmp_ctx;
-
-		if (!peer_device->connection->my_address || !peer_device->connection->connect_to)
-			continue;
-		if (STAILQ_EMPTY(&peer_device->pd_options))
-			continue;
-
-		tmp_ctx = *ctx;
-		tmp_ctx.conn = peer_device->connection;
-		call_cmd_fn(&peer_device_options_cmd, &tmp_ctx, KEEP_RUNNING);
-	}
 
 	return ex;
 }
@@ -1188,21 +1220,19 @@ static void __adm_drbdsetup(const struct cfg_ctx *ctx, int flags, pid_t *pid, in
 
 	argv[NA(argc)] = drbdsetup;
 	argv[NA(argc)] = (char *)ctx->cmd->name;
+
+	if (ctx->cmd->backend_res_name && ctx->res)
+		argv[NA(argc)] = ssprintf("%s", ctx->res->name);
+
+	if (ctx->cmd->need_peer)
+		argv[NA(argc)] = ssprintf("%s", ctx->conn->peer->node_id);
+
 	if (ctx->vol) {
 		if (ctx->cmd->need_peer && ctx->cmd->iterate_volumes)
 			argv[NA(argc)] = ssprintf("%d", ctx->vol->vnr);
 		else
 			argv[NA(argc)] = ssprintf("%d", ctx->vol->device_minor);
-	} else if (ctx->cmd->backend_res_name && ctx->res)
-		argv[NA(argc)] = ssprintf("%s", ctx->res->name);
-
-	if (ctx->cmd->need_peer) {
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->my_address);
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->connect_to);
 	}
-
-	if (ctx->cmd == &forget_peer_setup_cmd)
-		argv[NA(argc)] = ssprintf("%s", ctx->conn->peer->node_id);
 
 	add_setup_options(argv, &argc);
 
@@ -1240,12 +1270,12 @@ static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx)
 
 	__adm_drbdsetup(ctx, SLEEPS_SHORT | RETURN_STDERR_FD, &pid, &fd, NULL);
 
-	if (fd < 0) {
-		err("Strange: got negative fd.\n");
-		exit(E_THINKO);
-	}
-
 	if (!dry_run) {
+		if (fd < 0) {
+			err("Strange: got negative fd.\n");
+			exit(E_THINKO);
+		}
+
 		while (1) {
 			rr = read(fd, buffer + s, 4096 - s);
 			if (rr <= 0)
@@ -1396,7 +1426,7 @@ static int adm_invalidate(const struct cfg_ctx *ctx)
 	static const struct adm_cmd invalidate_meta_cmd = {
 		"invalidate",
 		adm_drbdmeta,
-		ACF1_DEFAULT .disk_required = 1
+		ACF1_MINOR_ONLY
 	};
 
 	int rv;
@@ -1439,9 +1469,76 @@ static int adm_forget_peer(const struct cfg_ctx *ctx)
 static int adm_khelper(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res = ctx->res;
+	struct d_volume *vol = ctx->vol;
 	int rv = 0;
 	char *sh_cmd;
+	char minor_string[8];
+	char volume_string[8];
 	char *argv[] = { "/bin/sh", "-c", NULL, NULL };
+
+	setenv("DRBD_CONF", config_save, 1);
+	setenv("DRBD_RESOURCE", res->name, 1);
+
+	if (vol) {
+		snprintf(minor_string, sizeof(minor_string), "%u", vol->device_minor);
+		snprintf(volume_string, sizeof(volume_string), "%u", vol->vnr);
+		setenv("DRBD_MINOR", minor_string, 1);
+		setenv("DRBD_VOLUME", volume_string, 1);
+		setenv("DRBD_LL_DISK", shell_escape(vol->disk), 1);
+	} else {
+		char *minor_list;
+		char *volume_list;
+		char *ll_list;
+		char *separator = "";
+		char *pos_minor;
+		char *pos_volume;
+		char *pos_ll;
+		int volumes = 0;
+		int minor_len, volume_len, ll_len = 0;
+		int n;
+
+		for_each_volume(vol, &res->me->volumes) {
+			volumes++;
+			ll_len += strlen(shell_escape(vol->disk)) + 1;
+		}
+
+		/* max minor number is 2**20 - 1, which is 7 decimal digits.
+		 * plus separator respective trailing zero. */
+		minor_len = volumes * 8 + 1;
+		volume_len = minor_len;
+		minor_list = alloca(minor_len);
+		volume_list = alloca(volume_len);
+		ll_list = alloca(ll_len);
+
+		pos_minor = minor_list;
+		pos_volume = volume_list;
+		pos_ll = ll_list;
+		for_each_volume(vol, &res->me->volumes) {
+#define append(name, fmt, v) do {						\
+			n = snprintf(pos_ ## name, name ## _len, "%s" fmt,	\
+					separator, v);				\
+			if (n >= name ## _len) {				\
+				/* "can not happen" */				\
+				err("buffer too small when generating the "	\
+					#name " list\n");			\
+				abort();					\
+				break;						\
+			}							\
+			name ## _len -= n;					\
+			pos_ ## name += n;					\
+			} while (0)
+
+			append(minor, "%d", vol->device_minor);
+			append(volume, "%d", vol->vnr);
+			append(ll, "%s", shell_escape(vol->disk));
+
+#undef append
+			separator = " ";
+		}
+		setenv("DRBD_MINOR", minor_list, 1);
+		setenv("DRBD_VOLUME", volume_list, 1);
+		setenv("DRBD_LL_DISK", ll_list, 1);
+	}
 
 	if ((sh_cmd = get_opt_val(&res->handlers, ctx->cmd->name, NULL))) {
 		argv[2] = sh_cmd;
@@ -1469,9 +1566,9 @@ int adm_peer_device(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = drbdsetup;
 	argv[NA(argc)] = (char *)ctx->cmd->name; /* peer-device-options */
 
+	argv[NA(argc)] = ssprintf("%s", res->name);
+	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
 	argv[NA(argc)] = ssprintf("%d", vol->vnr);
-	argv[NA(argc)] = ssprintf_addr(conn->my_address);
-	argv[NA(argc)] = ssprintf_addr(conn->connect_to);
 
 	if (reset)
 		argv[NA(argc)] = "--set-defaults";
@@ -1486,189 +1583,201 @@ static int adm_connect(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res = ctx->res;
 	struct connection *conn = ctx->conn;
-
-	struct d_address tmp_my_address = *conn->my_address;
-	struct d_address tmp_connect_to = *conn->connect_to;
-
 	char *argv[MAX_ARGS];
 	int argc = 0;
-	bool do_connect = (ctx->cmd == &connect_cmd);
-	bool do_connect_direct = (ctx->cmd == &connect_direct_cmd);
-	bool reset = (ctx->cmd == &net_options_defaults_cmd);
-	struct peer_device *peer_device;
-	int ex;
-
-	if (do_connect_direct && conn->my_proxy) {
-		bool local_loopback = addr_scope_local(tmp_my_address.addr);
-		bool peer_loopback = addr_scope_local(conn->peer_address->addr);
-
-		if (!peer_loopback) /* fine, we can reach our peer */
-			tmp_connect_to = *conn->peer_address;
-		else {
-			/* connect to the proxy outside, but keep our port */
-			tmp_connect_to = conn->peer_proxy->outside;
-			tmp_connect_to.port = conn->peer_address->port;
-
-			if (local_loopback) {
-				/* both are loopbacks:
-				 * overwrite my address with proxy, but keep our port */
-				tmp_my_address = conn->my_proxy->outside;
-				tmp_my_address.port = conn->my_address->port;
-			}
-		}
-
-		if (local_loopback || peer_loopback)
-			err("WARN: This potentially requires interaction on the peer\n"
-			    "You may have to execute drbdadm direct-connect on the peer\n");
-	}
 
 	argv[NA(argc)] = drbdsetup;
-	argv[NA(argc)] = (char *)ctx->cmd->name; /* "connect" : "net-options"; */
-	if (do_connect)
-		argv[NA(argc)] = ssprintf("%s", res->name);
-	argv[NA(argc)] = ssprintf_addr(&tmp_my_address);
-	argv[NA(argc)] = ssprintf_addr(&tmp_connect_to);
-
-	if (reset)
-		argv[NA(argc)] = "--set-defaults";
-	if (do_connect)
-		argv[NA(argc)] = ssprintf("--peer-node-id=%s", conn->peer->node_id);
-	if (reset || do_connect)
-		make_options(argv[NA(argc)], &conn->net_options);
+	argv[NA(argc)] = (char *)ctx->cmd->name; /* "connect" */
+	argv[NA(argc)] = ssprintf("%s", res->name);
+	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
 
 	add_setup_options(argv, &argc);
 	argv[NA(argc)] = 0;
 
-	ex = m_system_ex(argv, SLEEPS_SHORT, res->name);
-	if (ex)
-		return ex;
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
+}
 
-	STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
-		struct cfg_ctx tmp_ctx;
+static int adm_new_peer(const struct cfg_ctx *ctx)
+{
+	struct d_resource *res = ctx->res;
+	struct connection *conn = ctx->conn;
 
-		if (STAILQ_EMPTY(&peer_device->pd_options))
-			continue;
+	char *argv[MAX_ARGS];
+	int argc = 0;
 
-		tmp_ctx = *ctx;
-		tmp_ctx.vol = peer_device->volume;
-		call_cmd_fn(&peer_device_options_cmd, &tmp_ctx, KEEP_RUNNING);
-	}
+	bool reset = (ctx->cmd == &net_options_defaults_cmd);
 
-	return ex;
+	argv[NA(argc)] = drbdsetup;
+	argv[NA(argc)] = (char *)ctx->cmd->name; /* "connect", "net-options" */
+	argv[NA(argc)] = ssprintf("%s", res->name);
+	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
+
+	if (reset)
+		argv[NA(argc)] = "--set-defaults";
+
+	make_options(argv[NA(argc)], &conn->net_options);
+
+	add_setup_options(argv, &argc);
+	argv[NA(argc)] = 0;
+
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
+}
+
+static int adm_path(const struct cfg_ctx *ctx)
+{
+	struct d_resource *res = ctx->res;
+	struct connection *conn = ctx->conn;
+	struct path *path = ctx->path;
+
+	char *argv[MAX_ARGS];
+	int argc = 0;
+
+	argv[NA(argc)] = drbdsetup;
+	argv[NA(argc)] = (char *)ctx->cmd->name; /* add-path, del-path */
+	argv[NA(argc)] = ssprintf("%s", res->name);
+	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
+
+	argv[NA(argc)] = ssprintf_addr(path->my_address);
+	argv[NA(argc)] = ssprintf_addr(path->connect_to);
+
+	add_setup_options(argv, &argc);
+	argv[NA(argc)] = 0;
+
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
 }
 
 void free_opt(struct d_option *item)
 {
-	free(item->name);
 	free(item->value);
 	free(item);
 }
 
-int _proxy_connect_name_len(const struct cfg_ctx *ctx)
+int _proxy_connect_name_len(const struct d_resource *res, const struct connection *conn)
 {
-	struct connection *conn = ctx->conn;
-
-	return strlen(ctx->res->name) +
-		strlen(names_to_str_c(&conn->peer_proxy->on_hosts, '_')) +
-		strlen(names_to_str_c(&conn->my_proxy->on_hosts, '_')) +
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
+	return (conn->name ? strlen(conn->name) : strlen(res->name)) +
+		strlen(names_to_str_c(&path->peer_proxy->on_hosts, '_')) +
+		strlen(names_to_str_c(&path->my_proxy->on_hosts, '_')) +
 		3 /* for the two dashes and the trailing 0 character */;
 }
 
-char *_proxy_connection_name(char *conn_name, const struct cfg_ctx *ctx)
+char *_proxy_connection_name(char *conn_name, const struct d_resource *res, const struct connection *conn)
 {
-	struct connection *conn = ctx->conn;
-
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	sprintf(conn_name, "%s-%s-%s",
-		ctx->res->name,
-		names_to_str_c(&conn->peer_proxy->on_hosts, '_'),
-		names_to_str_c(&conn->my_proxy->on_hosts, '_'));
+		conn->name ?: res->name,
+		names_to_str_c(&path->peer_proxy->on_hosts, '_'),
+		names_to_str_c(&path->my_proxy->on_hosts, '_'));
 	return conn_name;
 }
 
 int do_proxy_conn_up(const struct cfg_ctx *ctx)
 {
-	struct connection *conn = ctx->conn;
 	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL };
+	struct connection *conn;
 	char *conn_name;
 	int rv;
 
-	conn_name = proxy_connection_name(ctx);
+	rv = 0;
 
-	argv[2] = ssprintf(
-		 "add connection %s %s:%s %s:%s %s:%s %s:%s",
-		 conn_name,
-		 conn->my_proxy->inside.addr,
-		 conn->my_proxy->inside.port,
-		 conn->peer_proxy->outside.addr,
-		 conn->peer_proxy->outside.port,
-		 conn->my_proxy->outside.addr,
-		 conn->my_proxy->outside.port,
-		 conn->my_address->addr,
-		 conn->my_address->port);
+	for_each_connection(conn, &ctx->res->connections) {
+		struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
+		conn_name = proxy_connection_name(ctx->res, conn);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
+		argv[2] = ssprintf(
+				"add connection %s %s:%s %s:%s %s:%s %s:%s",
+				conn_name,
+				path->my_proxy->inside.addr,
+				path->my_proxy->inside.port,
+				path->peer_proxy->outside.addr,
+				path->peer_proxy->outside.port,
+				path->my_proxy->outside.addr,
+				path->my_proxy->outside.port,
+				path->my_address->addr,
+				path->my_address->port);
+
+		rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
+		if (rv)
+			break;
+	}
 	return rv;
 }
 
 int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 {
-	struct connection *conn = ctx->conn;
+	struct connection *conn;
 	char *argv[MAX_ARGS];
 	char *conn_name;
 	int argc = 0;
 	struct d_option *opt;
 	int counter;
+	int rv;
 
-	conn_name = proxy_connection_name(ctx);
+	rv = 0;
 
-	argc = 0;
-	argv[NA(argc)] = drbd_proxy_ctl;
-	STAILQ_FOREACH(opt, &conn->my_proxy->options, link) {
-		argv[NA(argc)] = "-c";
-		argv[NA(argc)] = ssprintf("set %s %s %s",
-			 opt->name, conn_name, opt->value);
-	}
+	for_each_connection(conn, &ctx->res->connections) {
+		struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
+		conn_name = proxy_connection_name(ctx->res, conn);
 
-	counter = 0;
-	/* Don't send the "set plugin ... END" line if no plugins are defined
-	 * - that's incompatible with the drbd proxy version 1. */
-	if (!STAILQ_EMPTY(&conn->my_proxy->plugins)) {
-		STAILQ_FOREACH(opt, &conn->my_proxy->plugins, link) {
+		argc = 0;
+		argv[NA(argc)] = drbd_proxy_ctl;
+		STAILQ_FOREACH(opt, &path->my_proxy->options, link) {
 			argv[NA(argc)] = "-c";
-			argv[NA(argc)] = ssprintf("set plugin %s %d %s",
-					conn_name, counter, opt->name);
-			counter++;
+			argv[NA(argc)] = ssprintf("set %s %s %s",
+					opt->name, conn_name, opt->value);
 		}
-		argv[NA(argc)] = ssprintf("set plugin %s %d END", conn_name, counter);
+
+		counter = 0;
+		/* Don't send the "set plugin ... END" line if no plugins are defined
+		 * - that's incompatible with the drbd proxy version 1. */
+		if (!STAILQ_EMPTY(&path->my_proxy->plugins)) {
+			STAILQ_FOREACH(opt, &path->my_proxy->plugins, link) {
+				argv[NA(argc)] = "-c";
+				argv[NA(argc)] = ssprintf("set plugin %s %d %s",
+						conn_name, counter, opt->name);
+				counter++;
+			}
+			argv[NA(argc)] = ssprintf("set plugin %s %d END", conn_name, counter);
+		}
+
+		argv[NA(argc)] = 0;
+		if (argc > 2)
+			rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
+		if (rv)
+			break;
 	}
 
-	argv[NA(argc)] = 0;
-	if (argc > 2)
-		return m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
-
-	return 0;
+	return rv;
 }
 
 int do_proxy_conn_down(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res = ctx->res;
+	struct connection *conn;
 	char *conn_name;
 	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL};
 	int rv;
 
-	conn_name = proxy_connection_name(ctx);
-	argv[2] = ssprintf("del connection %s", conn_name);
 
-	rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
+	rv = 0;
+	for_each_connection(conn, &res->connections) {
+		conn_name = proxy_connection_name(ctx->res, conn);
+		argv[2] = ssprintf("del connection %s", conn_name);
+
+		rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
+		if (rv)
+			break;
+	}
 	return rv;
 }
 
 static int check_proxy(const struct cfg_ctx *ctx, int do_up)
 {
 	struct connection *conn = ctx->conn;
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	int rv;
 
-	if (!conn->my_proxy) {
+	if (!path->my_proxy) {
 		if (all_resources)
 			return 0;
 		err("%s:%d: In resource '%s',no proxy config for connection %sfrom '%s' to '%s'%s.\n",
@@ -1680,7 +1789,7 @@ static int check_proxy(const struct cfg_ctx *ctx, int do_up)
 		exit(E_CONFIG_INVALID);
 	}
 
-	if (!hostname_in_list(hostname, &conn->my_proxy->on_hosts)) {
+	if (!hostname_in_list(hostname, &path->my_proxy->on_hosts)) {
 		if (all_resources)
 			return 0;
 		err("The proxy config in resource %s is not for %s.\n",
@@ -1688,7 +1797,7 @@ static int check_proxy(const struct cfg_ctx *ctx, int do_up)
 		exit(E_CONFIG_INVALID);
 	}
 
-	if (!conn->peer_proxy) {
+	if (!path->peer_proxy) {
 		err("There is no proxy config for the peer in resource %s.\n",
 		    ctx->res->name);
 		if (all_resources)
@@ -1734,21 +1843,33 @@ static int adm_up(const struct cfg_ctx *ctx)
 
 	set_peer_in_resource(ctx->res, true);
 	for_each_connection(conn, &ctx->res->connections) {
+		struct peer_device *peer_device;
+
 		if (conn->ignore)
 			continue;
 
 		tmp_ctx.conn = conn;
 
-		if (ctx->cmd == &direct_connect_cmd)
-			schedule_deferred_cmd(&connect_direct_cmd, &tmp_ctx, CFG_NET);
-		else
-			schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET);
+		schedule_deferred_cmd(&new_peer_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+		schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+		schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET_CONNECT);
+
+		STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
+			struct cfg_ctx tmp2_ctx;
+
+			if (STAILQ_EMPTY(&peer_device->pd_options))
+				continue;
+
+			tmp2_ctx = tmp_ctx;
+			tmp2_ctx.vol = peer_device->volume;
+			schedule_deferred_cmd(&peer_device_options_cmd, &tmp2_ctx, CFG_PEER_DEVICE);
+		}
 	}
 	tmp_ctx.conn = NULL;
 
 	for_each_volume(vol, &ctx->res->me->volumes) {
 		tmp_ctx.vol = vol;
-		schedule_deferred_cmd(&new_minor_cmd, &tmp_ctx, CFG_PREREQ);
+		schedule_deferred_cmd(&new_minor_cmd, &tmp_ctx, CFG_DISK_PREP_UP);
 		if (vol->disk)
 			schedule_deferred_cmd(&attach_cmd, &tmp_ctx, CFG_DISK);
 	}
@@ -1770,14 +1891,13 @@ static int adm_wait_c(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = drbdsetup;
 	if (ctx->vol && ctx->conn) {
 		argv[NA(argc)] = ssprintf("%s-%s", ctx->cmd->name, "volume");
+		argv[NA(argc)] = res->name;
+		argv[NA(argc)] = ssprintf("%s", ctx->conn->peer->node_id);
 		argv[NA(argc)] = ssprintf("%d", vol->vnr);
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->my_address);
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->connect_to);
 	} else if (ctx->conn) {
 		argv[NA(argc)] = ssprintf("%s-%s", ctx->cmd->name, "connection");
 		argv[NA(argc)] = res->name;
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->my_address);
-		argv[NA(argc)] = ssprintf_addr(ctx->conn->connect_to);
+		argv[NA(argc)] = ssprintf("%s", ctx->conn->peer->node_id);
 	} else {
 		argv[NA(argc)] = ssprintf("%s-%s", ctx->cmd->name, "resource");
 		argv[NA(argc)] = res->name;
@@ -1791,7 +1911,7 @@ static int adm_wait_c(const struct cfg_ctx *ctx)
 			// one connect-interval? two?
 			timeout *= 2;
 		}
-		argv[argc++] = "-t";
+		argv[argc++] = "--wfc-timeout";
 		argv[argc] = ssprintf("%lu", timeout);
 		argc++;
 	} else
@@ -2457,6 +2577,32 @@ static char *conf_file[] = {
 	0
 };
 
+int pushd(const char *path)
+{
+	int cwd_fd = -1;
+	cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
+	if (cwd_fd < 0) {
+		err("open(\".\") failed: %m\n");
+		exit(E_USAGE);
+	}
+	if (path && path[0] && chdir(path)) {
+		err("chdir(\"%s\") failed: %m\n", path);
+		exit(E_USAGE);
+	}
+	return cwd_fd;
+}
+
+void popd(int fd)
+{
+	if (fd >= 0) {
+		if (fchdir(fd) < 0) {
+			err("fchdir() failed: %m\n");
+			exit(E_USAGE);
+		}
+		close(fd);
+	}
+}
+
 
 /*
  * returns a pointer to an malloced area that contains
@@ -2480,17 +2626,13 @@ char *canonify_path(char *path)
 	tmp = strdupa(path);
 	last_slash = strrchr(tmp, '/');
 
+	/* Maybe this already is in the top level directory. */
+	if (last_slash == tmp)
+		return strdup(path);
+
 	if (last_slash) {
 		*last_slash++ = '\0';
-		cwd_fd = open(".", O_RDONLY | O_CLOEXEC);
-		if (cwd_fd < 0) {
-			err("open(\".\") failed: %m\n");
-			exit(E_USAGE);
-		}
-		if (chdir(tmp)) {
-			err("chdir(\"%s\") failed: %m\n", tmp);
-			exit(E_USAGE);
-		}
+		cwd_fd = pushd(tmp);
 	} else {
 		last_slash = tmp;
 	}
@@ -2501,19 +2643,14 @@ char *canonify_path(char *path)
 		exit(E_USAGE);
 	}
 
+	/* could have been a symlink to / */
 	if (!strcmp("/", that_wd))
 		m_asprintf(&abs_path, "/%s", last_slash);
 	else
 		m_asprintf(&abs_path, "%s/%s", that_wd, last_slash);
 
 	free(that_wd);
-	if (cwd_fd >= 0) {
-		if (fchdir(cwd_fd) < 0) {
-			err("fchdir() failed: %m\n");
-			exit(E_USAGE);
-		}
-		close(cwd_fd);
-	}
+	popd(cwd_fd);
 
 	return abs_path;
 }
@@ -2992,7 +3129,9 @@ int main(int argc, char **argv)
 		else if (cmd->res_name_required)
 			print_usage_and_exit(cmd, "No resource names specified", E_USAGE);
 	} else if (resource_names[0]) {
-		if (!cmd->res_name_required)
+		if (cmd->backend_res_name)
+			/* Okay */  ;
+		else if (!cmd->res_name_required)
 			err("This command will ignore resource names!\n");
 		else if (resource_names[1] && cmd->use_cached_config_file)
 			err("You should not use this command with multiple resources!\n");

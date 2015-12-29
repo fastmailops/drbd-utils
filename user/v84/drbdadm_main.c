@@ -430,6 +430,7 @@ struct adm_cmd cmds[] = {
 	{"pri-on-incon-degr", adm_khelper, DRBD_acf3_handler},
 	{"pri-lost-after-sb", adm_khelper, DRBD_acf3_handler},
 	{"fence-peer", adm_khelper, DRBD_acf3_res_handler},
+	{"unfence-peer", adm_khelper, DRBD_acf3_res_handler},
 	{"local-io-error", adm_khelper, DRBD_acf3_handler},
 	{"pri-lost", adm_khelper, DRBD_acf3_handler},
 	{"initial-split-brain", adm_khelper, DRBD_acf3_handler},
@@ -1729,12 +1730,12 @@ static int adm_generic_b(struct cfg_ctx *ctx)
 
 	_adm_generic(ctx, SLEEPS_SHORT | RETURN_STDERR_FD, &pid, &fd, NULL);
 
-	if (fd < 0) {
-		err("Strange: got negative fd.\n");
-		exit(E_THINKO);
-	}
-
 	if (!dry_run) {
+		if (fd < 0) {
+			err("Strange: got negative fd.\n");
+			exit(E_THINKO);
+		}
+
 		while (1) {
 			rr = read(fd, buffer + s, 4096 - s);
 			if (rr <= 0)
@@ -2243,7 +2244,7 @@ static int adm_wait_c(struct cfg_ctx *ctx)
 			// one connect-interval? two?
 			timeout *= 2;
 		}
-		argv[argc++] = "-t";
+		argv[argc++] = "--wfc-timeout";
 		ssprintf(argv[argc], "%lu", timeout);
 		argc++;
 	} else {

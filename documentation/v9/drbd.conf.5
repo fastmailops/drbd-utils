@@ -149,6 +149,7 @@ common
 global
 resource
    connection
+      path
       net
    connection\-mesh
       net
@@ -157,9 +158,9 @@ resource
    handlers
    [net]
    on
-      [disk]
       volume
          disk
+         [disk]
    options
    stacked\-on\-top\-of
    startup
@@ -205,9 +206,18 @@ section\&. All resources inherit the parameters in these sections as their defau
 .\" drbd.conf: connection
 Define a connection between two hosts\&. This section must contain two
 \fBhost\fR
-parameters\&. The optional
+parameters or multiple
+\fBpath sections\fR\&. The optional
 \fIname\fR
 is used to refer to the connection in the system log and in other messages\&. If no name is specified, the peer\*(Aqs host name is used instead\&.
+.RE
+.PP
+\fBpath\fR
+.RS 4
+.\" drbd.conf: path
+Define a path between two hosts\&. This section must contain two
+\fBhost\fR
+parameters\&.
 .RE
 .PP
 \fBconnection\-mesh\fR
@@ -404,6 +414,27 @@ section in a resource\&. If a port number is defined, this endpoint will use the
 \fBon\fR
 section\&. Each
 \fBconnection\fR
+section must contain exactly two
+\fBhost\fR
+parameters\&. Instead of two
+\fBhost\fR
+parameters the connection may contain multiple
+\fBpath\fR
+sections\&.
+.RE
+.SS "Section path Parameters"
+.PP
+\fBhost \fR\fB\fIname\fR\fR [\fBaddress \fR\fB[address\-family]\fR\fB \fR\fB\fIaddress\fR\fR] [\fBport \fR\fB\fIport\-number\fR\fR]
+.RS 4
+.\" drbd.conf: host
+Defines an endpoint for a connection\&. Each
+\fBhost\fR
+statement refers to an
+\fBon\fR
+section in a resource\&. If a port number is defined, this endpoint will use the specified port instead of the port defined in the
+\fBon\fR
+section\&. Each
+\fBpath\fR
 section must contain exactly two
 \fBhost\fR
 parameters\&.
@@ -663,6 +694,51 @@ Define that a device should only resynchronize after the specified other device\
 .RS 4
 .\" drbd.conf: resync-rate
 Define how much bandwidth DRBD may use for resynchronizing\&. DRBD allows "normal" application I/O even during a resync\&. If the resync takes up too much bandwidth, application I/O can become very slow\&. This parameter allows to avoid that\&. Please note this is option only works when the dynamic resync controller is disabled\&.
+.RE
+.PP
+\fBrs\-discard\-granularity \fR\fB\fIbyte\fR\fR
+.RS 4
+.\" drbd.conf: rs-discard-granularity
+When
+\fBrs\-discard\-granularity\fR
+is set to a non zero, positive value then DRBD tries to do a resync operation in requests of this size\&. In case such a block contains only zero bytes on the sync source node, the sync target node will issue a discard/trim/unmap command for the area\&.
+.sp
+The value is constrained by the discard granularity of the backing block device\&. In case
+\fBrs\-discard\-granularity\fR
+is not a multiplier of the discard granularity of the backing block device DRBD rounds it up\&. The feature only gets active if the backing block device reads back zeroes after a discard command\&.
+.sp
+The default value of is 0\&. This option is available since 8\&.4\&.7\&.
+.RE
+.PP
+\fBdiscard\-zeroes\-if\-aligned \fR\fB{yes | no}\fR
+.RS 4
+.\" drbd.conf: discard-zeroes-if-aligned
+There are several aspects to discard/trim/unmap support on linux block devices\&. Even if discard is supported in general, it may fail silently, or may partially ignore discard requests\&. Devices also announce whether reading from unmapped blocks returns defined data (usually zeroes), or undefined data (possibly old data, possibly garbage)\&.
+.sp
+If on different nodes, DRBD is backed by devices with differing discard characteristics, discards may lead to data divergence (old data or garbage left over on one backend, zeroes due to unmapped areas on the other backend)\&. Online verify would now potentially report tons of spurious differences\&. While probably harmless for most use cases (fstrim on a file system), DRBD cannot have that\&.
+.sp
+To play safe, we have to disable discard support, if our local backend (on a Primary) does not support "discard_zeroes_data=true"\&. We also have to translate discards to explicit zero\-out on the receiving side, unless the receiving side (Secondary) supports "discard_zeroes_data=true", thereby allocating areas what were supposed to be unmapped\&.
+.sp
+There are some devices (notably the LVM/DM thin provisioning) that are capable of discard, but announce discard_zeroes_data=false\&. In the case of DM\-thin, discards aligned to the chunk size will be unmapped, and reading from unmapped sectors will return zeroes\&. However, unaligned partial head or tail areas of discard requests will be silently ignored\&.
+.sp
+If we now add a helper to explicitly zero\-out these unaligned partial areas, while passing on the discard of the aligned full chunks, we effectively achieve discard_zeroes_data=true on such devices\&.
+.sp
+Setting
+\fBdiscard\-zeroes\-if\-aligned\fR
+to
+\fByes\fR
+will allow DRBD to use discards, and to announce discard_zeroes_data=true, even on backends that announce discard_zeroes_data=false\&.
+.sp
+Setting
+\fBdiscard\-zeroes\-if\-aligned\fR
+to
+\fBno\fR
+will cause DRBD to always fall\-back to zero\-out on the receiving side, and to not even announce discard capabilities on the Primary, if the respective backend announces discard_zeroes_data=false\&.
+.sp
+We used to ignore the discard_zeroes_data setting completely\&. To not break established and expected behaviour, and suddenly cause fstrim on thin\-provisioned LVs to run out\-of\-space instead of freeing up space, the default value is
+\fByes\fR\&.
+.sp
+This option is available since 8\&.4\&.7\&.
 .RE
 .SS "Section global Parameters"
 .PP

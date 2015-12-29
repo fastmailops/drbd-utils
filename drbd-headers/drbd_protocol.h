@@ -73,6 +73,10 @@ enum drbd_packet {
 	 * which is why I chose TRIM here, to disambiguate. */
 	P_TRIM                = 0x31,
 
+	/* Only use these two if both support FF_THIN_RESYNC */
+	P_RS_THIN_REQ         = 0x32, /* Request a block for resync or reply P_RS_DEALLOCATED */
+	P_RS_DEALLOCATED      = 0x33, /* Contains only zeros on sync source node */
+
 	P_PEER_ACK            = 0x40, /* meta sock: tell which nodes have acked a request */
 	P_PEERS_IN_SYNC       = 0x41, /* data sock: Mark area as in sync */
 
@@ -185,6 +189,7 @@ struct p_block_req {
  */
 
 #define FF_TRIM      1
+#define FF_THIN_RESYNC 2
 
 struct p_connection_features {
 	uint32_t protocol_min;
@@ -261,6 +266,9 @@ struct p_protocol {
 #define UUID_FLAG_STABLE 32
 #define UUID_FLAG_GOT_STABLE 64 /* send UUIDs */
 #define UUID_FLAG_RESYNC 128    /* compare UUIDs and eventually start resync */
+#define UUID_FLAG_RECONNECT 256
+#define UUID_FLAG_DISKLESS_PRIMARY 512 /* Use with UUID_FLAG_RESYNC if a diskless primary is
+					  the reason */
 
 struct p_uuids {
 	uint64_t current_uuid;
@@ -283,8 +291,13 @@ struct p_uuids110 {
 				    The remaining slots carry history uuids */
 } __packed;
 
+struct p_current_uuid {
+	uint64_t uuid;
+	uint64_t weak_nodes;
+} __packed;
+
 struct p_uuid {
-	uint64_t	    uuid;
+	uint64_t uuid;
 } __packed;
 
 struct p_sizes {
