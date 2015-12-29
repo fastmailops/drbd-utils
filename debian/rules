@@ -6,7 +6,7 @@
 PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
 
 %:
-	dh $@ --with systemd
+	dh $@ --with systemd,bash-completion
 
 override_dh_auto_clean:
 	dh_auto_clean
@@ -16,7 +16,8 @@ override_dh_auto_configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
 		--sbindir=/sbin --with-utils --with-udev --with-xen \
 		--with-pacemaker --with-rgmanager --with-bashcompletion \
-		--with-initscripttype=sysv
+		--with-initscripttype=sysv \
+		--with-bashcompletion=no
 
 override_dh_auto_build:
 	dh_auto_build
