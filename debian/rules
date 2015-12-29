@@ -6,7 +6,7 @@
 PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
 
 %:
-	dh $@ --with systemd,bash-completion
+	dh $@ --with bash-completion
 
 override_dh_auto_clean:
 	dh_auto_clean
