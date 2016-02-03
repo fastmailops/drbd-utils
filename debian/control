@@ -10,8 +10,8 @@ Build-Depends: debhelper (>= 9), flex, xsltproc,
  docbook-xsl, docbook-xml, udev, bash-completion
 Standards-Version: 3.9.6
 Homepage: http://www.drbd.org/
-Vcs-Browser: http://anonscm.debian.org/gitweb/?p=debian-ha/drbd-utils.git
-Vcs-Git: git://anonscm.debian.org/debian-ha/drbd-utils/
+Vcs-Browser: https://anonscm.debian.org/gitweb/?p=debian-ha/drbd-utils.git
+Vcs-Git: https://anonscm.debian.org/git/debian-ha/drbd-utils/
 
 Package: drbd-utils
 Architecture: linux-any
