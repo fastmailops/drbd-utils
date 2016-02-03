@@ -176,6 +176,7 @@ enum drbd_ret_code {
 	ERR_IMPLICIT_SHRINK     = 170,
 	ERR_INVALID_PEER_NODE_ID = 171,
 	ERR_CREATE_TRANSPORT    = 172,
+	ERR_LOCAL_AND_PEER_ADDR = 173,
 
 	/* insert new ones above this line */
 	AFTER_LAST_ERR_CODE
@@ -395,6 +396,15 @@ enum drbd_notification_type {
 
 	NOTIFY_CONTINUES = 0x8000,
 	NOTIFY_FLAGS = NOTIFY_CONTINUES,
+};
+
+/* These values are part of the ABI! */
+enum drbd_peer_state {
+	P_INCONSISTENT = 3,
+	P_OUTDATED = 4,
+	P_DOWN = 5,
+	P_PRIMARY = 6,
+	P_FENCING = 7,
 };
 
 /* magic numbers used in meta data and network packets */

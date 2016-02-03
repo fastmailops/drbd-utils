@@ -1,22 +1,13 @@
 '\" t
 .\"     Title: drbdadm
 .\"    Author: [see the "Author" section]
-.\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
+.\" Generator: DocBook XSL Stylesheets v1.75.2 <http://docbook.sf.net/>
 .\"      Date: 5 Dec 2008
 .\"    Manual: System Administration
 .\"    Source: DRBD 8.3.2
 .\"  Language: English
 .\"
 .TH "DRBDADM" "8" "5 Dec 2008" "DRBD 8.3.2" "System Administration"
-.\" -----------------------------------------------------------------
-.\" * Define some portability stuff
-.\" -----------------------------------------------------------------
-.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-.\" http://bugs.debian.org/507673
-.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
-.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-.ie \n(.g .ds Aq \(aq
-.el       .ds Aq '
 .\" -----------------------------------------------------------------
 .\" * set default formatting
 .\" -----------------------------------------------------------------
@@ -34,6 +25,7 @@ drbdadm \- Administration tool for DRBD .\" drbdadm
 \fBdrbdadm\fR [\-d] [\-c\ {\fIfile\fR}] [\-t\ {\fIfile\fR}] [\-s\ {\fIcmd\fR}] [\-m\ {\fIcmd\fR}] [\-S] [\-h\ {\fIhost\fR}] [\-\-\ {\fIbackend\-options\fR}] {\fIcommand\fR} [all | \fIresource\fR...]
 .SH "DESCRIPTION"
 .PP
+
 \fBDrbdadm\fR
 is the high level tool of the DRBD program suite\&.
 \fBDrbdadm\fR
@@ -117,19 +109,19 @@ or
 .PP
 attach
 .RS 4
-Attaches a local backing block device to the DRBD resource\*(Aqs device\&.
+Attaches a local backing block device to the DRBD resource\'s device\&.
 .RE
 .PP
 detach
 .RS 4
 .\" drbdadm: detach
-Removes the backing storage device from a DRBD resource\*(Aqs device\&.
+Removes the backing storage device from a DRBD resource\'s device\&.
 .RE
 .PP
 connect
 .RS 4
 .\" drbdadm: connect
-Sets up the network configuration of the resource\*(Aqs device\&. If the peer device is already configured, the two DRBD devices will connect\&. If there are more than two host sections in the resource you need to use the
+Sets up the network configuration of the resource\'s device\&. If the peer device is already configured, the two DRBD devices will connect\&. If there are more than two host sections in the resource you need to use the
 \fB\-\-peer\fR
 option to select the peer you want to connect to\&.
 .RE
@@ -161,7 +153,7 @@ Is a shortcut for disconnect and detach\&.
 primary
 .RS 4
 .\" drbdadm: primary
-Promote the resource\*(Aqs device into primary role\&. You need to do this before any access to the device, such as creating or mounting a file system\&.
+Promote the resource\'s device into primary role\&. You need to do this before any access to the device, such as creating or mounting a file system\&.
 .RE
 .PP
 secondary
@@ -184,18 +176,18 @@ invalidate\-remote
 .RS 4
 .\" drbdadm: invalidate-remote
 This command is similar to the invalidate command, however, the
-\fIpeer\*(Aqs\fR
+\fIpeer\'s\fR
 backing storage is invalidated and hence rewritten with the data of the local node\&. To avoid races, you need an established replication link, or be disconnected Primary\&.
 .RE
 .PP
 resize
 .RS 4
 .\" drbdadm: resize
-Causes DRBD to re\-examine all sizing constraints, and resize the resource\*(Aqs device accordingly\&. For example, if you increased the size of your backing storage devices (on both nodes, of course), then DRBD will adopt the new size after you called this command on one of your nodes\&. Since new storage space must be synchronised this command only works if there is at least one primary node present\&.
+Causes DRBD to re\-examine all sizing constraints, and resize the resource\'s device accordingly\&. For example, if you increased the size of your backing storage devices (on both nodes, of course), then DRBD will adopt the new size after you called this command on one of your nodes\&. Since new storage space must be synchronised this command only works if there is at least one primary node present\&.
 .sp
 The
 \fB\-\-assume\-peer\-has\-space\fR
-allows you to resize a device which is currently not connected to the peer\&. Use with care, since if you do not resize the peer\*(Aqs disk as well, further connect attempts of the two will fail\&.
+allows you to resize a device which is currently not connected to the peer\&. Use with care, since if you do not resize the peer\'s disk as well, further connect attempts of the two will fail\&.
 .sp
 The
 \fB\-\-assume\-clean\fR
@@ -317,7 +309,7 @@ Just parse the configuration file and dump it to stdout\&. May be used to check 
 outdate
 .RS 4
 .\" drbdadm: outdate
-Used to mark the node\*(Aqs data as outdated\&. Usually used by the peer\*(Aqs fence\-peer handler\&.
+Used to mark the node\'s data as outdated\&. Usually used by the peer\'s fence\-peer handler\&.
 .RE
 .PP
 verify
@@ -339,7 +331,7 @@ See also the notes on data integrity on the drbd\&.conf manpage\&.
 pause\-sync
 .RS 4
 .\" drbdadm: pause-sync
-Temporarily suspend an ongoing resynchronization by setting the local pause flag\&. Resync only progresses if neither the local nor the remote pause flag is set\&. It might be desirable to postpone DRBD\*(Aqs resynchronization until after any resynchronization of the backing storage\*(Aqs RAID setup\&.
+Temporarily suspend an ongoing resynchronization by setting the local pause flag\&. Resync only progresses if neither the local nor the remote pause flag is set\&. It might be desirable to postpone DRBD\'s resynchronization until after any resynchronization of the backing storage\'s RAID setup\&.
 .RE
 .PP
 resume\-sync
@@ -373,10 +365,10 @@ Shows all commands undocumented on purpose\&.
 This document was revised for version 8\&.3\&.2 of the DRBD distribution\&.
 .SH "AUTHOR"
 .sp
-Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>
+Written by Philipp Reisner philipp\&.reisner@linbit\&.com and Lars Ellenberg lars\&.ellenberg@linbit\&.com
 .SH "REPORTING BUGS"
 .sp
-Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
+Report bugs to drbd\-user@lists\&.linbit\&.com\&.
 .SH "COPYRIGHT"
 .sp
 Copyright 2001\-2008 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
