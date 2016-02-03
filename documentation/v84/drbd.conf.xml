@@ -1104,8 +1104,7 @@
                 <secondary>ko-count</secondary>
               </indexterm> In case the secondary node fails to complete a single write request for
             <replaceable>count</replaceable> times the <replaceable>timeout</replaceable>, it is
-            expelled from the cluster. (I.e. the primary node goes into
-	    <option>StandAlone</option> mode.)
+            expelled from the cluster. (I.e. the primary node will kill and restart the connection.)
 	    To disable this feature, you should explicitly set it to 0; defaults may change between versions.
 	    </para>
           </listitem>
@@ -1422,8 +1421,12 @@
                 <term xml:id="call-pri-lost"><option>call-pri-lost</option></term>
 
                 <listitem>
-                  <para>Call the "pri-lost" helper program on one of the machines. This program is
-                  expected to reboot the machine, i.e. make it secondary.</para>
+                  <para>Call the <option>pri-lost-after-sb</option> helper
+                    program on one of the machines unless that machine can
+                    demote to secondary. The helper program is expected to
+                    reboot the machine, which brings the node into a secondary
+                    role. Which machine runs the helper program is determined
+                    by the <option>after-sb-0pri</option> strategy.</para>
                 </listitem>
               </varlistentry>
             </variablelist>
