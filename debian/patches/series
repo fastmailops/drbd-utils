@@ -2,6 +2,5 @@
 udev-rules-name
 disable-version-warning
 disable-automatic-user-survey.patch
-add-lsb-description.patch
 initscript-remove-path.patch
 reproducible-build
