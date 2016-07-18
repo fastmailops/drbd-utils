@@ -1,3 +1,14 @@
+drbd-utils (8.9.7-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Refresh patches
+  * Drop add-lsb-description.patch; fixed upstream
+  * d/watch: use drbd.org instead of oss.linbit.com
+  * Bump Standards to 3.9.8; no changes needed
+  * Enable all hardening buildflags
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Mon, 18 Jul 2016 22:49:38 +0300
+
 drbd-utils (8.9.6-1) unstable; urgency=medium
 
   * New upstream release.
