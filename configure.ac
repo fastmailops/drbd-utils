@@ -7,7 +7,7 @@ dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.6, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.7, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -84,7 +84,7 @@ AC_ARG_WITH([bashcompletion],
 	[WITH_BASHCOMPLETION=$withval])
 AC_ARG_WITH([distro],
 	[AS_HELP_STRING([--with-distro],
-			[Configure for a specific distribution (supported values: generic, redhat, suse, debian, gentoo, slackware; default is to autodetect)])],
+			[Configure for a specific distribution (supported values: generic, redhat, suse, debian; default is to autodetect)])],
 	[DISTRO=$withval])
 AC_ARG_WITH([initdir],
 	[AS_HELP_STRING([--with-initdir],
@@ -162,7 +162,7 @@ AC_SUBST(udevrulesdir)
 
 AC_ARG_WITH([initscripttype],
 	    [AS_HELP_STRING([--with-initscripttype=INIT_SCRIPT_TYPE],
-			    [Type of init script to install (sysv|systemd|both). [auto]])
+			    [Type of init script to install (sysv|systemd|both|none). [auto]])
 	    ])
 case "$with_initscripttype" in
 	"")
@@ -171,7 +171,7 @@ case "$with_initscripttype" in
 		else
 			initscripttype=sysv
 		fi ;;
-	sysv|systemd|both)
+	sysv|systemd|both|none)
 		initscripttype=$with_initscripttype ;;
 	*)
 		AC_MSG_ERROR([Illegal value -$with_initscripttype- for option --with-initscripttype]) ;;
@@ -249,16 +249,11 @@ RPM_REQ_CHKCONFIG_POST=""
 RPM_REQ_CHKCONFIG_PREUN=""
 dnl figure out the distribution we're running on, and set some variables accordingly
 if test -z $DISTRO; then
-   AC_CHECK_FILE(/etc/gentoo-release, [DISTRO="gentoo"])
    AC_CHECK_FILE(/etc/redhat-release, [DISTRO="redhat"])
-   AC_CHECK_FILE(/etc/slackware-version, [DISTRO="slackware"])
    AC_CHECK_FILE(/etc/debian_version, [DISTRO="debian"])
    AC_CHECK_FILE(/etc/SuSE-release, [DISTRO="suse"])
 fi
 case "$DISTRO" in
-     gentoo)
-	AC_MSG_NOTICE([configured for Gentoo.])
-	;;
      redhat)
 	test -z $INITDIR && INITDIR="$sysconfdir/rc.d/init.d"
 	RPM_DIST_TAG="%{?dist}"
@@ -279,10 +274,6 @@ case "$DISTRO" in
 		RPM_REQ_BASH_COMPLETION="Requires: bash-completion"
 		RPM_REQ_XEN="Requires: xen"
 	fi
-	;;
-     slackware)
-	test -z $INITDIR && INITDIR="$sysconfdir/rc.d"
-	AC_MSG_NOTICE([configured for Slackware.])
 	;;
      debian)
 	AC_MSG_NOTICE([configured for Debian (includes Ubuntu).])

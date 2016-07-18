@@ -512,17 +512,23 @@ void compare_volume(struct d_volume *conf, struct d_volume *kern)
 {
 	struct d_option *c, *k;
 
+	conf->adj_add_minor = conf->device_minor != kern->device_minor;
+	conf->adj_del_minor = conf->adj_add_minor;
+
 	/* do we need to do a full attach,
 	 * potentially with a detach first? */
-	conf->adj_attach = (conf->device_minor != kern->device_minor)
-			|| !disk_equal(conf, kern);
+	if (!disk_equal(conf, kern) || conf->adj_add_minor) {
+		conf->adj_attach = conf->disk != NULL;
+		conf->adj_detach = kern->disk != NULL;
+	}
 
 	/* do we need to do a full (detach/)attach,
 	 * because max_bio_bvec setting differs? */
 	compare_max_bio_bvecs(conf, kern);
 
 	/* do we need to resize? */
-	compare_size(conf, kern);
+	if (!conf->adj_attach)
+		compare_size(conf, kern);
 
 	/* skip these two options (if present) for the opts_equal below.
 	 * These have been move_opt_to_head()ed before already. */
@@ -602,13 +608,24 @@ struct d_volume *compare_volumes(struct d_volume *conf, struct d_volume *kern)
 	return conf_head;
 }
 
+static struct d_volume *matching_volume(struct d_volume *conf_vol, struct d_volume *kern_head)
+{
+	struct d_volume *vol;
+
+	for_each_volume(vol, kern_head) {
+		if (vol->vnr == conf_vol->vnr)
+			return vol;
+	}
+	return NULL;
+}
+
 /*
  * CAUTION this modifies global static char * config_file!
  */
 int adm_adjust(struct cfg_ctx *ctx)
 {
 	char* argv[20];
-	int pid,argc, i;
+	int pid, argc;
 	struct d_resource* running;
 	struct d_volume *vol;
 
@@ -626,7 +643,7 @@ int adm_adjust(struct cfg_ctx *ctx)
 
 	int can_do_proxy = 1;
 	char config_file_dummy[250];
-	char show_conn[128];
+	char *show_conn;
 	char *resource_name;
 
 	/* disable check_uniq, so it won't interfere
@@ -665,11 +682,7 @@ int adm_adjust(struct cfg_ctx *ctx)
 	if (ctx->res->me->proxy) {
 		line = 1;
 		resource_name = proxy_connection_name(ctx->res);
-		i=snprintf(show_conn, sizeof(show_conn), "show proxy-settings %s", resource_name);
-		if (i>= sizeof(show_conn)-1) {
-			err("connection name too long");
-			exit(E_THINKO);
-		}
+		m_asprintf(&show_conn, "show proxy-settings %s", resource_name);
 		sprintf(config_file_dummy,"drbd-proxy-ctl -c '%s'", show_conn);
 		config_file = config_file_dummy;
 
@@ -713,10 +726,16 @@ int adm_adjust(struct cfg_ctx *ctx)
 	 * or is this just some attribute change? */
 	for_each_volume(vol, ctx->res->me->volumes) {
 		struct cfg_ctx tmp_ctx = { .res = ctx->res, .vol = vol };
-		if (vol->adj_detach)
-			schedule_deferred_cmd(adm_generic_s, &tmp_ctx, "detach", CFG_PREREQ);
-		if (vol->adj_del_minor)
-			schedule_deferred_cmd(adm_generic_s, &tmp_ctx, "del-minor", CFG_PREREQ);
+		if (vol->adj_detach || vol->adj_del_minor) {
+			struct d_volume *kern_vol = matching_volume(vol, running->me->volumes);
+			struct cfg_ctx k_ctx = tmp_ctx;
+			if (kern_vol != NULL)
+				k_ctx.vol = kern_vol;
+			if (vol->adj_detach)
+				schedule_deferred_cmd(adm_generic_s, &k_ctx, "detach", CFG_PREREQ);
+			if (vol->adj_del_minor)
+				schedule_deferred_cmd(adm_generic_s, &k_ctx, "del-minor", CFG_PREREQ);
+	        }
 		if (vol->adj_add_minor)
 			schedule_deferred_cmd(adm_new_minor, &tmp_ctx, "new-minor", CFG_DISK_PREREQ);
 		if (vol->adj_attach)

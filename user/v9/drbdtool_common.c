@@ -75,11 +75,12 @@ void dt_print_v9_uuids(const uint64_t* uuid, unsigned int mdf_flags, unsigned in
 	       mdf_flags & MDF_CRASHED_PRIMARY ? 1 : 0,
 	       mdf_flags & MDF_AL_CLEAN ? 1 : 0,
 	       mdf_flags & MDF_AL_DISABLED ? 1 : 0);
-	printf(":%d:%d:%d:%d\n",
+	printf(":%d:%d:%d:%d:%d\n",
 	       mdf_peer_flags & MDF_PEER_CONNECTED ? 1 : 0,
 	       mdf_peer_flags & MDF_PEER_OUTDATED ? 1 : 0,
 	       mdf_peer_flags & MDF_PEER_FENCING ? 1 : 0,
-	       mdf_peer_flags & MDF_PEER_FULL_SYNC ? 1 : 0);
+	       mdf_peer_flags & MDF_PEER_FULL_SYNC ? 1 : 0,
+	       mdf_peer_flags & MDF_PEER_DEVICE_SEEN ? 1 : 0);
 }
 
 void dt_pretty_print_v9_uuids(const uint64_t* uuid, unsigned int mdf_flags, unsigned int mdf_peer_flags)
@@ -93,17 +94,18 @@ void dt_pretty_print_v9_uuids(const uint64_t* uuid, unsigned int mdf_flags, unsi
 "       V               V                 V         V\n");
 	dt_print_v9_uuids(uuid, mdf_flags, mdf_peer_flags);
 	printf(
-"                                                                    ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n"
-"                                      -<  Data consistency flag  >--+ | | | | | | | | |\n"
-"                             -<  Data was/is currently up-to-date  >--+ | | | | | | | |\n"
-"                                  -<  Node was/is currently primary  >--+ | | | | | | |\n"
-" -<  This node was a crashed primary, and has not seen its peer since  >--+ | | | | | |\n"
-"             -<  The activity-log was applied, the disk can be attached  >--+ | | | | |\n"
-"        -<  The activity-log was disabled, peer is completely out of sync  >--+ | | | |\n"
-"                                        -<  Node was/is currently connected  >--+ | | |\n"
-"                            -<  The peer's disk was out-dated or inconsistent  >--+ | |\n"
-"                               -<   A fence policy other the dont-care was used  >--+ |\n"
-"                -<  Node was in the progress of marking all blocks as out of sync  >--+\n"
+"                                                                    ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n"
+"                                      -<  Data consistency flag  >--+ | | | | | | | | | |\n"
+"                             -<  Data was/is currently up-to-date  >--+ | | | | | | | | |\n"
+"                                  -<  Node was/is currently primary  >--+ | | | | | | | |\n"
+" -<  This node was a crashed primary, and has not seen its peer since  >--+ | | | | | | |\n"
+"             -<  The activity-log was applied, the disk can be attached  >--+ | | | | | |\n"
+"        -<  The activity-log was disabled, peer is completely out of sync  >--+ | | | | |\n"
+"                                        -<  Node was/is currently connected  >--+ | | | |\n"
+"                            -<  The peer's disk was out-dated or inconsistent  >--+ | | |\n"
+"                               -<   A fence policy other the dont-care was used  >--+ | |\n"
+"                -<  Node was in the progress of marking all blocks as out of sync  >--+ |\n"
+"                   -<  At least once we saw this node with a backing device attached >--+\n"
 "\n");
 }
 
@@ -324,10 +326,11 @@ int version_equal(const struct version *rev1, const struct version *rev2)
 void config_help_legacy(const char * const tool,
 		const struct version * const driver_version)
 {
-	fprintf(stderr,
-			"This %s was build without support for drbd kernel code (%d.%d).\n"
-			"Consider to rebuild your user land tools\n"
+	fprintf(stderr, "DRBD kernel driver version %d.%d detected.\n"
+			"This %s was built without support for drbd kernel code %d.%d.\n"
+			"Consider to upgrade your DRBD kernel driver. Or rebuild your user land tools\n"
 			"and configure --with-%d%d-support ...\n",
+			driver_version->version.major, driver_version->version.minor,
 			tool,
 			driver_version->version.major, driver_version->version.minor,
 			driver_version->version.major, driver_version->version.minor);

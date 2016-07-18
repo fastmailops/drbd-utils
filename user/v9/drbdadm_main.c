@@ -88,6 +88,7 @@ struct option *admopt = general_admopt;
 extern int yydebug;
 extern FILE *yyin;
 
+static int adm_adjust(const struct cfg_ctx *ctx);
 static int adm_new_minor(const struct cfg_ctx *ctx);
 static int adm_resource(const struct cfg_ctx *);
 static int adm_attach(const struct cfg_ctx *);
@@ -333,7 +334,7 @@ static struct adm_cmd outdate_cmd = {"outdate", adm_outdate, ACF1_DEFAULT};
 static struct adm_cmd verify_cmd = {"verify", adm_drbdsetup, ACF1_PEER_DEVICE};
 static struct adm_cmd pause_sync_cmd = {"pause-sync", adm_drbdsetup, ACF1_PEER_DEVICE};
 static struct adm_cmd resume_sync_cmd = {"resume-sync", adm_drbdsetup, ACF1_PEER_DEVICE};
-static struct adm_cmd adjust_cmd = {"adjust", adm_adjust, ACF1_RESNAME};
+static struct adm_cmd adjust_cmd = {"adjust", adm_adjust, &adjust_ctx, ACF1_RESNAME .vol_id_optional = 1};
 static struct adm_cmd adjust_wp_cmd = {"adjust-with-progress", adm_adjust_wp, ACF1_RESNAME};
 static struct adm_cmd wait_c_cmd = {"wait-connect", adm_wait_c, ACF1_WAIT};
 static struct adm_cmd wait_sync_cmd = {"wait-sync", adm_wait_c, ACF1_WAIT};
@@ -376,7 +377,7 @@ static struct adm_cmd proxy_down_cmd = {"proxy-down", adm_proxy_down, ACF2_PROXY
 
 /*  */ struct adm_cmd new_resource_cmd = {"new-resource", adm_resource, ACF2_SH_RESNAME};
 /*  */ struct adm_cmd new_minor_cmd = {"new-minor", adm_new_minor, ACF4_ADVANCED};
-/*  */ struct adm_cmd del_minor_cmd = {"del-minor", adm_drbdsetup, ACF1_MINOR_ONLY .show_in_usage = 4 };
+/*  */ struct adm_cmd del_minor_cmd = {"del-minor", adm_drbdsetup, ACF1_MINOR_ONLY .show_in_usage = 4, .disk_required = 0, };
 
 static struct adm_cmd khelper01_cmd = {"before-resync-target", adm_khelper, ACF3_RES_HANDLER};
 static struct adm_cmd khelper02_cmd = {"after-resync-target", adm_khelper, ACF3_RES_HANDLER};
@@ -767,6 +768,26 @@ int run_deferred_cmds(void)
 	return ret;
 }
 
+static int adm_adjust(const struct cfg_ctx *ctx)
+{
+	int adjust_flags = ADJUST_DISK | ADJUST_NET;
+	struct d_name *opt;
+
+	opt = find_backend_option("--skip-disk");
+	if (opt) {
+		STAILQ_REMOVE(&backend_options, opt, d_name, link);
+		adjust_flags &= ~ADJUST_DISK;
+	}
+
+	opt = find_backend_option("--skip-net");
+	if (opt) {
+		STAILQ_REMOVE(&backend_options, opt, d_name, link);
+		adjust_flags &= ~ADJUST_NET;
+	}
+
+	return _adm_adjust(ctx, adjust_flags);
+}
+
 static int sh_nop(const struct cfg_ctx *ctx)
 {
 	return 0;
@@ -775,19 +796,14 @@ static int sh_nop(const struct cfg_ctx *ctx)
 static int sh_resources(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res;
-	int first = 1;
 
 	for_each_resource(res, &config) {
 		if (res->ignore)
 			continue;
 		if (is_drbd_top != res->stacked)
 			continue;
-		printf(first ? "%s" : " %s", esc(res->name));
-		first = 0;
+		printf("%s\n", res->name);
 	}
-	if (!first)
-		printf("\n");
-
 	return 0;
 }
 
@@ -1007,22 +1023,51 @@ static void find_drbdcmd(char **cmd, char **pathes)
      (ARGC)++; \
   })
 
-static void add_setup_options(char **argv, int *argcp)
+static bool is_valid_backend_option(const char* name, const struct context_def *context_def)
+{
+	const struct field_def *field;
+	/* options have a leading "--", while field names do not have that -> name + 2 */
+
+	if (context_def == &wildcard_ctx)
+		return true;
+
+	if (!context_def || strlen(name) <= 2)
+		return false;
+
+	for (field = context_def->fields; field->name; field++) {
+		if (!strcmp(name + 2, field->name))
+			return true;
+	}
+	return false;
+}
+
+static void add_setup_options(char **argv, int *argcp, const struct context_def *context_def)
 {
 	struct d_name *b_opt;
 	int argc = *argcp;
 
 	STAILQ_FOREACH(b_opt, &backend_options, link) {
-		argv[NA(argc)] = b_opt->name;
+		if (is_valid_backend_option(b_opt->name, context_def))
+			argv[NA(argc)] = b_opt->name;
 	}
 	*argcp = argc;
 }
 
-#define make_option(ARG, OPT) do {					\
-	if(OPT->value)							\
-		ARG = ssprintf("--%s=%s", OPT->name, OPT->value);	\
-	else 								\
-		ARG = ssprintf("--%s", OPT->name);			\
+#define make_option(ARG, OPT) do {						\
+	struct d_name *b_opt; 							\
+	bool found = false; 							\
+	STAILQ_FOREACH(b_opt, &backend_options, link) {				\
+		if (!strncmp(OPT->name, b_opt->name+2, strlen(OPT->name))) {	\
+			found = true;						\
+			break; 							\
+		} 								\
+	} 									\
+	if (!found) {								\
+		if(OPT->value)							\
+			ARG = ssprintf("--%s=%s", OPT->name, OPT->value);	\
+		else  								\
+			ARG = ssprintf("--%s", OPT->name);			\
+	}									\
 } while (0)
 
 #define make_options(ARG, OPTIONS) do {					\
@@ -1073,7 +1118,7 @@ static int adm_attach(const struct cfg_ctx *ctx)
 			make_options(argv[NA(argc)], &ctx->vol->disk_options);
 		}
 	}
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, SLEEPS_LONG, ctx->res->name);
@@ -1088,6 +1133,19 @@ struct d_option *find_opt(struct options *base, const char *name)
 			return option;
 
 	return NULL;
+}
+
+bool del_opt(struct options *base, const char * const name)
+{
+	struct d_option *opt;
+
+	if ((opt = find_opt(base, name))) {
+		STAILQ_REMOVE(base, opt, d_option, link);
+		free_opt(opt);
+		return true;
+	}
+
+	return false;
 }
 
 int adm_new_minor(const struct cfg_ctx *ctx)
@@ -1126,7 +1184,7 @@ static int adm_resource(const struct cfg_ctx *ctx)
 		argv[NA(argc)] = "--set-defaults";
 	if (reset || do_new_resource)
 		make_options(argv[NA(argc)], &res->res_options);
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = NULL;
 
 	ex = m_system_ex(argv, SLEEPS_SHORT, res->name);
@@ -1135,10 +1193,32 @@ static int adm_resource(const struct cfg_ctx *ctx)
 	return ex;
 }
 
+static off64_t read_drbd_dev_size(int minor)
+{
+	char *path;
+	FILE *file;
+	off64_t val;
+	int r;
+
+	m_asprintf(&path, "/sys/block/drbd%d/size", minor);
+	file = fopen(path, "r");
+	if (file) {
+		r = fscanf(file, "%" SCNd64, &val);
+		fclose(file);
+		if (r != 1)
+			val = -1;
+	} else
+		val = -1;
+
+	return val;
+}
+
 int adm_resize(const struct cfg_ctx *ctx)
 {
 	char *argv[MAX_ARGS];
 	struct d_option *opt;
+	bool is_resize = !strcmp(ctx->cmd->name, "resize");
+	off64_t old_size = -1;
 	int argc = 0;
 	int silent;
 	int ex;
@@ -1151,8 +1231,11 @@ int adm_resize(const struct cfg_ctx *ctx)
 		opt = find_opt(&ctx->res->disk_options, "size");
 	if (opt)
 		argv[NA(argc)] = ssprintf("--%s=%s", opt->name, opt->value);
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
+
+	if (is_resize && !dry_run)
+		old_size = read_drbd_dev_size(ctx->vol->device_minor);
 
 	/* if this is not "resize", but "check-resize", be silent! */
 	silent = !strcmp(ctx->cmd->name, "check-resize") ? SUPRESS_STDERR : 0;
@@ -1174,6 +1257,34 @@ int adm_resize(const struct cfg_ctx *ctx)
 	argv[3] = NULL;
 	/* ignore exit code */
 	m_system_ex(argv, SLEEPS_SHORT | silent, ctx->res->name);
+
+
+	/* Here comes a really uggly hack. Wait until the device size actually
+	   changed, but only up to 10 seconds if know the target size, up to
+	   3 seconds waiting for some change. */
+	if (old_size > 0) {
+		off64_t target_size, new_size;
+		int timeo;
+
+		target_size = m_strtoll(get_opt_val(&ctx->vol->disk_options, "size", "0"), 's');
+		timeo = target_size ? 100 : 30;
+
+		do {
+			new_size = read_drbd_dev_size(ctx->vol->device_minor);
+			if (new_size >= target_size) /* should be == , but driver ignores usize right now */
+				return 0;
+			if (new_size != old_size) {
+				if (target_size == 0)
+					return 0;
+				err("Size changed from %"PRId64" to %"PRId64", waiting for %"PRId64".\n",
+				    old_size, new_size, target_size);
+				old_size = new_size; /* I want to see it only once.*/
+			}
+
+			usleep(100000);
+		} while (timeo-- > 0);
+		return 1;
+	}
 
 	return 0;
 }
@@ -1206,7 +1317,7 @@ int _adm_drbdmeta(const struct cfg_ctx *ctx, int flags, char *argument)
 	argv[NA(argc)] = (char *)ctx->cmd->name;
 	if (argument)
 		argv[NA(argc)] = argument;
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, flags, ctx->res->name);
@@ -1238,7 +1349,7 @@ static void __adm_drbdsetup(const struct cfg_ctx *ctx, int flags, pid_t *pid, in
 			argv[NA(argc)] = ssprintf("%d", ctx->vol->device_minor);
 	}
 
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 
 	if (ctx->cmd == &invalidate_setup_cmd && ctx->conn)
 		argv[NA(argc)] = ssprintf("--sync-from-peer-node-id=%s", ctx->conn->peer->node_id);
@@ -1578,6 +1689,7 @@ int adm_peer_device(const struct cfg_ctx *ctx)
 		argv[NA(argc)] = "--set-defaults";
 
 	make_options(argv[NA(argc)], &peer_device->pd_options);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, SLEEPS_SHORT, res->name);
@@ -1595,7 +1707,7 @@ static int adm_connect(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = ssprintf("%s", res->name);
 	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
 
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, SLEEPS_SHORT, res->name);
@@ -1612,16 +1724,19 @@ static int adm_new_peer(const struct cfg_ctx *ctx)
 	bool reset = (ctx->cmd == &net_options_defaults_cmd);
 
 	argv[NA(argc)] = drbdsetup;
-	argv[NA(argc)] = (char *)ctx->cmd->name; /* "connect", "net-options" */
+	argv[NA(argc)] = (char *)ctx->cmd->name; /* "new-peer", "net-options" */
 	argv[NA(argc)] = ssprintf("%s", res->name);
 	argv[NA(argc)] = ssprintf("%s", conn->peer->node_id);
 
 	if (reset)
 		argv[NA(argc)] = "--set-defaults";
 
+	if (!strncmp(ctx->cmd->name, "net-options", 11))
+		del_opt(&conn->net_options, "transport");
+
 	make_options(argv[NA(argc)], &conn->net_options);
 
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, SLEEPS_SHORT, res->name);
@@ -1644,7 +1759,7 @@ static int adm_path(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = ssprintf_addr(path->my_address);
 	argv[NA(argc)] = ssprintf_addr(path->connect_to);
 
-	add_setup_options(argv, &argc);
+	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
 	return m_system_ex(argv, SLEEPS_SHORT, res->name);
@@ -3303,7 +3418,8 @@ int main(int argc, char **argv)
 				if (ctx.res->ignore && !is_dump) {
 					err("'%s' ignored, since this host (%s) is not mentioned with an 'on' keyword.\n",
 					    ctx.res->name, hostname);
-					/* rv = E_USAGE; rc in for scope and (re)set at beginning */
+					if (rv < E_USAGE)
+					       rv = E_USAGE;
 					continue;
 				}
 				if (is_drbd_top != ctx.res->stacked && !is_dump) {
@@ -3311,7 +3427,8 @@ int main(int argc, char **argv)
 					    ctx.res->name,
 					    ctx.res->stacked ? "stacked" : "normal",
 					    is_drbd_top ? "stacked" : "normal");
-					/* rv = E_USAGE; rc in for scope and (re)set at beginning */
+					if (rv < E_USAGE)
+					       rv = E_USAGE;
 					continue;
 				}
 				verify_ips(ctx.res);
@@ -3334,8 +3451,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* do we really have to bitor the exit code?
-	 * it is even only a Boolean value in this case! */
 	r = run_deferred_cmds();
 	if (r > rv)
 		rv = r;

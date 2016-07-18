@@ -133,12 +133,12 @@ if ls_stat_is_dir_0700_root $DEBUG_LOG_DIR &&
 then
 	USE_DEBUG_LOG=true
 	# PS4='+[`date +%F\ %T.%3N`] '
-	exec 9>>"$DEBUG_LOG"
-	date >&9
-	echo "$*" >&9
-	env | grep OCF_ | sort >&9
+	exec 8>>"$DEBUG_LOG"
+	date >&8
+	echo "$0 $*" >&8
+	env | grep '^OCF_' | sort >&8
 else
-	exec 9>/dev/null
+	exec 8>/dev/null
 fi
 # end of debugging aid
 #######################################################################
@@ -263,6 +263,7 @@ See description of unfence_if_all_uptodate.
 
 <actions>
 <action name="start"   timeout="240" />
+<action name="reload"  timeout="30" />
 <action name="promote"	 timeout="90" />
 <action name="demote"	timeout="90" />
 <action name="notify"	timeout="90" />
@@ -293,7 +294,7 @@ do_cmd() {
 		ocf_log debug "$DRBD_RESOURCE: Command output: $cmd_out"
 	fi
 
-	echo "$cmd_out"
+	[ -n "$cmd_out" ] && echo "$cmd_out"
 
 	return $ret
 }
@@ -375,11 +376,11 @@ drbd_set_status_variables() {
 	[[ ${#DRBD_DSTATE_REMOTE[@]} != 0 ]] || DRBD_DSTATE_REMOTE=(DUnknown)
 
 
-	: == DEBUG == DRBD_ROLE_LOCAL    == ${DRBD_ROLE_LOCAL[@]} ==
-	: == DEBUG == DRBD_ROLE_REMOTE   == ${DRBD_ROLE_REMOTE[@]} ==
-	: == DEBUG == DRBD_CSTATE        == ${DRBD_CSTATE[@]} ==
-	: == DEBUG == DRBD_DSTATE_LOCAL  == ${DRBD_DSTATE_LOCAL[@]} ==
-	: == DEBUG == DRBD_DSTATE_REMOTE == ${DRBD_DSTATE_REMOTE[@]} ==
+	: == DEBUG == DRBD_ROLE_LOCAL    == "${DRBD_ROLE_LOCAL[@]}" ==
+	: == DEBUG == DRBD_ROLE_REMOTE   == "${DRBD_ROLE_REMOTE[@]}" ==
+	: == DEBUG == DRBD_CSTATE        == "${DRBD_CSTATE[@]}" ==
+	: == DEBUG == DRBD_DSTATE_LOCAL  == "${DRBD_DSTATE_LOCAL[@]}" ==
+	: == DEBUG == DRBD_DSTATE_REMOTE == "${DRBD_DSTATE_REMOTE[@]}" ==
 }
 
 call_unfence()
@@ -621,7 +622,7 @@ drbd_status() {
 	# done with maintenance-mode enabled.
 	# If someone does manually kill/remove only some of the volumes,
 	# we tolerate that here.
-	for dev in ${DRBD_DEVICES[@]} ""; do
+	for dev in "${DRBD_DEVICES[@]}" ""; do
 		test -b $dev && break
 	done
 	[[ $dev ]] || return $rc
@@ -701,7 +702,7 @@ figure_out_drbd_peer_uname()
 
 my_udevsettle()
 {
-	for dev in ${DRBD_DEVICES[@]}; do
+	for dev in "${DRBD_DEVICES[@]}"; do
 		while ! test -b $dev; do
 			sleep 1;
 		done
@@ -785,6 +786,32 @@ drbd_start() {
 	done
 	# in case someone does not configure monitor,
 	# we must at least call it once after start.
+	drbd_update_master_score
+
+	return $rc
+}
+
+drbd_reload() {
+	local rc
+	local status
+
+	rc=$OCF_ERR_GENERIC
+
+	drbd_status
+	status=$?
+
+	case "$status" in
+	$OCF_SUCCESS|$OCF_RUNNING_MASTER)
+		# Adjust resource just in case reload was requested manually
+		# Changes to resource parameters do not require this
+		do_drbdadm adjust $DRBD_RESOURCE
+		rc=$OCF_SUCCESS
+		;;
+	$OCF_NOT_RUNNING)
+		:
+		;;
+	esac
+	# Update score as adjust_master_score may be changed
 	drbd_update_master_score
 
 	return $rc
@@ -967,7 +994,7 @@ meta_expect()
 	local val=${!whatvar}
 	if [[ -n $val ]]; then
 		# [, not [[, or it won't work ;)
-		[ $val $op $expect ] && return
+		eval "[ $val $op $expect ]" && return
 	fi
 	ocf_log err "meta parameter misconfigured, expected $what $op $expect, but found ${val:-unset}."
 	exit $OCF_ERR_CONFIGURED
@@ -1017,7 +1044,8 @@ drbd_validate_all () {
 	fi
 	if (( $DRBD_KERNEL_VERSION_CODE >= 0x080400 )); then
 		DRBD_HAS_MULTI_VOLUME=true
-	elif (( $DRBD_KERNEL_VERSION_CODE >= 0x090000 )) ; then
+	fi
+	if (( $DRBD_KERNEL_VERSION_CODE >= 0x090000 )) ; then
 		ocf_log err "This resource agent does (still) only support DRBD version 8.x"
 		exit $OCF_ERR_INSTALLED
 	fi
@@ -1173,7 +1201,7 @@ usage)
 esac
 
 if $USE_DEBUG_LOG ; then
-	exec 2>&9
+	exec 2>&8
 	set -x
 fi
 
@@ -1186,6 +1214,9 @@ start)
 	;;
 stop)
 	drbd_stop
+	;;
+reload)
+	drbd_reload
 	;;
 notify)
 	drbd_notify
