@@ -8,7 +8,7 @@ Last-Update: 2014-06-13
 Forwarded: no
 --- a/scripts/drbd
 +++ b/scripts/drbd
-@@ -31,7 +31,7 @@
+@@ -41,7 +41,7 @@
  UDEV_TIMEOUT=10
  ADD_MOD_PARAM=""
  
