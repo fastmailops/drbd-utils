@@ -5,6 +5,8 @@
 
 PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
 
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
 %:
 	dh $@ --with bash-completion
 
