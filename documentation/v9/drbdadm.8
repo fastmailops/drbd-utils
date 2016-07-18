@@ -1,13 +1,22 @@
 '\" t
 .\"     Title: drbdadm
 .\"    Author: [see the "Author" section]
-.\" Generator: DocBook XSL Stylesheets v1.75.2 <http://docbook.sf.net/>
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
 .\"      Date: 6 December 2012
 .\"    Manual: System Administration
 .\"    Source: DRBD 9.0.0
 .\"  Language: English
 .\"
 .TH "DRBDADM" "8" "6 December 2012" "DRBD 9.0.0" "System Administration"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
 .\" -----------------------------------------------------------------
 .\" * set default formatting
 .\" -----------------------------------------------------------------
@@ -19,7 +28,7 @@
 .\" * MAIN CONTENT STARTS HERE *
 .\" -----------------------------------------------------------------
 .SH "NAME"
-drbdadm \- Utility for DRBD administration.\" drbdadm
+drbdadm \- Utility for DRBD administration
 .SH "SYNOPSIS"
 .HP \w'\fBdrbdadm\fR\ 'u
 \fBdrbdadm\fR [options...] [\-\-\ [\fIbackend\-options\fR...]] {\fIcommand\fR} {\fIcontext\fR...}
@@ -128,7 +137,7 @@ Perform the command on a stacked resource\&.
 .PP
 adjust {\fIresource\fR}
 .RS 4
-.\" drbdadm: adjust
+
 Adjust the configuration of the kernel module so that it matches the configuration files\&. The result should be the same as when stopping and restarting all resources (\fBdrbdadm down all\fR
 followed by
 \fBdrbdadm up all\fR), but without the interruptions\&.
@@ -140,14 +149,14 @@ option) before running the actual command\&.
 .PP
 adjust\-with\-progress {\fIresource\fR}
 .RS 4
-.\" drbdadm: adjust-with-progress
+
 The same as
-\fBadjust\fR, but with some more information about the command\'s progress\&.
+\fBadjust\fR, but with some more information about the command\*(Aqs progress\&.
 .RE
 .PP
 apply\-al {\fIdevice\fR}
 .RS 4
-.\" drbdadm: apply-al
+
 Apply the activity log of the specified device\&. See
 \fBdrbdmeta\fR(8)
 for details\&.
@@ -162,7 +171,7 @@ for details\&.
 .PP
 check\-resize {\fIdevice\fR}
 .RS 4
-.\" drbdadm: check-resize
+
 Call drbdmeta to eventually move internal meta data\&. If the backing device was resized, while DRBD was not running, meta data has to be moved to the end of the device, so that the next
 \fBattach\fR
 command can succeed\&.
@@ -170,7 +179,7 @@ command can succeed\&.
 .PP
 connect {\fIconnection\fR}
 .RS 4
-.\" drbdadm: connect
+
 Activate an exisiting connection to a peer\&. The connection needs to be created first with the
 \fBnew\-peer\fR
 command, and have at least one path created with the
@@ -182,7 +191,7 @@ for details\&.
 .PP
 create\-md {\fIdevice\fR}
 .RS 4
-.\" drbdadm: create-md
+
 Initialize the metadata of a device\&. This is necessary before a device can be attached; see
 \fBdrbdmeta\fR(8)
 for details\&.
@@ -190,7 +199,7 @@ for details\&.
 .PP
 cstate {\fIconnection\fR}
 .RS 4
-.\" drbdadm: cstate
+
 Show the current state of a connection\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -198,7 +207,7 @@ for details\&.
 .PP
 detach {\fIdevice\fR}
 .RS 4
-.\" drbdadm: detach
+
 Detach the lower\-level device of a replicated device\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -206,7 +215,7 @@ for details\&.
 .PP
 disconnect {\fIconnection\fR}
 .RS 4
-.\" drbdadm: disconnect
+
 Remove a connection to a peer host\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -214,7 +223,7 @@ for details\&.
 .PP
 disk\-options {\fIdevice\fR}
 .RS 4
-.\" drbdadm: disk-options
+
 Cange the disk options of an attached lower\-level device\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -222,7 +231,7 @@ for details\&.
 .PP
 down {\fIresource\fR}
 .RS 4
-.\" drbdadm: down
+
 Take a resource down by removing all volumes, connections, and the resource itself\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -230,7 +239,7 @@ for details\&.
 .PP
 dstate {\fIdevice\fR}
 .RS 4
-.\" drbdadm: dstate
+
 Show the current disk state of a lower\-level device\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -238,13 +247,13 @@ for details\&.
 .PP
 dump {\fIresource\fR}
 .RS 4
-.\" drbdadm: dump
+
 Parse the configuration file and dump it to stdout\&. This will fail if the configuration file is syntactically incorrect\&.
 .RE
 .PP
 dump\-md {\fIdevice\fR}
 .RS 4
-.\" drbdadm: dump-md
+
 Dump the metadata of a device in text form, including the bitmap and activity log\&. See
 \fBdrbdmeta\fR(8)
 for details\&.
@@ -252,7 +261,7 @@ for details\&.
 .PP
 get\-gi {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: get-gi
+
 Show the data generation identifiers for a device on a particular connection\&. Uses
 \fBdrbdsetup\fR
 for attached devices and
@@ -269,7 +278,7 @@ Shows all commands which are not explicitly documented\&.
 .PP
 invalidate {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: invalidate
+
 Replace the local data of a device with that of a peer\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -277,15 +286,15 @@ for details\&.
 .PP
 invalidate\-remote {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: invalidate-remote
-Replace a peer device\'s data of a resource with the local data\&. See
+
+Replace a peer device\*(Aqs data of a resource with the local data\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
 .RE
 .PP
 net\-options {\fIconnection\fR}
 .RS 4
-.\" drbdadm: net-options
+
 Change the network options of an existing connection\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -293,7 +302,7 @@ for details\&.
 .PP
 new\-current\-uuid {\fIdevice\fR}
 .RS 4
-.\" drbdadm: new-current-uuid
+
 Generate a new currend UUID\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -301,7 +310,7 @@ for details\&.
 .PP
 outdate {\fIdevice\fR}
 .RS 4
-.\" drbdadm: outdate
+
 Mark the data on a lower\-level device as outdated\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -309,7 +318,7 @@ for details\&.
 .PP
 pause\-sync {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: pause-sync
+
 Stop resynchronizing between a local and a peer device by setting the local pause flag\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -317,7 +326,7 @@ for details\&.
 .PP
 primary {\fIresource\fR}
 .RS 4
-.\" drbdadm: primary
+
 Change the role of a node in a resource to primary\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -325,7 +334,7 @@ for details\&.
 .PP
 resize {\fIdevice\fR}
 .RS 4
-.\" drbdadm: resize
+
 Resize the lower\-level devices of a replicated device on all nodes\&. This combines the
 \fBcheck\-resize\fR
 and
@@ -337,7 +346,7 @@ for details\&.
 .PP
 resource\-options {\fIresource\fR}
 .RS 4
-.\" drbdadm: resource-options
+
 Change the resource options of an existing resource\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -345,7 +354,7 @@ for details\&.
 .PP
 resume\-sync {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: resume-sync
+
 Allow resynchronization to resume by clearing the local sync pause flag\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -353,19 +362,19 @@ for details\&.
 .PP
 role {\fIresource\fR}
 .RS 4
-.\" drbdadm: role
+
 Show the current role of a resource\&.
 .RE
 .PP
 secondary {\fIresource\fR}
 .RS 4
-.\" drbdadm: secondary
+
 Change the role of a node in a resource to secondary\&. This command fails if the replicated device is in use\&.
 .RE
 .PP
 show\-gi {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: show-gi
+
 Show the data generation identifiers for a device on a particular connection\&. In addition, explain the output\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -373,14 +382,14 @@ for details\&.
 .PP
 state {\fIresource\fR}
 .RS 4
-.\" drbdadm: state
+
 This is an alias for
 \fBdrbdsetup role\fR\&. Deprecated\&.
 .RE
 .PP
 up {\fIresource\fR}
 .RS 4
-.\" drbdadm: up
+
 Bring up a resource by applying the activity log of all volumes, creating the resource, creating the replicated devices, attaching the lower\-level devices, and connecting to all peers\&. See the
 \fBapply\-al\fR
 drbdmeta command and the
@@ -394,7 +403,7 @@ drbdsetup commands\&.
 .PP
 verify {\fIpeer_device\fR}
 .RS 4
-.\" drbdadm: verify
+
 Start online verification, change which part of the device will be verified, or stop online verification\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -402,7 +411,7 @@ for details\&.
 .PP
 wait\-connect {[\fIdevice\fR] | [\fIconnection\fR] | [\fIresource\fR]}
 .RS 4
-.\" drbdadm: wait-connect
+
 Wait until a device on a peer, all devices over a connection, or all devices on all peers are visible\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -410,7 +419,7 @@ for details\&.
 .PP
 wait\-sync {[\fIdevice\fR] | [\fIconnection\fR] | [\fIresource\fR]}
 .RS 4
-.\" drbdadm: wait-sync
+
 Wait until a device is connected and has finished eventual resync operation\&. Also available on connection and resource level\&. See
 \fBdrbdsetup\fR(8)
 for details\&.
@@ -418,7 +427,7 @@ for details\&.
 .PP
 wipe\-md {\fIdevice\fR}
 .RS 4
-.\" drbdadm: wipe-md
+
 Wipe out the DRBD metadata of a device\&. See
 \fBdrbdmeta\fR(8)
 for details\&.
@@ -426,7 +435,7 @@ for details\&.
 .PP
 forget\-peer {\fIconnection\fR}
 .RS 4
-.\" drbdadm: forget-peer
+
 Completely remove any reference to a unconnected peer from meta\-data\&. See
 \fBdrbdmeta\fR(8)
 for details\&.
@@ -436,10 +445,10 @@ for details\&.
 This document was revised for version 9\&.0\&.0 of the DRBD distribution\&.
 .SH "AUTHOR"
 .sp
-Written by Philipp Reisner philipp\&.reisner@linbit\&.com and Lars Ellenberg lars\&.ellenberg@linbit\&.com
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>
 .SH "REPORTING BUGS"
 .sp
-Report bugs to drbd\-user@lists\&.linbit\&.com\&.
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
 .SH "COPYRIGHT"
 .sp
 Copyright 2001\-2012 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.

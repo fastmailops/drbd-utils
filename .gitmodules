@@ -1,3 +1,0 @@
-[submodule "drbd-headers"]
-	path = drbd-headers
-	url = git://git.linbit.com/drbd-headers.git
