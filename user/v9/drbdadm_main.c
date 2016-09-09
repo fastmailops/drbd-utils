@@ -73,6 +73,7 @@ struct option general_admopt[] = {
 	{"verbose", no_argument, 0, 'v'},
 	{"config-file", required_argument, 0, 'c'},
 	{"config-to-test", required_argument, 0, 't'},
+	{"config-to-exclude", required_argument, 0, 'E'},
 	{"drbdsetup", required_argument, 0, 's'},
 	{"drbdmeta", required_argument, 0, 'm'},
 	{"drbd-proxy-ctl", required_argument, 0, 'p'},
@@ -127,6 +128,7 @@ static int adm_forget_peer(const struct cfg_ctx *);
 static int adm_peer_device(const struct cfg_ctx *);
 
 int ctx_by_name(struct cfg_ctx *ctx, const char *id, checks check);
+int was_file_already_seen(char *fn);
 
 static char *get_opt_val(struct options *, const char *, char *);
 
@@ -330,8 +332,8 @@ static struct adm_cmd secondary_cmd = {"secondary", adm_drbdsetup, ACF1_RESNAME 
 static struct adm_cmd invalidate_cmd = {"invalidate", adm_invalidate, ACF1_MINOR_ONLY };
 static struct adm_cmd invalidate_remote_cmd = {"invalidate-remote", adm_drbdsetup, ACF1_PEER_DEVICE .takes_long = 1};
 static struct adm_cmd outdate_cmd = {"outdate", adm_outdate, ACF1_DEFAULT};
-/*  */ struct adm_cmd resize_cmd = {"resize", adm_resize, ACF1_DEFAULT .disk_required = 1};
-static struct adm_cmd verify_cmd = {"verify", adm_drbdsetup, ACF1_PEER_DEVICE};
+/*  */ struct adm_cmd resize_cmd = {"resize", adm_resize, &resize_cmd_ctx, ACF1_DEFAULT .disk_required = 1};
+static struct adm_cmd verify_cmd = {"verify", adm_drbdsetup, &verify_cmd_ctx, ACF1_PEER_DEVICE};
 static struct adm_cmd pause_sync_cmd = {"pause-sync", adm_drbdsetup, ACF1_PEER_DEVICE};
 static struct adm_cmd resume_sync_cmd = {"resume-sync", adm_drbdsetup, ACF1_PEER_DEVICE};
 static struct adm_cmd adjust_cmd = {"adjust", adm_adjust, &adjust_ctx, ACF1_RESNAME .vol_id_optional = 1};
@@ -375,8 +377,8 @@ static struct adm_cmd sh_status_cmd = {"sh-status", sh_status, ACF2_GEN_SHELL};
 static struct adm_cmd proxy_up_cmd = {"proxy-up", adm_proxy_up, ACF2_PROXY};
 static struct adm_cmd proxy_down_cmd = {"proxy-down", adm_proxy_down, ACF2_PROXY};
 
-/*  */ struct adm_cmd new_resource_cmd = {"new-resource", adm_resource, ACF2_SH_RESNAME};
-/*  */ struct adm_cmd new_minor_cmd = {"new-minor", adm_new_minor, ACF4_ADVANCED};
+/*  */ struct adm_cmd new_resource_cmd = {"new-resource", adm_resource, &resource_options_ctx, ACF2_SH_RESNAME};
+/*  */ struct adm_cmd new_minor_cmd = {"new-minor", adm_new_minor, &device_options_ctx, ACF4_ADVANCED};
 /*  */ struct adm_cmd del_minor_cmd = {"del-minor", adm_drbdsetup, ACF1_MINOR_ONLY .show_in_usage = 4, .disk_required = 0, };
 
 static struct adm_cmd khelper01_cmd = {"before-resync-target", adm_khelper, ACF3_RES_HANDLER};
@@ -395,7 +397,7 @@ static struct adm_cmd khelper12_cmd = {"unfence-peer", adm_khelper, ACF3_RES_HAN
 
 static struct adm_cmd suspend_io_cmd = {"suspend-io", adm_drbdsetup, ACF4_ADVANCED  .backend_res_name = 0 };
 static struct adm_cmd resume_io_cmd = {"resume-io", adm_drbdsetup, ACF4_ADVANCED  .backend_res_name = 0 };
-static struct adm_cmd set_gi_cmd = {"set-gi", adm_drbdmeta, .disk_required = 1, .need_peer = 1, ACF4_ADVANCED_NEED_VOL};
+static struct adm_cmd set_gi_cmd = {"set-gi", adm_drbdmeta, &wildcard_ctx, .disk_required = 1, .need_peer = 1, ACF4_ADVANCED_NEED_VOL};
 static struct adm_cmd new_current_uuid_cmd = {"new-current-uuid", adm_drbdsetup, &new_current_uuid_cmd_ctx, ACF4_ADVANCED_NEED_VOL .backend_res_name = 0};
 static struct adm_cmd check_resize_cmd = {"check-resize", adm_chk_resize, ACF4_ADVANCED};
 
@@ -790,6 +792,8 @@ static int adm_adjust(const struct cfg_ctx *ctx)
 
 static int sh_nop(const struct cfg_ctx *ctx)
 {
+	if (!config_valid)
+		return 10;
 	return 0;
 }
 
@@ -1026,7 +1030,7 @@ static void find_drbdcmd(char **cmd, char **pathes)
 static bool is_valid_backend_option(const char* name, const struct context_def *context_def)
 {
 	const struct field_def *field;
-	/* options have a leading "--", while field names do not have that -> name + 2 */
+	int len_to_equal_sign_or_nul;
 
 	if (context_def == &wildcard_ctx)
 		return true;
@@ -1034,8 +1038,13 @@ static bool is_valid_backend_option(const char* name, const struct context_def *
 	if (!context_def || strlen(name) <= 2)
 		return false;
 
+	/* options have a leading "--", while field names do not have that */
+	name += 2;
+	/* compare only until first equal sign, if any */
+	len_to_equal_sign_or_nul = strcspn(name, "=");
+
 	for (field = context_def->fields; field->name; field++) {
-		if (!strcmp(name + 2, field->name))
+		if (!strncmp(name, field->name, len_to_equal_sign_or_nul))
 			return true;
 	}
 	return false;
@@ -1219,6 +1228,8 @@ int adm_resize(const struct cfg_ctx *ctx)
 	struct d_option *opt;
 	bool is_resize = !strcmp(ctx->cmd->name, "resize");
 	off64_t old_size = -1;
+	off64_t target_size = 0;
+	off64_t new_size;
 	int argc = 0;
 	int silent;
 	int ex;
@@ -1229,8 +1240,13 @@ int adm_resize(const struct cfg_ctx *ctx)
 	opt = find_opt(&ctx->vol->disk_options, "size");
 	if (!opt)
 		opt = find_opt(&ctx->res->disk_options, "size");
-	if (opt)
+	if (opt) {
 		argv[NA(argc)] = ssprintf("--%s=%s", opt->name, opt->value);
+		target_size = m_strtoll(opt->value, 's');
+		/* FIXME: what if "add_setup_options" below overrides target_size
+		 * with an explicit, on-command-line target_size? */
+	}
+
 	add_setup_options(argv, &argc, ctx->cmd->drbdsetup_ctx);
 	argv[NA(argc)] = 0;
 
@@ -1240,6 +1256,15 @@ int adm_resize(const struct cfg_ctx *ctx)
 	/* if this is not "resize", but "check-resize", be silent! */
 	silent = !strcmp(ctx->cmd->name, "check-resize") ? SUPRESS_STDERR : 0;
 	ex = m_system_ex(argv, SLEEPS_SHORT | silent, ctx->res->name);
+
+	if (ex && target_size) {
+		new_size = read_drbd_dev_size(ctx->vol->device_minor);
+		if (new_size == target_size) {
+			fprintf(stderr, "Current size of drbd%u equals target size (%llu byte), exit code %d ignored.\n",
+				ctx->vol->device_minor, (unsigned long long)new_size, ex);
+			ex = 0;
+		}
+	}
 
 	if (ex)
 		return ex;
@@ -1263,11 +1288,7 @@ int adm_resize(const struct cfg_ctx *ctx)
 	   changed, but only up to 10 seconds if know the target size, up to
 	   3 seconds waiting for some change. */
 	if (old_size > 0) {
-		off64_t target_size, new_size;
-		int timeo;
-
-		target_size = m_strtoll(get_opt_val(&ctx->vol->disk_options, "size", "0"), 's');
-		timeo = target_size ? 100 : 30;
+		int timeo = target_size ? 100 : 30;
 
 		do {
 			new_size = read_drbd_dev_size(ctx->vol->device_minor);
@@ -2928,6 +2949,10 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 		case 't':
 			config_test = optarg;
 			break;
+		case 'E':
+			/* Remember as absolute name */
+			was_file_already_seen(optarg);
+			break;
 		case 's':
 			{
 				char *pathes[2];
@@ -3042,7 +3067,8 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 				break;
 
 		field = NULL;
-		if (option[0] == '-' && option[1] == '-' && (*cmd)->drbdsetup_ctx) {
+		if (option[0] == '-' && option[1] == '-' && (*cmd)->drbdsetup_ctx &&
+		    (*cmd)->drbdsetup_ctx != &wildcard_ctx) {
 			for (field = (*cmd)->drbdsetup_ctx->fields; field->name; field++) {
 				if (strlen(field->name) == len - 2 &&
 				    !strncmp(option + 2, field->name, len - 2))
@@ -3051,7 +3077,7 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 			if (!field->name)
 				field = NULL;
 		}
-		if (!field) {
+		if (!field && (*cmd)->drbdsetup_ctx != &wildcard_ctx) {
 			err("%s: unrecognized option '%.*s'\n", progname, len, option);
 			goto help;
 		}
