@@ -1,3 +1,9 @@
+drbd-utils (8.9.8-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 09 Sep 2016 10:40:20 +0300
+
 drbd-utils (8.9.7-1) unstable; urgency=medium
 
   * New upstream release.
