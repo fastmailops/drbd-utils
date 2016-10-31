@@ -38,7 +38,7 @@
 
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -304,7 +304,7 @@ int adm_adjust_wp(struct cfg_ctx *ctx)
 #define DRBD_acf4_advanced_need_vol	\
 	.show_in_usage = 4,		\
 	.res_name_required = 1,		\
-	.iterate_volumes = 0,		\
+	.iterate_volumes = 1,		\
 	.vol_id_required = 1,		\
 	.verify_ips = 0,		\
 	.uc_dialog = 1,			\
@@ -2348,7 +2348,7 @@ int ctx_by_name(struct cfg_ctx *ctx, const char *id)
 
 int ctx_set_implicit_volume(struct cfg_ctx *ctx)
 {
-	struct d_volume *vol, *v;
+	struct d_volume *vol, *v = NULL;
 	int volumes = 0;
 
 	if (ctx->vol || !ctx->res)

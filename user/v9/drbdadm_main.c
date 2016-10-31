@@ -38,7 +38,7 @@
 
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
@@ -114,7 +114,6 @@ static int sh_lres(const struct cfg_ctx *);
 static int sh_ll_dev(const struct cfg_ctx *);
 static int sh_md_dev(const struct cfg_ctx *);
 static int sh_md_idx(const struct cfg_ctx *);
-static int sh_status(const struct cfg_ctx *);
 static int adm_drbdmeta(const struct cfg_ctx *);
 static int adm_khelper(const struct cfg_ctx *);
 static int adm_setup_and_meta(const struct cfg_ctx *);
@@ -267,7 +266,7 @@ int adm_adjust_wp(const struct cfg_ctx *ctx)
 	.show_in_usage = 4,		\
 	.res_name_required = 1,		\
 	.backend_res_name = 1,		\
-	.iterate_volumes = 0,		\
+	.iterate_volumes = 1,		\
 	.vol_id_required = 1,		\
 	.verify_ips = 0,		\
 	.uc_dialog = 1,			\
@@ -372,7 +371,6 @@ static struct adm_cmd sh_md_dev_cmd = {"sh-md-dev", sh_md_dev, ACF2_SHELL .disk_
 static struct adm_cmd sh_md_idx_cmd = {"sh-md-idx", sh_md_idx, ACF2_SHELL .disk_required = 1};
 static struct adm_cmd sh_ip_cmd = {"sh-ip", sh_ip, ACF2_SHELL};
 static struct adm_cmd sh_lr_of_cmd = {"sh-lr-of", sh_lres, ACF2_SHELL};
-static struct adm_cmd sh_status_cmd = {"sh-status", sh_status, ACF2_GEN_SHELL};
 
 static struct adm_cmd proxy_up_cmd = {"proxy-up", adm_proxy_up, ACF2_PROXY};
 static struct adm_cmd proxy_down_cmd = {"proxy-down", adm_proxy_down, ACF2_PROXY};
@@ -467,7 +465,6 @@ struct adm_cmd *cmds[] = {
 	&sh_md_idx_cmd,
 	&sh_ip_cmd,
 	&sh_lr_of_cmd,
-	&sh_status_cmd,
 
 	&proxy_up_cmd,
 	&proxy_down_cmd,
@@ -772,19 +769,23 @@ int run_deferred_cmds(void)
 
 static int adm_adjust(const struct cfg_ctx *ctx)
 {
-	int adjust_flags = ADJUST_DISK | ADJUST_NET;
+	static int adjust_flags = 0;
 	struct d_name *opt;
 
-	opt = find_backend_option("--skip-disk");
-	if (opt) {
-		STAILQ_REMOVE(&backend_options, opt, d_name, link);
-		adjust_flags &= ~ADJUST_DISK;
-	}
+	if (!adjust_flags) {
+		opt = find_backend_option("--skip-disk");
+		if (opt)
+			STAILQ_REMOVE(&backend_options, opt, d_name, link);
+		else
+			adjust_flags |= ADJUST_DISK;
 
-	opt = find_backend_option("--skip-net");
-	if (opt) {
-		STAILQ_REMOVE(&backend_options, opt, d_name, link);
-		adjust_flags &= ~ADJUST_NET;
+		opt = find_backend_option("--skip-net");
+		if (opt)
+			STAILQ_REMOVE(&backend_options, opt, d_name, link);
+		else
+			adjust_flags |= ADJUST_NET;
+
+		adjust_flags |= ADJUST_SKIP_CHECKED;
 	}
 
 	return _adm_adjust(ctx, adjust_flags);
@@ -1107,6 +1108,8 @@ static int adm_attach(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = (char *)ctx->cmd->name; /* "attach" : "disk-options"; */
 	argv[NA(argc)] = ssprintf("%d", vol->device_minor);
 	if (do_attach) {
+		assert(vol->disk != NULL);
+		assert(vol->disk[0] != '\0');
 		argv[NA(argc)] = vol->disk;
 		if (!strcmp(vol->meta_disk, "internal")) {
 			argv[NA(argc)] = vol->disk;
@@ -1320,6 +1323,8 @@ int _adm_drbdmeta(const struct cfg_ctx *ctx, int flags, char *argument)
 	argv[NA(argc)] = ssprintf("%d", vol->device_minor);
 	argv[NA(argc)] = "v09";
 	if (!strcmp(vol->meta_disk, "internal")) {
+		assert(vol->disk != NULL);
+		assert(vol->disk[0] != '\0');
 		argv[NA(argc)] = vol->disk;
 	} else {
 		argv[NA(argc)] = vol->meta_disk;
@@ -1437,67 +1442,6 @@ static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx)
 		rw = write(fileno(stderr), buffer, s);
 
 	return rv;
-}
-
-int sh_status(const struct cfg_ctx *ctx)
-{
-	struct cfg_ctx tmp_ctx = *ctx;
-	struct d_resource *r;
-	struct d_volume *vol, *lower_vol;
-	int rv = 0;
-
-	if (!dry_run) {
-		printf("_drbd_version=%s\n_drbd_api=%u\n",
-		       shell_escape(PACKAGE_VERSION), API_VERSION);
-		printf("_config_file=%s\n\n\n", shell_escape(config_save));
-	}
-
-	for_each_resource(r, &config) {
-		if (r->ignore)
-			continue;
-		tmp_ctx.res = r;
-
-		printf("_conf_res_name=%s\n", shell_escape(r->name));
-		printf("_conf_file_line=%s:%u\n\n", shell_escape(r->config_file), r->start_line);
-		if (r->stacked && r->me->lower) {
-			printf("_stacked_on=%s\n", shell_escape(r->me->lower->name));
-			lower_vol = STAILQ_FIRST(&r->me->lower->me->volumes);
-		} else {
-			/* reset stuff */
-			printf("_stacked_on=\n");
-			printf("_stacked_on_device=\n");
-			printf("_stacked_on_minor=\n");
-			lower_vol = NULL;
-		}
-		/* TODO: remove this loop, have drbdsetup use dump
-		 * and optionally filter on resource name.
-		 * "stacked" information is not directly known to drbdsetup, though.
-		 */
-		for_each_volume(vol, &r->me->volumes) {
-			/* do not continue in this loop,
-			 * or lower_vol will get out of sync */
-			if (lower_vol) {
-				printf("_stacked_on_device=%s\n", shell_escape(lower_vol->device));
-				printf("_stacked_on_minor=%d\n", lower_vol->device_minor);
-			} else if (r->stacked && r->me->lower) {
-				/* ASSERT */
-				err("in %s: stacked volume[%u] without lower volume\n",
-				    r->name, vol->vnr);
-				abort();
-			}
-			printf("_conf_volume=%d\n", vol->vnr);
-
-			tmp_ctx.vol = vol;
-			rv = _adm_drbdsetup(&tmp_ctx, SLEEPS_SHORT);
-			if (rv)
-				return rv;
-
-			if (lower_vol)
-				lower_vol = STAILQ_NEXT(lower_vol, link);
-			/* vol is advanced by for_each_volume */
-		}
-	}
-	return 0;
 }
 
 static int adm_outdate(const struct cfg_ctx *ctx)
@@ -1620,7 +1564,7 @@ static int adm_khelper(const struct cfg_ctx *ctx)
 		snprintf(volume_string, sizeof(volume_string), "%u", vol->vnr);
 		setenv("DRBD_MINOR", minor_string, 1);
 		setenv("DRBD_VOLUME", volume_string, 1);
-		setenv("DRBD_LL_DISK", shell_escape(vol->disk), 1);
+		setenv("DRBD_LL_DISK", shell_escape(vol->disk ?: "none"), 1);
 	} else {
 		char *minor_list;
 		char *volume_list;
@@ -1635,7 +1579,7 @@ static int adm_khelper(const struct cfg_ctx *ctx)
 
 		for_each_volume(vol, &res->me->volumes) {
 			volumes++;
-			ll_len += strlen(shell_escape(vol->disk)) + 1;
+			ll_len += strlen(shell_escape(vol->disk ?: "none")) + 1;
 		}
 
 		/* max minor number is 2**20 - 1, which is 7 decimal digits.
@@ -1666,7 +1610,7 @@ static int adm_khelper(const struct cfg_ctx *ctx)
 
 			append(minor, "%d", vol->device_minor);
 			append(volume, "%d", vol->vnr);
-			append(ll, "%s", shell_escape(vol->disk));
+			append(ll, "%s", shell_escape(vol->disk ?: "none"));
 
 #undef append
 			separator = " ";
@@ -1693,7 +1637,7 @@ int adm_peer_device(const struct cfg_ctx *ctx)
 	char *argv[MAX_ARGS];
 	int argc = 0;
 
-	peer_device = find_peer_device(conn, vol->vnr);
+	peer_device = find_peer_device(res->me, conn, vol->vnr);
 	if (!peer_device) {
 		err("Could not find peer_device object!\n");
 		exit(E_THINKO);
@@ -1991,7 +1935,7 @@ static int adm_up(const struct cfg_ctx *ctx)
 		tmp_ctx.conn = conn;
 
 		schedule_deferred_cmd(&new_peer_cmd, &tmp_ctx, CFG_NET_PREP_UP);
-		schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PREP_UP);
+		schedule_deferred_cmd(&new_path_cmd, &tmp_ctx, CFG_NET_PATH);
 		schedule_deferred_cmd(&connect_cmd, &tmp_ctx, CFG_NET_CONNECT);
 
 		STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
