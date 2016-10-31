@@ -1177,20 +1177,6 @@ and lower than
 \fBping\-int\fR\&. The default is 6 seconds; the value is specified in tenths of a second\&.
 .RE
 .PP
-\fBunplug\-watermark \fR\fB\fInumber\fR\fR
-.RS 4
-Mainline kernels before version 2\&.6\&.39\-rc1 use an explicit plug / unplug mechanism to control when a block device starts processing queued requests\&. On those kernels, the
-\fBunplug\-watermark\fR
-parameter defines how many requests must be queued until a secondary node starts processing them\&. Some storage controllers perform best when
-\fBunplug\-watermark\fR
-is set to the same value as
-\fBmax\-buffers\fR; others are more efficient with smaller values\&. The default value for
-\fBunplug\-watermark\fR
-is 128, with a minimum of 16 and a maximum of 131072\&.
-.sp
-More recent kernels handle plugging and unplugging implicitly; on those kernels, this parameter has no effect\&. Note that some distributions have backported this feature to older kernel versions\&.
-.RE
-.PP
 \fBuse\-rle\fR
 .RS 4
 

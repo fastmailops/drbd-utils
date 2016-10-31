@@ -723,20 +723,6 @@ and lower than
 \fBping\-int\fR\&. The default is 6 seconds; the value is specified in tenths of a second\&.
 .RE
 .PP
-\fB\-\-unplug\-watermark \fR\fB\fInumber\fR\fR
-.RS 4
-Mainline kernels before version 2\&.6\&.39\-rc1 use an explicit plug / unplug mechanism to control when a block device starts processing queued requests\&. On those kernels, the
-\fBunplug\-watermark\fR
-parameter defines how many requests must be queued until a secondary node starts processing them\&. Some storage controllers perform best when
-\fBunplug\-watermark\fR
-is set to the same value as
-\fBmax\-buffers\fR; others are more efficient with smaller values\&. The default value for
-\fBunplug\-watermark\fR
-is 128, with a minimum of 16 and a maximum of 131072\&.
-.sp
-More recent kernels handle plugging and unplugging implicitly; on those kernels, this parameter has no effect\&. Note that some distributions have backported this feature to older kernel versions\&.
-.RE
-.PP
 \fB\-\-use\-rle\fR
 .RS 4
 Each replicated device on a cluster node has a separate bitmap for each of its peer devices\&. The bitmaps are used for tracking the differences between the local and peer device: depending on the cluster state, a disk range can be marked as different from the peer in the device\*(Aqs bitmap, in the peer device\*(Aqs bitmap, or in both bitmaps\&. When two cluster nodes connect, they exchange each other\*(Aqs bitmaps, and they each compute the union of the local and peer bitmap to determine the overall differences\&.

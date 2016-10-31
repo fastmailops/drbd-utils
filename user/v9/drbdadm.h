@@ -226,6 +226,7 @@ struct d_resource
 	unsigned int stacked:1;        /* Stacked on this node */
 	unsigned int stacked_on_one:1; /* Stacked either on me or on peer */
 	unsigned int peers_addrs_set:1; /* all peer addresses set */
+	unsigned int no_bitmap_done:1;
 
 	/* if a prerequisite command failed, don't try any further commands.
 	 * see run_deferred_cmds() */
@@ -298,6 +299,7 @@ extern void popd(int fd);
 enum {
 	ADJUST_DISK = 1,
 	ADJUST_NET = 2,
+	ADJUST_SKIP_CHECKED = 4,
 };
 extern int _adm_adjust(const struct cfg_ctx *ctx, int flags);
 
@@ -347,20 +349,25 @@ enum drbd_cfg_stage {
 	CFG_DISK_PREP_DOWN,
 	/* new-minor */
 	CFG_DISK_PREP_UP,
-	/* attach, disk-options, resize */
-	CFG_DISK,
 
 	/* disconnect */
 	CFG_NET_DISCONNECT,
 	/* down,  del-peer, proxy down, del-path */
 	CFG_NET_PREP_DOWN,
-	/* add-peer, add-path, proxy up */
+	/* add-peer, proxy up */
 	CFG_NET_PREP_UP,
+
+	/* add-path */
+	CFG_NET_PATH,
 
 	/* discard/set connection parameters */
 	CFG_NET,
 
+	/* peer device options */
 	CFG_PEER_DEVICE,
+
+	/* attach, disk-options, resize */
+	CFG_DISK,
 
 	/* actually start with connection attempts */
 	CFG_NET_CONNECT,
@@ -418,7 +425,8 @@ int parse_proxy_options_section(struct d_proxy_info **proxy);
 int do_proxy_conn_up(const struct cfg_ctx *ctx);
 int do_proxy_conn_down(const struct cfg_ctx *ctx);
 int do_proxy_conn_plugins(const struct cfg_ctx *ctx);
-struct peer_device *find_peer_device(struct connection *conn, int vnr);
+struct peer_device *find_peer_device(struct d_host_info *host, struct connection *conn, int vnr);
+bool peer_diskless(struct peer_device *peer_device);
 
 extern char *config_file;
 extern char *config_save;

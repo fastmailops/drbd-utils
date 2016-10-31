@@ -437,6 +437,36 @@ void create_implicit_net_options(struct connection *conn)
 	insert_head(&conn->net_options, new_opt(strdup("_name"), strdup(value)));
 }
 
+bool peer_diskless(struct peer_device *peer_device)
+{
+	struct d_volume *vol;
+
+	vol = volume_by_vnr(&peer_device->connection->peer->volumes, peer_device->volume->vnr);
+	return vol->disk == NULL;
+}
+
+
+static void add_no_bitmap_opt(struct d_resource *res)
+{
+	struct connection *conn;
+
+	if (res->no_bitmap_done)
+		return;
+
+	for_each_connection(conn, &res->connections) {
+		struct peer_device *peer_device;
+
+		if (conn->ignore)
+			continue;
+
+		STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
+			if (peer_device->connection->peer && peer_diskless(peer_device))
+				insert_tail(&peer_device->pd_options, new_opt("bitmap", "no"));
+		}
+	}
+	res->no_bitmap_done = 1;
+}
+
 void set_peer_in_resource(struct d_resource* res, int peer_required)
 {
 	struct connection *conn;
@@ -453,6 +483,9 @@ void set_peer_in_resource(struct d_resource* res, int peer_required)
 		create_implicit_net_options(conn);
 	}
 	res->peers_addrs_set = peers_addrs_set;
+
+	if (!(peer_required & DRBDSETUP_SHOW))
+		add_no_bitmap_opt(res);
 }
 
 void set_disk_in_res(struct d_resource *res)
@@ -904,13 +937,18 @@ static void must_have_two_hosts(struct d_resource *res, struct connection *conn)
 		_must_have_two_hosts(res, path);
 }
 
-struct peer_device *find_peer_device(struct connection *conn, int vnr)
+struct peer_device *find_peer_device(struct d_host_info *host, struct connection *conn, int vnr)
 {
 	struct peer_device *peer_device;
+	struct d_volume *vol;
 
 	STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
-		if (peer_device->vnr == vnr)
-			return peer_device;
+		if (peer_device->vnr == vnr) {
+			for_each_volume(vol, &host->volumes) {
+				if (vol == peer_device->volume)
+					return peer_device;
+			}
+		}
 	}
 
 	return NULL;
@@ -919,12 +957,13 @@ struct peer_device *find_peer_device(struct connection *conn, int vnr)
 static void fixup_peer_devices(struct d_resource *res)
 {
 	struct connection *conn;
-	struct d_host_info *some_host = STAILQ_FIRST(&res->all_hosts);
-	/* At this point all hosts of the resource have the same set of volumes */
 
 	for_each_connection(conn, &res->connections) {
 		struct peer_device *peer_device;
+		struct hname_address *ha;
 		struct d_volume *vol;
+		struct path *some_path = STAILQ_FIRST(&conn->paths);
+		struct d_host_info *some_host = STAILQ_FIRST(&some_path->hname_address_pairs)->host_info;
 
 		STAILQ_FOREACH(peer_device, &conn->peer_devices, connection_link) {
 
@@ -939,17 +978,24 @@ static void fixup_peer_devices(struct d_resource *res)
 			peer_device->volume = vol;
 			STAILQ_INSERT_TAIL(&vol->peer_devices, peer_device, volume_link);
 		}
-		for_each_volume(vol, &some_host->volumes) {
-			peer_device = find_peer_device(conn, vol->vnr);
-			if (peer_device)
-				continue;
-			peer_device = alloc_peer_device();
-			peer_device->vnr = vol->vnr;
-			peer_device->implicit = 1;
-			peer_device->connection = conn;
-			peer_device->volume = vol;
-			STAILQ_INSERT_TAIL(&conn->peer_devices, peer_device, connection_link);
-			STAILQ_INSERT_TAIL(&vol->peer_devices, peer_device, volume_link);
+
+		/* Take the first path, iterate over hname_address_pairs, take the host_info.
+		   this is the way to get hold of the two hosts of a connection. */
+		STAILQ_FOREACH(ha, &some_path->hname_address_pairs, link) {
+			struct d_host_info *host = ha->host_info;
+
+			for_each_volume(vol, &host->volumes) {
+				peer_device = find_peer_device(host, conn, vol->vnr);
+				if (peer_device)
+					continue;
+				peer_device = alloc_peer_device();
+				peer_device->vnr = vol->vnr;
+				peer_device->implicit = 1;
+				peer_device->connection = conn;
+				peer_device->volume = vol;
+				STAILQ_INSERT_TAIL(&conn->peer_devices, peer_device, connection_link);
+				STAILQ_INSERT_TAIL(&vol->peer_devices, peer_device, volume_link);
+			}
 		}
 	}
 }
