@@ -15,7 +15,7 @@ Vcs-Git: https://anonscm.debian.org/git/debian-ha/drbd-utils/
 
 Package: drbd-utils
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
+Depends: lsb-base (>= 3.0-6), ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
 Breaks: drbd8-utils (<< 2:8.9.0)
 Replaces: drbd8-utils (<< 2:8.9.0)
 Suggests: heartbeat
