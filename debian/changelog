@@ -1,3 +1,10 @@
+drbd-utils (8.9.9-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Depend on lsb-base for /lib/lsb/init-functions.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Tue, 01 Nov 2016 01:28:28 +0200
+
 drbd-utils (8.9.8-1) unstable; urgency=medium
 
   * New upstream release.
