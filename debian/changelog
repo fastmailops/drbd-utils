@@ -1,3 +1,14 @@
+drbd-utils (8.9.10-1) unstable; urgency=medium
+
+  * New upstream release
+    + New drbdmon utility: provides a compact view about resources and
+      supports live monitoring.
+  * Refresh patches
+  * B-D on dh-autoreconf and use it to regenerate configure for proper C++11
+    detection.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 23 Dec 2016 17:41:42 +0200
+
 drbd-utils (8.9.9-1) unstable; urgency=medium
 
   * New upstream release.
