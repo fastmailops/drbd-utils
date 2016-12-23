@@ -7,7 +7,7 @@ Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
  Philipp Hug <debian@hug.cx>,
  Apollon Oikonomopoulos <apoikos@debian.org>
 Build-Depends: debhelper (>= 9), flex, xsltproc,
- docbook-xsl, docbook-xml, udev, bash-completion
+ docbook-xsl, docbook-xml, udev, bash-completion, dh-autoreconf
 Standards-Version: 3.9.8
 Homepage: http://www.drbd.org/
 Vcs-Browser: https://anonscm.debian.org/gitweb/?p=debian-ha/drbd-utils.git
