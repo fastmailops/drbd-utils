@@ -10,7 +10,7 @@ Forwarded: no
 
 --- a/user/v9/drbdadm_postparse.c
 +++ b/user/v9/drbdadm_postparse.c
-@@ -1167,10 +1167,7 @@
+@@ -1255,10 +1255,7 @@
  			    "  to be able to call drbdsetup and drbdmeta with root privileges.\n\n"
  			    "  You need to fix this with these commands:\n");
  		did_header = 1;

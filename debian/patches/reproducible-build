@@ -14,9 +14,9 @@ Last-Update: 2015-02-24
 
 --- a/user/shared/Makefile.in
 +++ b/user/shared/Makefile.in
-@@ -58,6 +58,10 @@
- 
+@@ -59,6 +59,10 @@
  CFLAGS += -Wall -I../../drbd-headers -I.. -I.
+ CFLAGS += $(EXTRA_CFLAGS)
  
 +# Debian reproducible build
 +DEBU=debian-ha-maintainers@lists.alioth.debian.org
@@ -25,7 +25,7 @@ Last-Update: 2015-02-24
  .PHONY: drbd_buildtag.c
  
  all: drbdmeta_scanner.c drbd_buildtag.c
-@@ -83,7 +87,7 @@
+@@ -84,7 +88,7 @@
  	else									\
  		grep return $@ ;						\
  	fi ;									\
