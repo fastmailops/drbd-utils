@@ -6,8 +6,14 @@ dnl License: GNU General Public License Version 2 (GPLv2)
 dnl Minimum autoconf version we require
 AC_PREREQ(2.53)
 
+dnl Include cpp feature testing macro
+dnl AC_CONFIG_MACRO_DIR([m4])
+dnl Using AC_CONFIG_MACRO_DIR([m4]) would be the correct way, but RHEL6 ships a broken autoconf
+m4_include([m4/AX_CXX_COMPILE_STDXX.m4])
+m4_include([m4/AX_CXX_COMPILE_STDXX_11.m4])
+
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.9, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 8.9.10, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -50,6 +56,7 @@ WITH_RGMANAGER=no
 WITH_BASHCOMPLETION=yes
 WITH_NOARCH_SUBPACKAGES=no
 WITH_MANUAL=yes
+WITH_DRBDMON=yes
 AC_ARG_WITH([83support],
 	[AS_HELP_STRING([--without-83support],
 			[Do not include support for drbd driver/module <= 8.3])],
@@ -103,7 +110,6 @@ AC_ARG_WITH([manual],
 	[AS_HELP_STRING([--without-manual],
 			[Do not include manual pages])],
 	[WITH_MANUAL=$withval])
-
 AC_SUBST(WITH_83_SUPPORT)
 AC_SUBST(WITH_84_SUPPORT)
 AC_SUBST(WITH_UDEV)
@@ -178,6 +184,12 @@ case "$with_initscripttype" in
 esac
 AC_SUBST(initscripttype)
 
+AC_ARG_WITH([drbdmon],
+	[AS_HELP_STRING([--without-drbdmon],
+			[Do not include the DRBD resource reporting utility])],
+	[WITH_DRBDMON=$withval])
+AC_SUBST(WITH_DRBDMON)
+
 dnl Checks for programs
 AC_PROG_CC
 AC_PROG_LN_S
@@ -198,6 +210,18 @@ fi
 
 if test -z $FLEX; then
    AC_MSG_ERROR([Cannot build utils without flex.])
+fi
+
+if [[ $WITH_DRBDMON == "yes" ]] ; then
+   AC_PROG_CXX
+   AX_CXX_COMPILE_STDCXX_11(, optional)
+   dnl RCK: c++ testing is "special", CXX might be guessed to g++ even if not installed
+   dnl we have to check the undocumented "$ac_ct_CXX"
+   dnl https://lists.gnu.org/archive/html/bug-autoconf/2010-05/msg00001.html
+   if test -z "$ac_ct_CXX" -o "$HAVE_CXX11" = "0"; then
+      AC_MSG_WARN([No C++11 compiler found, disabling drbdmon build.])
+      WITH_DRBDMON=no
+   fi
 fi
 
 if test -z $RPMBUILD; then
@@ -240,6 +264,7 @@ BASH_COMPLETION_SUFFIX=""
 UDEV_RULE_SUFFIX=""
 RPM_DIST_TAG=""
 RPM_BUILDREQ_DEFAULT="gcc flex glibc-devel make"
+RPM_REQ_DRBDMON=""
 RPM_SUBPACKAGE_NOARCH=""
 RPM_REQ_PACEMAKER=""
 RPM_REQ_HEARTBEAT=""
@@ -365,7 +390,7 @@ fi
 
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/shared/Makefile user/v9/Makefile user/v83/Makefile user/v84/Makefile scripts/Makefile documentation/v9/Makefile documentation/v83/Makefile documentation/v84/Makefile scripts/drbd.rules)
+   AC_CONFIG_FILES(Makefile user/shared/Makefile user/v9/Makefile user/v83/Makefile user/v84/Makefile scripts/Makefile documentation/v9/Makefile documentation/v83/Makefile documentation/v84/Makefile scripts/drbd.rules user/drbdmon/Makefile)
    AC_CONFIG_HEADERS(user/shared/config.h)
 else
    AC_CONFIG_FILES(drbd.spec)

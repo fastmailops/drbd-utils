@@ -307,17 +307,7 @@ int lk_bdev_load(const unsigned minor, struct bdev_info *bd)
 		goto out;
 	}
 
-	/* GNU format extension: %as:
-	 * malloc buffer space for the resulting char */
-#define BDEV_FORMAT "%llu %as%[\n]uuid: %llx%[\n]"
-#ifdef __GLIBC_PREREQ
-#if __GLIBC_PREREQ(2, 7)
-#undef BDEV_FORMAT
-#define BDEV_FORMAT "%llu %ms%[\n]uuid: %llx%[\n]"
-#endif
-#endif
-
-	rc = fscanf(fp, BDEV_FORMAT,
+	rc = fscanf(fp, "%llu %ms%[\n]uuid: %llx%[\n]",
 			&bd_size, &bd_name, nl,
 			&bd_uuid, nl);
 	/* rc == 5: successfully converted two lines.
@@ -887,42 +877,31 @@ const char *esc_xml(char *str)
 	if (strchr(str, '"') || strchr(str, '\'') || strchr(str, '<') ||
 	    strchr(str, '>') || strchr(str, '&') || strchr(str, '\\')) {
 		while (*ue) {
-			if (*ue == '"' || *ue == '\\') {
-				*e++ = '\\';
-				if (e - buffer >= 1021) {
-					err("string too long.\n");
-					exit(E_SYNTAX);
-				}
-				*e++ = *ue++;
-			} else if (*ue == '\'' || *ue == '<' || *ue == '>'
-				   || *ue == '&') {
-				if (*ue == '\'' && e - buffer < 1017) {
-					strcpy(e, "&apos;");
-					e += 6;
-				} else if (*ue == '<' && e - buffer < 1019) {
-					strcpy(e, "&lt;");
-					e += 4;
-				} else if (*ue == '>' && e - buffer < 1019) {
-					strcpy(e, "&gt;");
-					e += 4;
-				} else if (*ue == '&' && e - buffer < 1018) {
-					strcpy(e, "&amp;");
-					e += 5;
-				} else {
-					err("string too long.\n");
-					exit(E_SYNTAX);
-				}
-				ue++;
-			} else {
-				*e++ = *ue++;
-				if (e - buffer >= 1022) {
-					err("string too long.\n");
-					exit(E_SYNTAX);
-				}
+
+#define XML_ENCODE_SPECIAL(_ch, _repl) \
+			case _ch: \
+				if (e - buffer >= sizeof(buffer)-1-strlen(_repl)) goto too_long; \
+				strcpy(e, _repl); e += strlen(_repl); break;
+
+			switch (*ue) {
+				XML_ENCODE_SPECIAL('\'', "&apos;");
+				XML_ENCODE_SPECIAL('"',  "&quot;");
+				XML_ENCODE_SPECIAL('<',  "&lt;");
+				XML_ENCODE_SPECIAL('>',  "&gt;");
+				XML_ENCODE_SPECIAL('&',  "&amp;");
+				default:
+				*e++ = *ue;
+				if (e - buffer >= 1022)
+					goto too_long;
 			}
+			ue++;
 		}
 		*e++ = '\0';
 		return buffer;
 	}
 	return str;
+
+too_long:
+	err("string too long.\n");
+	exit(E_SYNTAX);
 }
