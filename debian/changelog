@@ -1,3 +1,22 @@
+drbd-utils (8.9.10-2) unstable; urgency=medium
+
+  * Fix the service enable/disable logic (broken since 8.9.8-1, closes:
+    #862248):
+    + Add Default-Start runlevels to the initscript so that it can be
+      enabled/disabled again (broken since 8.9.8-1, see #862248).
+    + Clean up stale systemd state on upgrade from versions that shipped a
+      native systemd unit.
+  * Disable the service by default on new installations, following upstream's
+    policy.
+    + Document disabling the service in debian/NEWS.
+    + Override lintian error about duplicate update-rc.d calls.
+  * Do not restart the drbd service on upgrade; kernel reconfiguration is not
+    needed when the tools change.
+  * d/NEWS: use the new source name and drop the epoch, to avoid displaying
+    existing notices on every upgrade.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 12 May 2017 15:05:39 +0300
+
 drbd-utils (8.9.10-1) unstable; urgency=medium
 
   * New upstream release
