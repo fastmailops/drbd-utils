@@ -44,7 +44,7 @@ override_dh_install:
 
 
 override_dh_installinit:
-	dh_installinit --name=drbd --no-start
+	dh_installinit --name=drbd --no-start --no-restart-on-upgrade
 
 override_dh_gencontrol:
 	dh_gencontrol -Ndrbd8-utils
