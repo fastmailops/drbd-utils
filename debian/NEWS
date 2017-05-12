@@ -1,3 +1,21 @@
+drbd-utils (8.9.10-2) unstable; urgency=medium
+
+  The drbd service is now disabled by default on new installations. Upstream
+  recommends that a cluster management software be used to control DRBD
+  instead. If your setup relies on the drbd service however, you can still
+  enable it using
+
+    systemctl enable drbd.service
+
+  or
+
+    update-rc.d drbd enable
+
+  Again, this applies only to new installations of the package, upgrades from
+  older versions will leave the service intact.
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Fri, 12 May 2017 20:15:24 +0300
+
 drbd-utils (8.4.4-1) unstable; urgency=low
 
   DRBD 8.4 includes a number of important changes from the 8.3 series, both
