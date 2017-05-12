@@ -4,3 +4,4 @@ disable-version-warning
 disable-automatic-user-survey.patch
 initscript-remove-path.patch
 reproducible-build
+initscript-add-start-runlevels.patch
