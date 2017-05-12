@@ -1,4 +1,4 @@
-drbd8 (2:8.4.4-1) unstable; urgency=low
+drbd-utils (8.4.4-1) unstable; urgency=low
 
   DRBD 8.4 includes a number of important changes from the 8.3 series, both
   in operation and in configuration files. An overview of these changes is
