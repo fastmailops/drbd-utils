@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -34,34 +35,39 @@
 #include "shared_tool.h"
 #include "shared_main.h"
 
+#ifdef HAVE_GETENTROPY
+#include <sys/random.h>
+#endif
+
+const char *IPV4_STR = "ipv4";
+const char *IPV6_STR = "ipv6";
+
 const char* shell_escape(const char* s)
 {
 	/* ugly static buffer. so what. */
 	static char buffer[1024];
 	char *c = buffer;
 
-	*c = '\0';
-	if (s == NULL)
-		return buffer;
-
-	while (*s) {
-		if (buffer + sizeof(buffer) < c+2)
-			break;
-
-		switch(*s) {
-		/* set of 'clean' characters */
-		case '%': case '+': case '-': case '.': case '/':
-		case '0' ... '9':
-		case ':': case '=': case '@':
-		case 'A' ... 'Z':
-		case '_':
-		case 'a' ... 'z':
-			break;
-		/* escape everything else */
-		default:
-			*c++ = '\\';
+	if (s != NULL) {
+		/* reserve space for a possible escape character and
+		 * the terminating null character */
+		char *max_c = buffer + sizeof (buffer) - 2;
+		while (*s != '\0' && c < max_c) {
+			switch(*s) {
+			/* set of 'clean' characters */
+			case '%': case '+': case '-': case '.': case '/':
+			case '0' ... '9':
+			case ':': case '=': case '@':
+			case 'A' ... 'Z':
+			case '_':
+			case 'a' ... 'z':
+				break;
+			/* escape everything else */
+			default:
+				*c++ = '\\';
+			}
+			*c++ = *s++;
 		}
-		*c++ = *s++;
 	}
 	*c = '\0';
 	return buffer;
@@ -333,20 +339,42 @@ out:
 	return rc;
 }
 
-void get_random_bytes(void* buffer, int len)
+bool random_by_dev_urandom(void *buffer, size_t len)
 {
 	int fd;
+	bool ok = true;
 
-	fd = open("/dev/urandom",O_RDONLY);
-	if( fd == -1) {
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd == -1) {
 		perror("Open of /dev/urandom failed");
-		exit(20);
+		return false;
 	}
-	if(read(fd,buffer,len) != len) {
-		fprintf(stderr,"Reading from /dev/urandom failed\n");
-		exit(20);
+
+	if (read(fd, buffer, len) != len) {
+		ok = false;
+		fprintf(stderr, "Reading from /dev/urandom failed\n");
 	}
 	close(fd);
+
+	return ok;
+}
+
+void get_random_bytes(void *buffer, size_t len)
+{
+	bool ok;
+
+#ifdef HAVE_GETENTROPY
+	ok = (getentropy(buffer, len) == 0);
+	if (ok)
+		return;
+
+	perror("Could not get random data from getentropy(). Fallback to /dev/urandom");
+	/* fallback to /dev/urandom */
+#endif
+	ok = random_by_dev_urandom(buffer, len);
+
+	if (!ok)
+		exit(20);
 }
 
 int m_asprintf(char **strp, const char *fmt, ...)
@@ -462,6 +490,64 @@ bool addr_scope_local(const char *input)
 
 	return false;
 }
+
+bool addresses_match(const char *const af_1st, const char *const addr_1st,
+                     const char *const af_2nd, const char *const addr_2nd)
+{
+	bool match = false;
+
+	if (strcasecmp(af_1st, IPV4_STR) == 0 &&
+	    strcasecmp(af_2nd, IPV4_STR) == 0) {
+		// Both addresses are IPv4, match the translated IPv4 addresses
+		match = ipv4_addresses_match(addr_1st, addr_2nd);
+	} else if (strcasecmp(af_1st, IPV6_STR) == 0 &&
+	           strcasecmp(af_2nd, IPV6_STR) == 0) {
+		// Both addresses are IPv6, match the translated IPv6 addresses
+		match = ipv6_addresses_match(addr_1st, addr_2nd);
+	} else {
+		// Address families either mismatch or they are neither
+		// IPv4 nor IPv6 type addresses
+		// Fall back to string comparison to cover those cases
+		match = strcmp(af_1st, af_2nd) == 0 &&
+		        strcmp(addr_1st, addr_2nd) == 0;
+	}
+
+	return match;
+}
+
+bool ipv4_addresses_match(const char *const addr_1st,
+                          const char *const addr_2nd)
+{
+	bool match = false;
+
+	struct in_addr v4_addr_1st;
+	struct in_addr v4_addr_2nd;
+	if (inet_pton(AF_INET, addr_1st, &v4_addr_1st) == 1 &&
+	    inet_pton(AF_INET, addr_2nd, &v4_addr_2nd) == 1) {
+		match = v4_addr_1st.s_addr == v4_addr_2nd.s_addr;
+	}
+
+	return match;
+}
+
+bool ipv6_addresses_match(const char *const addr_1st,
+                          const char *const addr_2nd)
+{
+	bool match = false;
+
+	struct in6_addr v6_addr_1st;
+	struct in6_addr v6_addr_2nd;
+	if (inet_pton(AF_INET6, addr_1st, &v6_addr_1st) == 1 &&
+	    inet_pton(AF_INET6, addr_2nd, &v6_addr_2nd) == 1) {
+		size_t length = sizeof (v6_addr_1st.s6_addr);
+		match = memcmp(v6_addr_1st.s6_addr,
+		               v6_addr_2nd.s6_addr,
+		               length) == 0;
+	}
+
+	return match;
+}
+
 unsigned long long
 m_strtoll(const char *s, const char def_unit)
 {

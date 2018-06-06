@@ -47,13 +47,50 @@ By convention the main config contains two include statements\&. The first one i
 \fB\&.res\fR
 suffix\&.
 .PP
-.PP \fBExample\ \&1.\ \&A small example\&.res file\fR .sp .if n \{\ .RS 4 .\} .nf resource r0 { net { protocol C; cram\-hmac\-alg sha1; shared\-secret "FooFunFactory"; } disk { resync\-rate 10M; } on alice { volume 0 { device minor 1; disk /dev/sda7; meta\-disk internal; } address 10\&.1\&.1\&.31:7789; } on bob { volume 0 { device minor 1; disk /dev/sda7; meta\-disk internal; } address 10\&.1\&.1\&.32:7789; } } .fi .if n \{\ .RE .\}In this example, there is a single DRBD resource (called r0) which uses protocol C for the connection between its devices\&. It contains a single volume which runs on host
+
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+resource r0 {
+	net {
+		protocol C;
+		cram\-hmac\-alg sha1;
+		shared\-secret "FooFunFactory";
+	}
+	disk {
+		resync\-rate 10M;
+	}
+	on alice {
+		volume 0 {
+			device    minor 1;
+			disk      /dev/sda7;
+			meta\-disk internal;
+		}
+		address   10\&.1\&.1\&.31:7789;
+	}
+	on bob {
+		volume 0 {
+			device    minor 1;
+			disk      /dev/sda7;
+			meta\-disk internal;
+		}
+		address   10\&.1\&.1\&.32:7789;
+	}
+}
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+In this example, there is a single DRBD resource (called r0) which uses protocol C for the connection between its devices\&. It contains a single volume which runs on host
 \fIalice\fR
 uses
 \fI/dev/drbd1\fR
 as devices for its application, and
 \fI/dev/sda7\fR
-as low\-level storage for the data\&. The IP addresses are used to specify the networking interfaces to be used\&. An eventually running resync process should use about 10MByte/second of IO bandwidth\&. This sync\-rate statement is valid for volume 0, but would also be valid for further volumes\&. In this example it assigns full 10MByte/second to each volume\&.
+as low\-level storage for the data\&. The IP addresses are used to specify the networking interfaces to be used\&. An eventually running resync process should use about 10MByte/second of IO bandwidth\&. This resync\-rate statement is valid for volume 0, but would also be valid for further volumes\&. In this example it assigns full 10MByte/second to each volume\&.
 .PP
 There may be multiple resource sections in a single drbd\&.conf file\&. For more examples, please have a look at the
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2\&.
@@ -422,6 +459,35 @@ if, for some obscure reasons, drbdadm can/might not use
 or
 \fBifconfig\fR
 to do a sanity check for the IP address\&. You can disable the IP verification with this option\&.
+.RE
+.PP
+\fBudev\-always\-use\-vnr\fR
+.RS 4
+When udev asks drbdadm for a list of device related symlinks, drbdadm would suggest symlinks with differing naming conventions, depending on whether the resource has explicit
+volume VNR { }
+definitions, or only one single volume with the implicit volume number 0:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+# implicit single volume without "volume 0 {}" block
+DEVICE=drbd<minor>
+SYMLINK_BY_RES=drbd/by\-res/<resource\-name>
+
+# explicit volume definition: volume VNR { }
+DEVICE=drbd<minor>
+SYMLINK_BY_RES=drbd/by\-res/<resource\-name>/VNR
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+If you define this parameter in the global section, drbdadm will always add the
+\&.\&.\&./VNR
+part, and will not care for whether the volume definition was implicit or explicit\&.
+.sp
+For legacy backward compatibility, this is off by default, but we do recommend to enable it\&.
 .RE
 .PP
 \fBusage\-count \fR\fB\fIval\fR\fR
@@ -1089,7 +1155,7 @@ During resync\-handshake, the dirty\-bitmaps of the nodes are exchanged and merg
 .sp
 Because the bitmap typically contains compact areas where all bits are unset (clean) or set (dirty), a simple run\-length encoding scheme can considerably reduce the network traffic necessary for the bitmap exchange\&.
 .sp
-For backward compatibilty reasons, and because on fast links this possibly does not improve transfer time but consumes cpu cycles, this defaults to off\&.
+For backward compatibility reasons, and because on fast links this possibly does not improve transfer time but consumes cpu cycles, this defaults to off\&.
 .RE
 .PP
 \fBsocket\-check\-timeout \fR\fB\fIvalue\fR\fR

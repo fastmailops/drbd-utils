@@ -121,6 +121,8 @@ static const char * const __error_messages[] = {
 	[-SS_INTERRUPTED] = "Interrupted state change",
 	[-SS_TIMEOUT] = "Timeout in operation",
 	[-SS_WEAKLY_CONNECTED] = "Primary nodes must be strongly connected among each other",
+	[-SS_NO_QUORUM] = "No quorum",
+	[-SS_ATTACH_NO_BITMAP] = "Intentional diskless peer may not attach a disk",
 };
 
 struct state_names drbd_error_messages = {
@@ -174,7 +176,6 @@ static const char * const __packet_names[] = {
 	[P_RS_CANCEL]		= "P_RS_CANCEL",
 	[P_CONN_ST_CHG_REQ]	= "P_CONN_ST_CHG_REQ",
 	[P_CONN_ST_CHG_REPLY]	= "P_CONN_ST_CHG_REPLY",
-	[P_RETRY_WRITE]		= "P_RETRY_WRITE",
 	[P_PROTOCOL_UPDATE]	= "P_PROTOCOL_UPDATE",
 	[P_TWOPC_PREPARE]	= "P_TWOPC_PREPARE",
 	[P_TWOPC_ABORT]		= "P_TWOPC_ABORT",

@@ -6,6 +6,7 @@ struct nlattr;
 
 struct context_def;
 struct field_def;
+struct en_map;
 
 enum check_codes {
 	CC_OK,
@@ -15,6 +16,7 @@ enum check_codes {
 	CC_TOO_SMALL,
 	CC_TOO_BIG,
 	CC_STR_TOO_LONG,
+	CC_NOT_AN_ENUM_NUM,
 };
 
 struct field_class {
@@ -50,6 +52,13 @@ struct field_def {
 		struct {
 			unsigned max_len;
 		} s; /* string */
+		struct {
+			const struct en_map *map;
+			int map_size;
+			int min;
+			int max;
+			int def;
+		} en; /* ENUM_NUM */
 	} u;
 	bool needs_double_quoting;
 	bool argument_is_optional;
@@ -72,6 +81,7 @@ extern struct field_class fc_numeric;
 extern struct field_class fc_boolean;
 extern struct field_class fc_flag;
 extern struct field_class fc_string;
+extern struct field_class fc_enum_num;
 
 extern struct context_def disk_options_ctx;
 extern struct context_def net_options_ctx;
@@ -90,6 +100,7 @@ extern struct context_def verify_cmd_ctx;
 extern struct context_def device_options_ctx;
 extern struct context_def invalidate_ctx;
 extern struct context_def create_md_ctx;
+extern struct context_def dump_md_ctx;
 extern struct context_def adjust_ctx;
 extern struct context_def peer_device_options_ctx;
 extern struct context_def handlers_ctx;

@@ -41,6 +41,7 @@ struct d_option
 	unsigned int mentioned  :1 ; // for the adjust command.
 	unsigned int is_escaped :1 ;
 	unsigned int adj_skip :1;
+	unsigned int inherited :1;
 };
 
 STAILQ_HEAD(options, d_option);
@@ -72,10 +73,12 @@ struct peer_device
 	int config_line; /* parsed here */
 
 	struct connection *connection;
-	struct d_volume *volume; /* set in post_parese() */
+	/* No pointer to d_volume, because there are two!
+	   On each side of the connection!
+	   Iterate d_host_info and find the correct volume by matching vnr! */
 
 	STAILQ_ENTRY(peer_device) connection_link; /* added during parsing */
-	STAILQ_ENTRY(peer_device) volume_link; /* added in post_parse() */
+	/* no volume_link !! */
 
 	unsigned int implicit:1; /* Do not dump by default */
 };
@@ -95,6 +98,11 @@ struct d_volume
 	struct options disk_options; /* Additional per volume options */
 	struct options pd_options; /* peer device options */
 	struct peer_devices peer_devices;
+
+	const char *v_config_file;
+	int v_device_line;
+	int v_disk_line;
+	int v_meta_disk_line;
 
 	/* Do not dump an explicit volume section */
 	unsigned int implicit :1 ;
@@ -163,6 +171,7 @@ struct path
 
 	unsigned int implicit:1;
 	unsigned int adj_seen:1;
+	unsigned int proxy_conn_is_down:1;
 	STAILQ_ENTRY(path) link;
 };
 STAILQ_HEAD(paths, path);
@@ -184,8 +193,12 @@ struct connection
 	 * e.g., would a connection be enabled multiple times
 	 * this avoids direct maniuplation/restore of the ignore flag itself */
 	unsigned int ignore_tmp:1;
+	unsigned int me:1;
 	unsigned int implicit:1;
 	unsigned int is_standalone:1;
+	/* on_cmdline is set it was explicity asked for on the command line.
+	   Not set if only found by iterating over all connextions in resource */
+	unsigned int on_cmdline:1;
 	STAILQ_ENTRY(connection) link;
 };
 STAILQ_HEAD(connections, connection);
@@ -303,6 +316,7 @@ enum {
 	ADJUST_SKIP_CHECKED = 4,
 };
 extern int _adm_adjust(const struct cfg_ctx *ctx, int flags);
+extern int is_equal(struct context_def *ctx, struct d_option *a, struct d_option *b);
 
 extern struct adm_cmd new_minor_cmd;
 extern struct adm_cmd new_resource_cmd;
@@ -391,6 +405,7 @@ enum pr_flags {
 };
 
 extern int check_uniq(const char *what, const char *fmt, ...);
+extern int check_uniq_file_line(const char *file, const int line, const char *what, const char *fmt, ...);
 extern struct d_resource* parse_resource_for_adjust(const struct cfg_ctx *ctx);
 extern struct d_resource* parse_resource(char*, enum pr_flags);
 extern void post_parse(struct resources *, enum pp_flags);
@@ -426,10 +441,7 @@ extern bool addresses_equal(struct d_address *addr1, struct d_address *addr2);
 extern int btree_key_cmp(const void *a, const void *b);
 int parse_proxy_options_section(struct d_proxy_info **proxy);
 /* conn_name is optional and mostly for compatibility with dcmd */
-int do_proxy_conn_up(const struct cfg_ctx *ctx);
-int do_proxy_conn_down(const struct cfg_ctx *ctx);
-int do_proxy_conn_plugins(const struct cfg_ctx *ctx);
-struct peer_device *find_peer_device(struct d_host_info *host, struct connection *conn, int vnr);
+struct peer_device *find_peer_device(struct connection *conn, int vnr);
 bool peer_diskless(struct peer_device *peer_device);
 
 extern char *config_file;
@@ -443,6 +455,7 @@ extern void *global_btree;
 extern int no_tty;
 extern int dry_run;
 extern int verbose;
+extern int adjust_more_than_one_resource;
 extern char* drbdsetup;
 extern char* drbdmeta;
 extern char* drbd_proxy_ctl;

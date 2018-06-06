@@ -1,6 +1,93 @@
 Latest:
 ------
- For even more detail, use "git log" or visit http://git.drbd.org/.
+ For even more detail, use "git log" or visit
+ https://github.com/linbit/drbd-utils
+
+9.4.0
+--------
+ * drbdmeta: don't exit with negative return codes
+ * usage counts: only register if we know driver version
+ * drbdsetup,v9: expose detailed verify/resync statistics
+ * drbdsetup,v9,json: saner types for client/peer-client/quorum on --json
+ * drbdsetup,v9: expose client/peer-client in status if !isatty()
+
+9.3.1
+--------
+ * drbdadm v84: fixup for disable-write-same
+ * Fix IPv4 & IPv6 address comparisons for 'drbdadm adjust'
+
+9.3.0
+--------
+ * update to Japanese man pages
+ * fixes for stacking in drbd-9.0
+ * fixes for proxy support in drbd-9.0
+ * fix adjusting --bitmap=no peer to diskfull
+ * VCS: typos and fixes for stacked resources
+
+9.2.2
+--------
+ * support to pass force option to dump md
+ * fix setting peers/disks in v9 stacked setups
+ * fix rpm build bug when built without 8.4 support
+ * retrofit rpm release date
+ * fix v9 adjust that converts permanent diskless to diskfull
+ * allow stacked setups in VCS clusters
+
+9.2.1
+--------
+ * fix drbdadm adjust when proxy is not local
+
+9.2.0
+--------
+ * Japanese man pages
+ * initial vertias cluster agent support
+ * quorum integration (including agents)
+ * improve drbd9 (mesh)/drbd-proxy integration
+ * pull fixups from 9.1.1 branch
+ * switch to github
+ * drbdmon: page naviagation/quorum
+ * debian: add mount as dependency
+
+9.1.0
+--------
+ * allow events2 --now polling
+ * fix ambiguous inheritance for peer-device-options
+ * fixup fallback path for BLKZEROOUT for older kernels
+ * fix v9 proxy support
+ * modernized XEN scripts
+ * reproducible builds support
+ * create-md --force for v8.4 (for compat to v9)
+ * fix cstate output
+ * resize: give resize more time (same as attach)
+ * drbdmon: peer-device status, version info, node name
+ * "drbdadm status" for v8.4
+ * set peer-device-options only once
+
+9.0.0
+--------
+ * drbd udev: fix inconsistent inheritance of implicit volumes
+   To keep previous udev /dev/drbd/by-resource/... behavior,
+   you may need to set or unset/comment "global { udev-always-use-vnr; }",
+   see the shipped example global_common.conf
+ * Fix regressions of the out-of-the-box DRBD 8.4 experience
+   with our pacemaker DRBD Resource Agent and shipped example config files
+ * debian: don't "stop" drbd on upgrade of utils package
+ * DrbdMon: can now focus on "problem" resources by filtering-out "ok" ones
+ * v9: support new option on_no_quorum
+ * drbdadm: fix segfaults, improve error reporting
+ * adjust: fix deleting unrelated peer(s) on "adjust resource:specific-peer"
+ * drbdmeta create-md/convert: fix check for existing external meta-data
+
+8.9.11
+--------
+ * better integration of drbd-proxy in drbd9 scenarios
+ * OCF resource agent and crm-fence-peer for drbd9
+ * introduce quorum support
+ * expose information if node is intentionally diskless
+ * do not set peer-device-options twice
+ * various JSON output fixes
+ * udev fixes for newer ubuntu releases
+ * set bitmap to 0 on metadata creation
 
 8.9.10
 --------

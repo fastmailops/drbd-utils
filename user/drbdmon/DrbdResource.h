@@ -2,6 +2,7 @@
 #define	DRBDRESOURCE_H
 
 #include <new>
+#include <memory>
 #include <string>
 
 #include <VolumesContainer.h>
@@ -66,7 +67,9 @@ class DrbdResource : public VolumesContainer, public DrbdRole, private StateFlag
     using StateFlags::get_state;
     virtual void clear_state_flags() override;
     virtual StateFlags::state update_state_flags() override;
+    virtual StateFlags::state child_state_flags_changed() override;
     virtual bool has_role_alert();
+    virtual bool has_quorum_alert();
 
     // Creates (allocates and initializes) a new DrbdResource object from a map of properties
     //
@@ -77,8 +80,9 @@ class DrbdResource : public VolumesContainer, public DrbdRole, private StateFlag
 
   private:
     const std::string name;
-    ConnectionsMap* conn_list;
+    const std::unique_ptr<ConnectionsMap> conn_list;
     bool role_alert {false};
+    bool quorum_alert {false};
 };
 
 #endif	/* DRBDRESOURCE_H */

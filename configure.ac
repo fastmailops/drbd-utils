@@ -13,7 +13,7 @@ m4_include([m4/AX_CXX_COMPILE_STDXX.m4])
 m4_include([m4/AX_CXX_COMPILE_STDXX_11.m4])
 
 dnl What we are, our version, who to bug in case of problems
-AC_INIT(DRBD, 8.9.10, [drbd-dev@lists.linbit.com])
+AC_INIT(DRBD, 9.4.0, [drbd-dev@lists.linbit.com])
 
 dnl Sanitize $prefix. Autoconf does this by itself, but so late in the
 dnl generated configure script that the expansion does not occur until
@@ -119,6 +119,9 @@ AC_SUBST(WITH_HEARTBEAT)
 AC_SUBST(WITH_RGMANAGER)
 AC_SUBST(WITH_BASHCOMPLETION)
 AC_SUBST(WITH_MANUAL)
+
+dnl Check for functions
+AC_CHECK_FUNCS([getentropy])
 
 dnl Do we know where systemd unit files go?
 PKG_PROG_PKG_CONFIG
@@ -390,7 +393,7 @@ fi
 
 dnl The configuration files we create (from their .in template)
 if test -z $SPECMODE; then
-   AC_CONFIG_FILES(Makefile user/shared/Makefile user/v9/Makefile user/v83/Makefile user/v84/Makefile scripts/Makefile documentation/v9/Makefile documentation/v83/Makefile documentation/v84/Makefile scripts/drbd.rules user/drbdmon/Makefile)
+   AC_CONFIG_FILES(Makefile user/shared/Makefile user/v9/Makefile user/v83/Makefile user/v84/Makefile scripts/Makefile documentation/v9/Makefile documentation/v83/Makefile documentation/v84/Makefile scripts/drbd.rules user/drbdmon/Makefile documentation/ja/v84/Makefile documentation/ja/v9/Makefile)
    AC_CONFIG_HEADERS(user/shared/config.h)
 else
    AC_CONFIG_FILES(drbd.spec)

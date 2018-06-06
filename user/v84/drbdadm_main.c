@@ -137,6 +137,7 @@ extern FILE *yyin;
 
 static int adm_generic_l(struct cfg_ctx *);
 static int adm_up(struct cfg_ctx *);
+static int adm_status(struct cfg_ctx *);
 static int adm_dump(struct cfg_ctx *);
 static int adm_dump_xml(struct cfg_ctx *);
 static int adm_wait_c(struct cfg_ctx *);
@@ -357,6 +358,7 @@ struct adm_cmd cmds[] = {
 	 ***/
 	{"attach", adm_attach, DRBD_acf1_default
 	 .drbdsetup_ctx = &attach_cmd_ctx, },
+	{"status", adm_status, DRBD_acf1_resname}, /* keep as its own, we switch on it in main(), don't directly use amd_generic_s */
 	{"disk-options", adm_disk_options, DRBD_acf1_default
 	 .drbdsetup_ctx = &disk_options_ctx, },
 	{"detach", adm_generic_l, DRBD_acf1_default
@@ -1059,7 +1061,7 @@ static int sh_udev(struct cfg_ctx *ctx)
 		return 1;
 	}
 
-	if (vol->implicit)
+	if (vol->implicit && !global_options.udev_always_symlink_vnr)
 		printf("RESOURCE=%s\n", res->name);
 	else
 		printf("RESOURCE=%s/%u\n", res->name, vol->vnr);
@@ -1437,6 +1439,11 @@ int adm_disk_options(struct cfg_ctx *ctx)
 int adm_set_default_disk_options(struct cfg_ctx *ctx)
 {
 	return adm_attach_or_disk_options(ctx, false, true);
+}
+
+int adm_status(struct cfg_ctx *ctx)
+{
+	return adm_generic_s(ctx);
 }
 
 struct d_option *find_opt(struct d_option *base, char *name)
@@ -3379,6 +3386,7 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 	}
 
 	if (setup_options) {
+		bool is_create_md = (*cmd)->name && !strcmp((*cmd)->name, "create-md");
 		/*
 		 * The drbdsetup options are command specific.  Make sure that only
 		 * setup options that this command recognizes are used.
@@ -3406,7 +3414,7 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 				if (!field->name)
 					field = NULL;
 			}
-			if (!field) {
+			if (!field && !is_create_md) {
 				err("%s: unrecognized option '%.*s'\n", progname, len, option);
 				goto help;
 			}
@@ -3569,6 +3577,7 @@ int main(int argc, char **argv)
 	char *env_drbd_nodename = NULL;
 	int is_dump_xml;
 	int is_dump;
+	bool is_status;
 	struct cfg_ctx ctx = { .arg = NULL };
 
 	initialize_err();
@@ -3614,9 +3623,10 @@ int main(int argc, char **argv)
 
 	is_dump_xml = (cmd->function == adm_dump_xml);
 	is_dump = (is_dump_xml || cmd->function == adm_dump);
+	is_status = (cmd->function == adm_status);
 
 	if (!resource_names[0]) {
-		if (is_dump)
+		if (is_dump || is_status)
 			all_resources = 1;
 		else if (cmd->res_name_required)
 			print_usage_and_exit(cmd, "No resource names specified", E_USAGE);

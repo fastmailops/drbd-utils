@@ -68,13 +68,14 @@ void dt_print_v9_uuids(const uint64_t* uuid, unsigned int mdf_flags, unsigned in
 	for ( i=UI_HISTORY_START ; i<=UI_HISTORY_END ; i++ ) {
 		printf(X64(016)":", uuid[i]);
 	}
-	printf("%d:%d:%d:%d:%d:%d",
+	printf("%d:%d:%d:%d:%d:%d:%d",
 	       mdf_flags & MDF_CONSISTENT ? 1 : 0,
 	       mdf_flags & MDF_WAS_UP_TO_DATE ? 1 : 0,
 	       mdf_flags & MDF_PRIMARY_IND ? 1 : 0,
 	       mdf_flags & MDF_CRASHED_PRIMARY ? 1 : 0,
 	       mdf_flags & MDF_AL_CLEAN ? 1 : 0,
-	       mdf_flags & MDF_AL_DISABLED ? 1 : 0);
+	       mdf_flags & MDF_AL_DISABLED ? 1 : 0,
+	       mdf_flags & MDF_PRIMARY_LOST_QUORUM ? 1 : 0);
 	printf(":%d:%d:%d:%d:%d\n",
 	       mdf_peer_flags & MDF_PEER_CONNECTED ? 1 : 0,
 	       mdf_peer_flags & MDF_PEER_OUTDATED ? 1 : 0,
@@ -94,18 +95,19 @@ void dt_pretty_print_v9_uuids(const uint64_t* uuid, unsigned int mdf_flags, unsi
 "       V               V                 V         V\n");
 	dt_print_v9_uuids(uuid, mdf_flags, mdf_peer_flags);
 	printf(
-"                                                                    ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n"
-"                                      -<  Data consistency flag  >--+ | | | | | | | | | |\n"
-"                             -<  Data was/is currently up-to-date  >--+ | | | | | | | | |\n"
-"                                  -<  Node was/is currently primary  >--+ | | | | | | | |\n"
-" -<  This node was a crashed primary, and has not seen its peer since  >--+ | | | | | | |\n"
-"             -<  The activity-log was applied, the disk can be attached  >--+ | | | | | |\n"
-"        -<  The activity-log was disabled, peer is completely out of sync  >--+ | | | | |\n"
-"                                        -<  Node was/is currently connected  >--+ | | | |\n"
-"                            -<  The peer's disk was out-dated or inconsistent  >--+ | | |\n"
-"                               -<   A fence policy other the dont-care was used  >--+ | |\n"
-"                -<  Node was in the progress of marking all blocks as out of sync  >--+ |\n"
-"                   -<  At least once we saw this node with a backing device attached >--+\n"
+"                                                                    ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n"
+"                                      -<  Data consistency flag  >--+ | | | | | | | | | | |\n"
+"                             -<  Data was/is currently up-to-date  >--+ | | | | | | | | | |\n"
+"                                  -<  Node was/is currently primary  >--+ | | | | | | | | |\n"
+" -<  This node was a crashed primary, and has not seen its peer since  >--+ | | | | | | | |\n"
+"             -<  The activity-log was applied, the disk can be attached  >--+ | | | | | | |\n"
+"        -<  The activity-log was disabled, peer is completely out of sync  >--+ | | | | | |\n"
+"                              -<  This node was primary when it lost quorum  >--+ | | | | |\n"
+"                                          -<  Node was/is currently connected  >--+ | | | |\n"
+"                              -<  The peer's disk was out-dated or inconsistent  >--+ | | |\n"
+"                                 -<   A fence policy other the dont-care was used  >--+ | |\n"
+"                  -<  Node was in the progress of marking all blocks as out of sync  >--+ |\n"
+"                     -<  At least once we saw this node with a backing device attached >--+\n"
 "\n");
 }
 
@@ -309,6 +311,22 @@ int version_code_kernel(void)
 	return driver_version ? driver_version->version_code : 0;
 }
 
+const char *escaped_version_code_kernel(void)
+{
+	const struct version *driver_version = drbd_driver_version(STRICT);
+	char buf[32];
+
+	if (!driver_version)
+		return "0";
+
+	snprintf(buf, sizeof(buf), "%u.%u.%u",
+			driver_version->version.major, driver_version->version.minor,
+			driver_version->version.sublvl);
+
+	/* keep the shell_escape (or change the code), otherwise you don't have a static buffer */
+	return shell_escape(buf);
+}
+
 int version_code_userland(void)
 {
 	const struct version *utils_version = drbd_utils_version();
@@ -329,7 +347,7 @@ void config_help_legacy(const char * const tool,
 	fprintf(stderr, "DRBD kernel driver version %d.%d detected.\n"
 			"This %s was built without support for drbd kernel code %d.%d.\n"
 			"Consider to upgrade your DRBD kernel driver. Or rebuild your user land tools\n"
-			"and configure --with-%d%d-support ...\n",
+			"and configure --with-%d%dsupport ...\n",
 			driver_version->version.major, driver_version->version.minor,
 			tool,
 			driver_version->version.major, driver_version->version.minor,

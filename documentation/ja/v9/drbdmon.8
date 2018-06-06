@@ -1,0 +1,114 @@
+'\" t
+.\"     Title: drbdmon
+.\"    Author: Robert Altnoeder <robert.altnoeder@linbit.com>
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 9 November 2016
+.\"    Manual: System Administration
+.\"    Source: DRBD 9.0.0
+.\"  Language: English
+.\"
+.TH "DRBDMON" "8" "9 November 2016" "DRBD 9.0.0" "System Administration"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+drbdmon \- DRBD リソースをリアルタイムで監視する
+.SH "SYNOPSIS"
+.HP \w'\fBdrbdmon\fR\ 'u
+\fBdrbdmon\fR [options...] [\-\-\ [\fIbackend\-options\fR...]] {\fIcommand\fR} {\fIcontext\fR...}
+.SH "DESCRIPTION"
+.PP
+\fBdrbdmon\fR
+ユーティリティは、 DRBD リ ソースファイルで定義されているボリュームとの接続をリアルタイムで監視するために使用される。次のマニュアルを参照:
+\fBdrbd.conf\fR(5)。
+.SH "OPTIONS"
+.PP
+\fB\-d\fR, \fB\-\-dry\-run\fR
+.RS 4
+\fBdrbdmon\fR
+がどのコマンドを実行するか、それらを実際に実行する代わりに表示する （たとえば、
+\fBdrbdmon \-d up \fR\fB\fIresource\fR\fR）。これは、\fBdrbdsetup\fR、\fBdrbdmeta\fR
+がどのように使用されてるかを学習するのに便利な方法である。
+.RE
+.PP
+\fB\-\-ascii\fR
+.RS 4
+ASCII 文字 （Unicode なし） のみを使用する。
+.RE
+.PP
+\fB\-\-no\-header\fR
+.RS 4
+drbdmon ヘッダー行を表示しない。
+.RE
+.PP
+\fB\-\-no\-hotkeys\fR
+.RS 4
+ホットキーの行を表示しない。
+.RE
+.SH "COMMANDS"
+.PP
+c {\fIdevice\fR}
+.RS 4
+画面をクリアする。
+.RE
+.PP
+r
+.RS 4
+再表示する。
+.RE
+.PP
+q
+.RS 4
+終了する。
+.RE
+.SH "VERSION"
+.sp
+このドキュメントは DRBD バージョン 9\&.0\&.0 向けに改訂されている。
+.SH "REPORTING BUGS"
+.sp
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
+.SH "COPYRIGHT"
+.sp
+Copyright 2016\-2017 LINBIT Information Technologies, Robert Altnoeder, Sam Leonard\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+.SH "SEE ALSO"
+.PP
+\fBdrbd.conf\fR(5),
+\fBdrbd\fR(8),
+\fBdrbddisk\fR(8),
+\fBdrbdsetup\fR(8),
+\fBdrbdmeta\fR(8)
+and the
+\m[blue]\fBDRBD project web site\fR\m[]\&\s-2\u[1]\d\s+2
+.SH "AUTHORS"
+.PP
+\fBRobert Altnoeder\fR <\&robert\&.altnoeder@linbit\&.com\&>
+.RS 4
+Primary author of drbdmon
+.RE
+.PP
+\fBSam Leonard\fR <\&sam@linbit\&.com\&>
+.RS 4
+man page and build system integration
+.RE
+.SH "NOTES"
+.IP " 1." 4
+DRBD project web site
+.RS 4
+\%http://www.drbd.org/
+.RE

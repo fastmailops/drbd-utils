@@ -8,11 +8,11 @@
   &drbdsetup_options;
 
   <refentryinfo>
-    <date>3 December 2012</date>
+    <date>17 January 2018</date>
 
     <productname>DRBD</productname>
 
-    <productnumber>9.0.0</productnumber>
+    <productnumber>9.0.x</productnumber>
   </refentryinfo>
 
   <refmeta>
@@ -76,7 +76,12 @@
   <refsect1>
     <title>Example Configuration File</title>
     <para>
-      <programlisting format="linespecific">resource r0 {
+    <programlisting format="linespecific">
+global {
+	usage-count yes;
+	udev-always-use-vnr;
+}
+resource r0 {
       net {
 	      cram-hmac-alg sha1;
 	      shared-secret "FooFunFactory";
@@ -159,6 +164,9 @@ resource
    connection
       path
       net
+        volume
+           peer-device-options
+      [peer-device-options]
    connection-mesh
       net
    [disk]
@@ -182,6 +190,14 @@ resource
     be overridden in a more specific <option>resource</option>,
     <option>connection</option>, <option>on</option>, or
     <option>volume</option> section.</para>
+
+    <para><option>peer-device-options</option> are
+    <option>resync-rate</option>, <option>c-plan-ahead</option>, <option>c-delay-target</option>,
+    <option>c-fill-target</option>, <option>c-max-rate</option> and <option>c-min-rate</option>.
+    Due to backward comapatibility they can be specified in any disk options section as well.
+    They are inherited into all relevant connections. If they are given on <option>connection</option>
+    level they are inherited to all volumes on that connection. A <option>peer-device-options</option>
+    section is started with the <option>disk</option> keyword.</para>
 
     <refsect2>
       <title>Sections</title>
@@ -558,19 +574,25 @@ resource
       <variablelist>
 	<pick_drbdsetup_option name="al-extents"/>
 	<pick_drbdsetup_option name="al-updates"/>
-	<pick_drbdsetup_option name="c-delay-target"/>
-	<pick_drbdsetup_option name="c-min-rate"/>
 	<pick_drbdsetup_option name="disk-barrier"/>
 	<pick_drbdsetup_option name="disk-timeout"/>
 	<pick_drbdsetup_option name="md-flushes"/>
 	<pick_drbdsetup_option name="on-io-error"/>
 	<pick_drbdsetup_option name="read-balancing"/>
 	<pick_drbdsetup_option name="resync-after"/>
-	<pick_drbdsetup_option name="resync-rate"/>
 	<pick_drbdsetup_option name="rs-discard-granularity"/>
 	<pick_drbdsetup_option name="discard-zeroes-if-aligned"/>
-
 	<!-- <pick_drbdsetup_option name="size"/> -->
+      </variablelist>
+    </refsect2>
+
+    <refsect2>
+      <title>Section <option>peer-device-options</option> Parameters</title>
+      <para>Please note that you open the section with the <option>disk</option> keyword.</para>
+      <variablelist>
+	<pick_drbdsetup_option name="c-delay-target"/>
+	<pick_drbdsetup_option name="c-min-rate"/>
+	<pick_drbdsetup_option name="resync-rate"/>
       </variablelist>
     </refsect2>
 
@@ -581,6 +603,7 @@ resource
         <pick_drbdsetup_option name="dialog-refresh"/>
         <pick_drbdsetup_option name="disable-ip-verification"/>
         <pick_drbdsetup_option name="usage-count"/>
+        <pick_drbdsetup_option name="udev-always-use-vnr"/>
       </variablelist>
     </refsect2>
 
@@ -846,6 +869,9 @@ resource
         <pick_drbdsetup_option name="on-no-data-accessible"/>
         <pick_drbdsetup_option name="peer-ack-window"/>
         <pick_drbdsetup_option name="peer-ack-delay"/>
+        <pick_drbdsetup_option name="quorum"/>
+	<pick_drbdsetup_option name="quorum-minimum-redundancy"/>
+        <pick_drbdsetup_option name="on-no-quorum"/>
       </variablelist>
     </refsect2>
 
@@ -1028,7 +1054,7 @@ resource
   <refsect1>
     <title>Copyright</title>
 
-    <simpara>Copyright 2001-2012 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg.
+    <simpara>Copyright 2001-2018 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg.
     This is free software; see the source for copying conditions. There is NO warranty; not even
     for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.</simpara>
   </refsect1>
@@ -1038,10 +1064,6 @@ resource
 
     <para><citerefentry>
         <refentrytitle>drbd</refentrytitle>
-
-        <manvolnum>8</manvolnum>
-      </citerefentry>, <citerefentry>
-        <refentrytitle>drbddisk</refentrytitle>
 
         <manvolnum>8</manvolnum>
       </citerefentry>, <citerefentry>

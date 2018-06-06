@@ -64,6 +64,11 @@ int disk_state_colors[] = {
 	[D_UP_TO_DATE] = COLOR_GOOD,
 };
 
+int quorum_colors[] = {
+	[false] = COLOR_BAD,
+	[true] = COLOR_GOOD,
+};
+
 const char *stop_color_code(void)
 {
 	return LC "0" RC;
@@ -142,8 +147,10 @@ const char *repl_state_color_stop(enum drbd_repl_state repl_state)
 			  is_local_repl_state(repl_state));
 }
 
-const char *disk_state_color_start(enum drbd_disk_state disk_state, bool local)
+const char *disk_state_color_start(enum drbd_disk_state disk_state, bool intentional, bool local)
 {
+	if (disk_state == D_DISKLESS && intentional)
+		disk_state = D_UP_TO_DATE;
 	return color_code(disk_state, disk_state_colors,
 			  ARRAY_SIZE(disk_state_colors), true, local);
 }
@@ -152,4 +159,14 @@ const char *disk_state_color_stop(enum drbd_disk_state disk_state, bool local)
 {
 	return color_code(disk_state, disk_state_colors,
 			  ARRAY_SIZE(disk_state_colors), false, local);
+}
+
+const char *quorum_color_start(bool have_quorum)
+{
+	return color_code(have_quorum, quorum_colors, ARRAY_SIZE(quorum_colors), true, true);
+}
+
+const char *quorum_color_stop(bool have_quorum)
+{
+	return color_code(have_quorum, quorum_colors, ARRAY_SIZE(quorum_colors), false, true);
 }

@@ -88,6 +88,11 @@ enum drbd_on_no_data {
 	OND_SUSPEND_IO
 };
 
+enum drbd_on_no_quorum {
+	ONQ_IO_ERROR = OND_IO_ERROR,
+	ONQ_SUSPEND_IO = OND_SUSPEND_IO
+};
+
 enum drbd_on_congestion {
 	OC_BLOCK,
 	OC_PULL_AHEAD,
@@ -282,9 +287,11 @@ union drbd_state {
 		unsigned user_isp:1 ;
 		unsigned susp_nod:1 ; /* IO suspended because no data */
 		unsigned susp_fen:1 ; /* IO suspended because fence peer handler runs*/
-		unsigned _pad:9;   /* 0	 unused */
+		unsigned quorum:1;
+		unsigned _pad:8;   /* 0	 unused */
 #elif defined(__BIG_ENDIAN_BITFIELD)
-		unsigned _pad:9;
+		unsigned _pad:8;
+		unsigned quorum:1;
 		unsigned susp_fen:1 ;
 		unsigned susp_nod:1 ;
 		unsigned user_isp:1 ;
@@ -332,7 +339,9 @@ enum drbd_state_rv {
 	SS_PRIMARY_READER = -22,
 	SS_TIMEOUT = -23,
 	SS_WEAKLY_CONNECTED = -24,
-	SS_AFTER_LAST_ERROR = -25,    /* Keep this at bottom */
+	SS_NO_QUORUM = -25,
+	SS_ATTACH_NO_BITMAP = -26,
+	SS_AFTER_LAST_ERROR = -27,    /* Keep this at bottom */
 };
 
 #define SHARED_SECRET_MAX 64
@@ -344,6 +353,7 @@ enum mdf_flag {
 	MDF_CRASHED_PRIMARY =	1 << 6,
 	MDF_AL_CLEAN =		1 << 7,
 	MDF_AL_DISABLED =       1 << 8,
+	MDF_PRIMARY_LOST_QUORUM = 1 << 9,
 };
 
 enum mdf_peer_flag {
@@ -430,5 +440,9 @@ enum drbd_peer_state {
 #define DRBD_CPU_MASK_SIZE 32
 
 #define DRBD_MAX_BIO_SIZE (1U << 20)
+
+#define QOU_OFF 0
+#define QOU_MAJORITY 1024
+#define QOU_ALL 1025
 
 #endif

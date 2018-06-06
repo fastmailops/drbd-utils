@@ -1,0 +1,129 @@
+'\" t
+.\"     Title: drbdmeta
+.\"    Author: [see the "Author" section]
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 15 Oct 2008
+.\"    Manual: System Administration
+.\"    Source: DRBD 8.3.2
+.\"  Language: English
+.\"
+.TH "DRBDMETA" "8" "15 Oct 2008" "DRBD 8.3.2" "System Administration"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+drbdmeta \- DRBD のメタデータ管理ツール
+.SH "SYNOPSIS"
+.HP \w'\fBdrbdmeta\fR\ 'u
+\fBdrbdmeta\fR [\-\-force] [\-\-ignore\-sanity\-checks] {\fIdevice\fR} {v06\ \fIminor\fR | v07\ \fImeta_dev\ index\fR | v08\ \fImeta_dev\ index\fR} {\fIcommand\fR} [\fIcmd\ args\fR...]
+.SH "DESCRIPTION"
+.PP
+drbdmeta は、DRBD メタデータを作成、内容表示、あるいは変更する。通常はフロントエンドのコマンドを使うため、直接使用する必要はない、
+\fBdrbdadm\fR(8)
+を参照。
+.PP
+このコマンドは、DRBD リソースを無効にしてある場合、もしくは少なくとも下位レベルストレージから切り離してある場合のみ動作する。最初の引数は、リソースに結び付けたデバイス名である。第2引数はメタデータのバージョンで、現在の主要な全バージョン (0\&.6、0\&.7および 8) を指定できる。
+.SH "OPTIONS"
+.PP
+\-\-force
+.RS 4
+drbdmeta からのすべての質問に \*(Aqyes\*(Aq と回答するようにする。
+.RE
+.PP
+\-\-ignore\-sanity\-checks
+.RS 4
+サニティチェックをすると drbdmeta が終了することがある。メタデータを作成することにより、ファイルシステムイメージが破壊された場合などである。このオプションを使うことにより、 drbdmeta がこれらのチェックを無視するようになる。
+.RE
+.SH "COMMANDS"
+.PP
+create\-md \fB\-\-peer\-max\-bio\-size \fR\fB\fIval\fR\fR \fB\-\-al\-stripes \fR\fB\fIval\fR\fR \fB\-\-al\-stripe\-size\-kB \fR\fB\fIval\fR\fR
+.RS 4
+create\-md はメタデータ領域を新しく作成する。DRBD リソースを初めて利用する場合、オンラインにする前にこのコマンドを実行する必要がある。すでに古いバージョンのメタデータが存在する場合、drbdmeta は指定したバージョンの形式に変換するかどうかを尋ねる。
+.sp
+最初に対向ノードに接続する前にリソースを使用する場合、\fB\-\-peer\-max\-bio\-size\fR
+オプションを使用すると DRBD の性能が向上する。対向ノードの DRBD のバージョンによって、これらの値を使う。8\&.3\&.7 → 4k、8\&.3\&.8 → 32k、8\&.3\&.9 → 128k、8\&.4\&.0 → 1M。
+.sp
+6433 以上のアクティビティログのエクステントを使用したい場合、またはストライプド RAID 上で使用する場合には、ストライプ数 (\fB\-\-al\-stripes\fR、デフォルトは 1) とストライプのサイズ(\fB\-\-al\-stripe\-size\-kB\fR、デフォルトは32)を指定することが可能。単に大きなオンディスクのリングバッファを使用する場合には、ストライプ 数を1にし、サイズを次のように拡大する。 :
+
+\fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripe\-size 1M\fR
+.sp
+ボトルネックの単一の「スピンドル」になるのを避けるため、ストライプ数を増やし、オンディスクのアクティビティログ処理のインターリーブ対応の構成する。"stripe\-size" で指定するものは、いわゆる「チャンクサイズ」または「粒度」あるいは「ストライプユニット」である。つまり、次の「スピンドル」への最短のステップとなる。
+
+\fBdrbdmeta 0 v08 /dev/vg23/lv42 internal create\-md \-\-al\-stripes 7 \-\-al\-stripe\-size 64k\fR
+.RE
+.PP
+get\-gi
+.RS 4
+データ世代識別子 (data generation identifiers) の情報を簡潔なテキスト情報として表示する。バージョン 0\&.6 および 0\&.7 形式のメタデータには世代カウンタがあるが、バージョン 8 では UUID が表示される。
+.RE
+.PP
+show\-gi
+.RS 4
+データ世代識別子 (data generation identifiers) の情報を、説明テキストとともにテキスト情報として表示する。
+.RE
+.PP
+dump\-md
+.RS 4
+メタデータの全内容をテキスト形式でダンプする。ダンプにはビットマップとアクティビティログも含まれる。
+.RE
+.PP
+outdate
+.RS 4
+メタデータに outdated フラグをたてる。他ノードが自ノードと通信できない状態でプライマリ状態になりたい場合、他ノードからのリモート実行でこのコマンドが実行される。ただし、スタックされたノードにはできない。
+.RE
+.PP
+dstate
+.RS 4
+下位レベルストレージの状態を表示する。drbdmeta はローカルメタデータのみにアクセスするため、出力にははつねに \*(Aq/DUnknown\*(Aq が表示される。
+.RE
+.PP
+check\-resize
+.RS 4
+下位デバイスのデバイスサイズを調べ、最新のデバイスサイズを /var/lib/drbd/ 下のファイル drbd\-minor\-??\&.lkbd に記録する。下位デバイスのサイズが変更されていて、古い場所にメタデータを検出した場合、メタデータを正しい場所であるブロックデバイスの最後に移動させる。
+.RE
+.SH "EXPERT\*(AQS COMMANDS"
+.PP
+drbdmeta を使うと、メタデータの内容を変更できる。以下のコマンドは、コマンド自身の使用法表示から意図的に削除してある。これは、何をしているのか明確に理解した上で実行しないと危険なためである。データ世代識別子に間違った値をセットすると、古いデータで最新データを上書きしてしまうなどのリスクが生じる。
+.PP
+set\-gi \fIgi\fR
+.RS 4
+データ世代識別子に値をセットする。\fIGi\fR
+にはバージョン 0\&.6 および 0\&.7 では世代カウンタを、バージョン 8\&.x では UUID を指定する。get\-gi で表示された値と同じ値を指定すること。
+.RE
+.PP
+restore\-md \fIdump_file\fR
+.RS 4
+\fIdump_file\fR
+を読み込んで、その内容をメタデータに書き込む。
+.RE
+.SH "VERSION"
+.sp
+このドキュメントは DRBD バージョン 8\&.3\&.2 向けに改訂されている。
+.SH "AUTHOR"
+.sp
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>\&.
+.SH "REPORTING BUGS"
+.sp
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
+.SH "COPYRIGHT"
+.sp
+Copyright 2001\-2008 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+.SH "SEE ALSO"
+.PP
+\fBdrbdadm\fR(8)

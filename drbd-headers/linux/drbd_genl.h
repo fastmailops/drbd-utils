@@ -128,6 +128,7 @@ GENL_struct(DRBD_NLA_DISK_CONF, 3, disk_conf,
 	__u32_field_def(25, 0 /* OPTIONAL */,           rs_discard_granularity, DRBD_RS_DISCARD_GRANULARITY_DEF)
 	__flg_field_def(23,     0 /* OPTIONAL */,	al_updates, DRBD_AL_UPDATES_DEF)
 	__flg_field_def(24,     0 /* OPTIONAL */,       discard_zeroes_if_aligned, DRBD_DISCARD_ZEROES_IF_ALIGNED_DEF)
+	__flg_field_def(26,     0 /* OPTIONAL */,	disable_write_same, DRBD_DISABLE_WRITE_SAME_DEF)
 )
 
 GENL_struct(DRBD_NLA_RESOURCE_OPTS, 4, res_opts,
@@ -141,6 +142,9 @@ GENL_struct(DRBD_NLA_RESOURCE_OPTS, 4, res_opts,
 	__u32_field_def(8,	0 /* OPTIONAL */,	peer_ack_delay, DRBD_PEER_ACK_DELAY_DEF)
 	__u32_field_def(9,	0 /* OPTIONAL */,	auto_promote_timeout, DRBD_AUTO_PROMOTE_TIMEOUT_DEF)
 	__u32_field_def(10,	0 /* OPTIONAL */,	nr_requests, DRBD_NR_REQUESTS_DEF)
+	__s32_field_def(11,	0 /* OPTIONAL */,	quorum, DRBD_QUORUM_DEF)
+	__u32_field_def(12,     0 /* OPTIONAL */,	on_no_quorum, DRBD_ON_NO_QUORUM_DEF)
+	__s32_field_def(13,	0 /* OPTIONAL */,	quorum_min_redundancy, DRBD_QUORUM_DEF)
 )
 
 GENL_struct(DRBD_NLA_NET_CONF, 5, net_conf,
@@ -214,6 +218,7 @@ GENL_struct(DRBD_NLA_DETACH_PARMS, 13, detach_parms,
 
 GENL_struct(DRBD_NLA_DEVICE_CONF, 14, device_conf,
 	__u32_field_def(1, DRBD_F_INVARIANT,	max_bio_size, DRBD_MAX_BIO_SIZE_DEF)
+	__flg_field_def(2, 0 /* OPTIONAL */, intentional_diskless, DRBD_DISK_DISKLESS_DEF)
 )
 
 GENL_struct(DRBD_NLA_RESOURCE_INFO, 15, resource_info,
@@ -221,10 +226,13 @@ GENL_struct(DRBD_NLA_RESOURCE_INFO, 15, resource_info,
 	__flg_field(2, 0, res_susp)
 	__flg_field(3, 0, res_susp_nod)
 	__flg_field(4, 0, res_susp_fen)
+	__flg_field(5, 0, res_susp_quorum)
 )
 
 GENL_struct(DRBD_NLA_DEVICE_INFO, 16, device_info,
 	__u32_field(1, 0, dev_disk_state)
+	__flg_field(2, 0, is_intentional_diskless)
+	__flg_field(3, 0, dev_has_quorum)
 )
 
 GENL_struct(DRBD_NLA_CONNECTION_INFO, 17, connection_info,
@@ -238,6 +246,7 @@ GENL_struct(DRBD_NLA_PEER_DEVICE_INFO, 18, peer_device_info,
 	__u32_field(3, 0, peer_resync_susp_user)
 	__u32_field(4, 0, peer_resync_susp_peer)
 	__u32_field(5, 0, peer_resync_susp_dependency)
+	__flg_field(6, 0, peer_is_intentional_diskless)
 )
 
 GENL_struct(DRBD_NLA_RESOURCE_STATISTICS, 19, resource_statistics,
@@ -263,6 +272,8 @@ GENL_struct(DRBD_NLA_DEVICE_STATISTICS, 20, device_statistics,
 
 GENL_struct(DRBD_NLA_CONNECTION_STATISTICS, 21, connection_statistics,
 	__flg_field(1, 0, conn_congested)
+	__u64_field(2, 0, ap_in_flight) /* sectors */
+	__u64_field(3, 0, rs_in_flight) /* sectors */
 )
 
 GENL_struct(DRBD_NLA_PEER_DEVICE_STATISTICS, 22, peer_device_statistics,
@@ -274,6 +285,24 @@ GENL_struct(DRBD_NLA_PEER_DEVICE_STATISTICS, 22, peer_device_statistics,
 	__u64_field(6, 0, peer_dev_resync_failed)  /* sectors */
 	__u64_field(7, 0, peer_dev_bitmap_uuid)
 	__u32_field(9, 0, peer_dev_flags)
+	/* you need the peer_repl_state from peer_device_info
+	 * to properly interpret these stats for "progress"
+	 * of syncer/verify */
+	__u64_field(10,0, peer_dev_rs_total)	/* sectors */
+	__u64_field(11,0, peer_dev_ov_start_sector)
+	__u64_field(12,0, peer_dev_ov_stop_sector)
+	__u64_field(13,0, peer_dev_ov_position) /* sectors */
+	__u64_field(14,0, peer_dev_ov_left)	/* sectors */
+	__u64_field(15,0, peer_dev_ov_skipped)	/* sectors */
+	__u64_field(16,0, peer_dev_rs_same_csum)
+	__u64_field(17,0, peer_dev_rs_dt_start_ms)
+	__u64_field(18,0, peer_dev_rs_paused_ms)
+	/* resync progress marks for "resync speed" guestimation */
+	__u64_field(19,0, peer_dev_rs_dt0_ms)
+	__u64_field(20,0, peer_dev_rs_db0_sectors)
+	__u64_field(21,0, peer_dev_rs_dt1_ms)
+	__u64_field(22,0, peer_dev_rs_db1_sectors)
+	__u32_field(23,0, peer_dev_rs_c_sync_rate)
 )
 
 GENL_struct(DRBD_NLA_NOTIFICATION_HEADER, 23, drbd_notification_header,

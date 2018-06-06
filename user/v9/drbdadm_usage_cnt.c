@@ -188,15 +188,18 @@ static int read_node_id(struct node_info *ni)
 	return 1;
 }
 
+/* What we probably should do is use getaddrinfo_a(),
+ * instead of alarm() and siglongjump limited gethostbyname(),
+ * but I don't like implicit threads. */
 /* to interrupt gethostbyname,
  * we not only need a signal,
  * but also the long jump:
  * gethostbyname would otherwise just restart the syscall
  * and timeout again. */
-static jmp_buf timed_out;
+static sigjmp_buf timed_out;
 static void gethostbyname_timeout(int __attribute((unused)) signo)
 {
-	longjmp(timed_out, 1);
+	siglongjmp(timed_out, 1);
 }
 
 #define DNS_TIMEOUT 3	/* seconds */
@@ -206,24 +209,45 @@ struct hostent *my_gethostbyname(const char *name)
 	struct sigaction sa;
 	struct sigaction so;
 	struct hostent *h;
+	static int failed_once_already = 0;
+
+	if (failed_once_already)
+		return NULL;
 
 	alarm(0);
 	sa.sa_handler = &gethostbyname_timeout;
 	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
+	sa.sa_flags = SA_NODEFER;
 
 	sigaction(SIGALRM, &sa, &so);
 
-	if (!setjmp(timed_out)) {
+	if (!sigsetjmp(timed_out, 1)) {
+		struct hostent ret;
+		char buf[2048];
+		int my_h_errno;
+
 		alarm(DNS_TIMEOUT);
-		h = gethostbyname(name);
-	} else
+		/* h = gethostbyname(name);
+		 * If the resolver is unresponsive,
+		 * we may siglongjmp out of a "critical section" of gethostbyname,
+		 * still holding some glibc internal lock.
+		 * Any later attempt to call gethostbyname() would then deadlock
+		 * (last syscall would be futex(...))
+		 *
+		 * gethostbyname_r() apparently does not use any internal locks.
+		 * Even if unnecessary in our case, it feels less dirty.
+		 */
+		gethostbyname_r(name, &ret, buf, sizeof(buf), &h, &my_h_errno);
+	} else {
 		/* timed out, longjmp of SIGALRM jumped here */
 		h = NULL;
+	}
 
 	alarm(0);
 	sigaction(SIGALRM, &so, NULL);
 
+	if (h == NULL)
+		failed_once_already = 1;
 	return h;
 }
 
@@ -370,7 +394,7 @@ void uc_node(enum usage_count_type type)
 	char answer[ANSWER_SIZE];
 	char n_comment[ANSWER_SIZE*3];
 	char *r;
-	const struct version *driver_version = drbd_driver_version(FALLBACK_TO_UTILS);
+	const struct version *driver_version = drbd_driver_version(STRICT);
 
 	if( type == UC_NO ) return;
 	if( getuid() != 0 ) return;
@@ -383,25 +407,25 @@ void uc_node(enum usage_count_type type)
 	if (getenv("INIT_VERSION")) return;
 	if (no_tty) return;
 
+	/* If we don't know the current version control system hash,
+	 * we found the version via "modprobe -F version drbd",
+	 * and did not find a /proc/drbd to read it from.
+	 * Avoid flipping between "hash-some-value" and "hash-all-zero",
+	 * Re-registering every time...
+	 */
+	if (!driver_version || !have_vcs_hash(driver_version))
+		return;
+
+	memset(&ni, 0, sizeof(ni));
+
 	if( ! read_node_id(&ni) ) {
 		get_random_bytes(&ni.node_uuid,sizeof(ni.node_uuid));
 		ni.rev = *driver_version;
 		send = 1;
-	} else if (!have_vcs_hash(driver_version)) {
-		/* If we don't know the current version control system hash,
-		 * we found the version via "modprobe -F version drbd",
-		 * and did not find a /proc/drbd to read it from.
-		 * Avoid flipping between "hash-some-value" and "hash-all-zero",
-		 * Re-registering every time...
-		 */
-		send = 0;
-	} else {
-		// read_node_id() was successful
-		if (!version_equal(&ni.rev, driver_version)) {
-			ni.rev = *driver_version;
-			update = 1;
-			send = 1;
-		}
+	} else if (driver_version && !version_equal(&ni.rev, driver_version)) {
+		ni.rev = *driver_version;
+		update = 1;
+		send = 1;
 	}
 
 	if(!send) return;
@@ -520,6 +544,18 @@ struct d_name *find_backend_option(const char *opt_name)
 	return NULL;
 }
 
+static bool peer_completely_diskless(struct d_host_info *peer)
+{
+	struct d_volume *vol;
+
+	for_each_volume(vol, &peer->volumes) {
+		if (vol->disk)
+			return false;
+	}
+
+	return true;
+}
+
 int adm_create_md(const struct cfg_ctx *ctx)
 {
 	char answer[ANSWER_SIZE];
@@ -538,15 +574,17 @@ int adm_create_md(const struct cfg_ctx *ctx)
 	if (b_opt_max_peers) {
 		max_peers_str = ssprintf("%s", b_opt_max_peers->name + strlen(opt_max_peers));
 	} else {
-		struct peer_device *peer_device;
+		struct connection *conn;
 		int max_peers = 0;
 
 		set_peer_in_resource(ctx->res, true);
 
-		STAILQ_FOREACH(peer_device, &ctx->vol->peer_devices, volume_link) {
-			if (peer_device->connection->ignore || peer_diskless(peer_device))
+		for_each_connection(conn, &ctx->res->connections) {
+			if (conn->ignore)
 				continue;
-			max_peers++;
+
+			if (!peer_completely_diskless(conn->peer))
+				max_peers++;
 		}
 
 		if (max_peers == 0)
