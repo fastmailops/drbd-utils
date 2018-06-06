@@ -6,8 +6,8 @@ Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
  Martin Loschwitz <madkiss@debian.org>,
  Philipp Hug <debian@hug.cx>,
  Apollon Oikonomopoulos <apoikos@debian.org>
-Build-Depends: debhelper (>= 9), flex, xsltproc,
- docbook-xsl, docbook-xml, udev, bash-completion, dh-autoreconf
+Build-Depends: debhelper (>= 11), flex, xsltproc,
+ docbook-xsl, docbook-xml, udev, bash-completion
 Standards-Version: 3.9.8
 Homepage: http://www.drbd.org/
 Vcs-Browser: https://salsa.debian.org/ha-team/drbd-utils
