@@ -1,3 +1,26 @@
+drbd-utils (9.4.0-1) unstable; urgency=medium
+
+  * New upstream version 9.4.0 (Closes: #900065)
+  * Switch Vcs-* URLs to salsa.d.o
+  * d/watch: update URL
+  * Drop reproducible-builds patch
+  * Refresh patches
+  * d/copyright: bump years
+  * Bump compat to 11
+    + Use dh_installsystemd
+    + Change dh_installinit's --no-restart-on-upgrade to --no-stop-on-upgrade
+    + Drop dh-autoreconf
+  * Bump Standards-Version to 4.1.4; no changes needed
+  * Update Homepage and Source URLs
+  * d/control: change Priority: extra to optional
+  * Drop the drbd8-utils transitional package; drbd-utils was first shipped in
+    Jessie, so it's time for drbd8-utils to go (Closes: #878392)
+  * Properly ship the Japanese manpage for drbd-overview
+  * Respect dpkg-provided CXXFLAGS during drbdmon build
+  * Use dh_install{init,systemd} --no-enable
+
+ -- Apollon Oikonomopoulos <apoikos@debian.org>  Wed, 06 Jun 2018 15:04:11 +0300
+
 drbd-utils (8.9.10-2) unstable; urgency=medium
 
   * Fix the service enable/disable logic (broken since 8.9.8-1, closes:
