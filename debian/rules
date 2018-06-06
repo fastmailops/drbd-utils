@@ -6,6 +6,7 @@
 PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
 
 export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+export WANT_DRBD_REPRODUCIBLE_BUILD=1
 
 %:
 	dh $@ --with bash-completion,autoreconf
