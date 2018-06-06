@@ -2,12 +2,12 @@
 .\"     Title: drbdsetup
 .\"    Author: [see the "Author" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 3 December 2011
+.\"      Date: 17 January 2018
 .\"    Manual: System Administration
-.\"    Source: DRBD 9.0.0
+.\"    Source: DRBD 9.0.x
 .\"  Language: English
 .\"
-.TH "DRBDSETUP" "8" "3 December 2011" "DRBD 9.0.0" "System Administration"
+.TH "DRBDSETUP" "8" "17 January 2018" "DRBD 9.0.x" "System Administration"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -808,7 +808,7 @@ command removes a connection from a
 The
 \fBdel\-path\fR
 command removes a path from a
-\fIconnection\fR\&. Please not that it fails if the path is necessary to keep a connected connection in tact\&. In order to remove all paths, disconnect the connection first\&.
+\fIconnection\fR\&. Please note that it fails if the path is necessary to keep a connected connection in tact\&. In order to remove all paths, disconnect the connection first\&.
 .RE
 .PP
 \fBdrbdsetup\fR cstate \fIresource\fR \fIpeer_node_id\fR
@@ -1137,6 +1137,64 @@ The default value for
 \fBpeer\-ack\-delay\fR
 is 100 milliseconds, the default unit is milliseconds\&. This option is available since 9\&.0\&.0\&.
 .RE
+.PP
+\fB\-\-quorum \fR\fB\fIvalue\fR\fR
+.RS 4
+When activated, a cluster partition requires quorum in order to modify the replicated data set\&. That means a node in the cluster partition can only be promoted to primary if the cluster partition has quorum\&. Every node with a disk directly connected to the node that should be promoted counts\&. If a primary node should execute a write request, but the cluster partition has lost quorum, it will freeze IO or reject the write request with an error (depending on the
+\fBon\-no\-quorum\fR
+setting)\&. Upon loosing quorum a primary always invokes the
+\fBquorum\-lost\fR
+handler\&. The handler is intended for notification purposes, its return code is ignored\&.
+.sp
+The option\*(Aqs value might be set to
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR
+or a numeric value\&. If you set it to a numeric value, make sure that the value is greater than half of your number of nodes\&. Quorum is a mechanism to avoid data divergence, it might be used instead of fencing when there are more than two repicas\&. It defaults to
+\fBoff\fR
+.sp
+If all missing nodes are marked as outdated, a partition always has quorum, no matter how small it is\&. I\&.e\&. If you disconnect all secondary nodes gracefully a single primary continues to operate\&. In the moment a single secondary is lost, it has to be assumed that it forms a partition with all the missing outdated nodes\&. In case my partition might be smaller than the other, quorum is lost in this moment\&.
+.sp
+In case you want to allow permanently diskless nodes to gain quorum it is recommendet to not use
+\fBmajority\fR
+or
+\fBall\fR\&. It is recommended to specify an absolute number, since DBRD\*(Aqs heuristic to determine the complete number of diskfull nodes in the cluster is unreliable\&.
+.sp
+The quorum implementation is available starting with the DRBD kernel driver version 9\&.0\&.7\&.
+.RE
+.PP
+\fB\-\-quorum\-minimum\-redundancy \fR\fB\fIvalue\fR\fR
+.RS 4
+This option sets the minimal required number of nodes with an UpToDate disk to allow the partition to gain quorum\&. This is a different requirement than the plain
+\fBquorum\fR
+option expresses\&.
+.sp
+The option\*(Aqs value might be set to
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR
+or a numeric value\&. If you set it to a numeric value, make sure that the value is greater than half of your number of nodes\&.
+.sp
+In case you want to allow permanently diskless nodes to gain quorum it is recommendet to not use
+\fBmajority\fR
+or
+\fBall\fR\&. It is recommended to specify an absolute number, since DBRD\*(Aqs heuristic to determine the complete number of diskfull nodes in the cluster is unreliable\&.
+.sp
+This option is available starting with the DRBD kernel driver version 9\&.0\&.10\&.
+.RE
+.PP
+\fB\-\-on\-no\-quorum \fR\fB{io\-error | suspend\-io}\fR\fB \fR
+.RS 4
+By default DRBD freezes IO on a device, that lost quorum\&. By setting the
+\fBon\-no\-quorum\fR
+to
+\fBio\-error\fR
+it completes all IO operations with an error if quorum ist lost\&.
+.sp
+The
+\fBon\-no\-quorum\fR
+options is available starting with the DRBD kernel driver version 9\&.0\&.8\&.
+.RE
 .sp
 .RE
 .PP
@@ -1366,7 +1424,7 @@ commands waits until a device on a peer is up to date\&. Available options for b
 \fB\-\-degr\-wfc\-timeout \fR\fB\fItimeout\fR\fR
 .RS 4
 Define how long to wait until all peers are connected in case the cluster consisted of a single node only when the system went down\&. This parameter is usually set to a value smaller than
-\fBwfc\-timeout\fR\&. The assumption here is that peers which were unreachable before a reboot are less likely to be be reachable after the reboot, so waiting is less likely to help\&.
+\fBwfc\-timeout\fR\&. The assumption here is that peers which were unreachable before a reboot are less likely to be reachable after the reboot, so waiting is less likely to help\&.
 .sp
 The timeout is specified in seconds\&. The default value is 0, which stands for an infinite timeout\&. Also see the
 \fBwfc\-timeout\fR
@@ -1421,12 +1479,11 @@ Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <
 Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
 .SH "COPYRIGHT"
 .sp
-Copyright 2001\-2012 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+Copyright 2001\-2018 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
 .SH "SEE ALSO"
 .PP
 \fBdrbd.conf\fR(5),
 \fBdrbd\fR(8),
-\fBdrbddisk\fR(8),
 \fBdrbdadm\fR(8),
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,
 \m[blue]\fBDRBD Web Site\fR\m[]\&\s-2\u[2]\d\s+2

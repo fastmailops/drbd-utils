@@ -1,0 +1,1427 @@
+'\" t
+.\"     Title: drbdsetup
+.\"    Author: [see the "Author" section]
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 17 January 2018
+.\"    Manual: System Administration
+.\"    Source: DRBD 9.0.x
+.\"  Language: English
+.\"
+.TH "DRBDSETUP" "8" "17 January 2018" "DRBD 9.0.x" "System Administration"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+drbdsetup \- DRBD カーネルモジュールを構成する
+.SH "SYNOPSIS"
+.HP \w'\fBdrbdsetup\fR\ 'u
+\fBdrbdsetup\fR command {argument...} [option...]
+.SH "DESCRIPTION"
+.PP
+\fBdrbdsetup\fR
+ユーティリティは、DRBD カーネルモジュールを構成し、また現在の構成を表示する。ユーザは通常、
+\fBdrbdsetup\fR
+でなく、DRBD に対してより高度なインタフェースを提供する
+\fBdrbdadm\fR
+ユーティリティを通して使用する。(\fBdrbdadm\fR
+が
+\fBdrbdsetup\fR
+をどのように使うかを表示するには
+\fBdrbdadm\fR
+の
+\fB\-\-dry\-run\fR
+オプションを使用する。)
+.PP
+一部のオプション引数には、素の数値が指定されたときに適用されるデフォルトのスケールがある（たとえば、Kilo は数値の1024倍）。このようなデフォルトのスケールは、接尾辞を使用して上書きすることができる。（メガの場合は M）。共通の接尾語 K = 2^10 = 1024, M = 1024 K, G = 1024 M はサポートされている。
+.SH "COMMANDS"
+.PP
+\fBdrbdsetup\fR attach \fIminor\fR \fIlower_dev\fR \fImeta_data_dev\fR \fImeta_data_index\fR, 
+.br
+\fBdrbdsetup\fR disk\-options \fIminor\fR
+.RS 4
+\fBattach\fR
+コマンドは、下位デバイスを既存の複製デバイスに接続する。\fBdisk\-options\fR
+コマンドは、接続された下位デバイスのディスクオプションを変更する。複製されたデバイスは、
+\fBdrbdsetup new\-minor\fR
+で作られている必要がある。
+.sp
+複製されたデバイスをその
+\fIminor\fR
+番号で指定する。\fIlower_dev\fRは、下位レベルデバイスの名前である。\fImeta_data_dev\fR
+は、メタデータを含むデバイスの名前であり、
+\fIlower_dev\fR
+と同じにできる。\fImeta_data_index\fR
+は、数値のメタデータインデックス、内部メタデータ用のキーワード
+\fBinternal\fR
+、または可変サイズの外部メタデータ用のキーワード
+\fBflexible\fR
+のどれかである。利用可能なオプション:
+.PP
+\fB\-\-al\-extents \fR\fB\fIextents\fR\fR
+.RS 4
+DRBD は、直近の書き込み活動に基づいて、すぐに書き直される可能性のある「ホット」または「アクティブ」ディスク領域を自動的に維持する。「アクティブ」ディスク領域はすぐに書き込むことができるが、「非アクティブ」ディスク領域は最初に「アクティブ化」する必要があり、このためのメタデータ書き込みが必要である。このアクティブなディスク領域を「アクティビティログ」として参照する。
+.sp
+アクティビティーログはメタデータに書き込まれるが、失敗したノードのリカバリー時にはログ全体を再同期化する必要がある。アクティビティログのサイズは、再同期にかかる時間やクラッシュ後に複製されるディスクが整合状態になる時間に影響を与える。
+.sp
+アクティビティログは、4メガバイトのセグメントから構成される。その
+\fIal\-extents\fR
+パラメータは、同時にアクティブにできるセグメントの数を決定する。\fIal\-extents\fR
+のデフォルト値は 1237、 最小値は 7、 最大値は 65536 である。
+.sp
+有効な最大値はもっと小さくなる点に注意が必要であり、メタデータのデバイスの作成方法によっても異なる。次のマニュアルページを参照、\fBdrbdmeta\fR(8)。有効な最大値は 919 * (使用できる オンディスクのアクティビティログのリングバッファ領域 /4KB \-1) である。リングバッファはデフォルトで 32KB で、有効な最大値は 6433 である (データは 25GiB 以上カバーしている)。下位デバイスの量とレプリケーションリンク全体が 5 分以内で再同期できるようにすることを推奨する。
+.RE
+.PP
+\fB\-\-al\-updates \fR\fB{yes | no}\fR\fB \fR
+.RS 4
+このパラメータを使用すると、アクティビティログを完全にオフにすることができる（\fBal\-extents\fR
+パラメータを参照）。メタデータの書き込みが少なくて済むため、書き込みが高速になるが、故障したプライマリノードの回復のためにデバイス全体を再同期する必要がある。\fBal\-updates\fR
+のデフォルト値は
+\fByes\fR
+である。
+.RE
+.PP
+\fB\-\-disk\-barrier\fR, 
+.br
+\fB\-\-disk\-flushes\fR, 
+.br
+\fB\-\-disk\-drain\fR
+.RS 4
+DRBD は、依存書き込みリクエストの順序を処理する 3 つの方法がある:
+.PP
+\fBdisk\-barrier\fR
+.RS 4
+ディスクバリアを使用して、リクエストが正しい順序でディスクに書き込まれるようにする。バリアの前に提出されたすべてのリクエストが、バリアの後に提出されたリクエストの前にディスクに書き込まれることを保証する。これは、SCSI デバイスの \*(Aqtagged command queuing\*(Aq と SATA デバイスの \*(Aqnative command queuing\*(Aq を使用して実装される。一部のデバイスおよびデバイススタックのみがこの方法をサポートする。デバイスマッパー （LVM） は、一部の構成でのみバリアをサポートする。
+.sp
+ディスクバリアをサポートしていないシステムで、このオプションを有効にするとデータが消失または破損する可能性がある。DRBD 8\&.4\&.1 までは、下位デバイスがバリアをサポートする場合
+\fBdisk\-barrier\fR
+が有効でした。しかし、linux\-2\&.6\&.36 （または RHEL6 の 2\&.6\&.32） 以降のカーネルでは、バリアがサポートされているかどうかを検出できなくなりました。drbd\-8\&.4\&.2 以降、このオプションはデフォルトでは無効であり、使用する場合は明示的に有効にする必要がある。
+.RE
+.PP
+\fBdisk\-flushes\fR
+.RS 4
+依存書き込みリクエスト間でディスクフラッシュを使用する（ドライブベンダーにより \*(Aqforce unit access\*(Aq とも呼ばれる）。これにより、すべてのデータが強制的にディスクに格納される。このオプションは、デフォルトで有効である。
+.RE
+.PP
+\fBdisk\-drain\fR
+.RS 4
+依存書き込みリクエストを送信する前に、リクエストキューが排出されるまで待つ（つまり、リクエストが完了するのを待つ）。この方法は、リクエストが完了するとディスク上で安定している。DRBD 8\&.0\&.9 より前は、これが実装された唯一の方法でした。このオプションは、デフォルトで有効である。運用環境では無効にしないことを推奨する。
+.RE
+.sp
+これらの3つの方法から、DRBD は設定が有効で、下位デバイスもサポートしている最初のものを使用する。これらの3つのオプションがすべて無効になっている場合、DRBD は依存関係を気にせずに書き込みリクエストを送信する。下位デバイスによって、書き込みリクエストを並べ替えることができ、異なるクラスタノード上で異なる順序で書き込みリクエストを送信できる。これは、データの損失または破損の原因となる。したがって、書き込み順序を制御する 3 つの方法をすべて無効にしないことを推奨する。
+.sp
+書込み順序を設定する一般的なガイドラインは、揮発性書込みキャッシュを備えた通常のディスク（または通常のディスクアレイ）を使用する場合は、disk\-barrier または disk\-flushes を使用することである。キャッシュを持たないストレージまたはバッテリバックアップのライトキャッシュでは、 disk\-drain が適している。
+.RE
+.PP
+\fB\-\-disk\-timeout\fR
+.RS 4
+DRBD デバイスのデータを格納する下位レベルデバイスが、指定した
+\fBdisk\-timeout\fR
+以内で I/O リクエストを完了しない場合、DRBD はこれを障害とみなす。下位デバイスは切り離され、デバイスのディスク状態はディスクレス状態になる。DRBD が 1 台以上の対向ノードに接続したとき、失敗したリクエストはそのうちの 1 台に伝えられる。
+.sp
+このオプションは
+\fIカーネルパニックを引き起こす可能性があり、注意が必要である\fR。
+.sp
+リクエストの「中断」あるいはディスクの強制切り離しは、完全に下位デバイスをブロックまたはハンギングして、リクエストをまったく処理せずエラーも処理しなくなる。この状況ではハードリセットとフェイルオーバ以外になす術がない。
+.sp
+「中断」すると、基本的にローカルエラーの完了を装い、すみやかにサービスの移行を行うことで安全な切り替えを行う。それでもなお、影響を受けるノードは "すぐ" に再起動される必要はある。
+.sp
+リクエストを完了することで、上位レイヤーに関連するデータページを再利用させることができる。
+.sp
+後にローカルの下位デバイスが「復帰」すると、ディスクから元のリクエストページへの DMA のデータは、うまくいくと未使用のページへランダムなデータを送るが、多くの場合その間に関係のないデータに変形してしまい、様々なダメージの原因になる。
+.sp
+つまり遅延した正常な完了は、特に読み込みリクエストの場合 panic() の原因になる。遅延した「エラー」完了は、その都度に通知は行うが、問題ないと考えてよい。
+.sp
+\fBdisk\-timeout\fR
+のデフォルト値は 0 であり、無限のタイムアウトを意味する。タイムアウトは 0\&.1 秒単位で指定する。このオプションは DRBD 8\&.3\&.12\&. から有効である。
+.RE
+.PP
+\fB\-\-md\-flushes\fR
+.RS 4
+メタデータデバイスでディスクフラッシュとディスクバリアを有効にする。このオプションは、デフォルトで有効である。\fBdisk\-flushes\fR
+のパラーメータを参照。
+.RE
+.PP
+\fB\-\-on\-io\-error \fR\fB\fIhandler\fR\fR
+.RS 4
+DRBD が下位レベルデバイスの I/O エラーにどのように反応するかを設定する。次のポリシーが定義される:
+.PP
+\fBpass_on\fR
+.RS 4
+ディスクのステータスを inconsistent(不整合) にし、 I/O エラーを起こしたブロックに対応するビットマップにマークをつけ、リモートのクラスターノード上で I/O 操作を再度行う。
+.RE
+.PP
+\fBcall\-local\-io\-error\fR
+.RS 4
+\fBlocal\-io\-error\fR
+ハンドラを呼び出す (\fBhandlers\fR
+セクションを参照)。
+.RE
+.PP
+\fBdetach\fR
+.RS 4
+下位レベルデバイスを切り離し、ディスクレスモードで続行する。
+.RE
+.sp
+.RE
+.PP
+\fB\-\-read\-balancing \fR\fB\fIpolicy\fR\fR
+.RS 4
+\fIpolicy\fR
+定義された読み取りリクエストで、クラスターノード間に負荷分散する。次のポリシーがサポートされる:
+\fBprefer\-local\fR
+(デフォルト),
+\fBprefer\-remote\fR,
+\fBround\-robin\fR,
+\fBleast\-pending\fR,
+\fBwhen\-congested\-remote\fR,
+\fB32K\-striping\fR,
+\fB64K\-striping\fR,
+\fB128K\-striping\fR,
+\fB256K\-striping\fR,
+\fB512K\-striping\fR
+and
+\fB1M\-striping\fR\&.
+.sp
+このオプションは、DRBD 8\&.4\&.1 から有効である。
+.RE
+.PP
+\fBresync\-after \fR\fB\fIminor\fR\fR
+.RS 4
+デバイスは、指定されたデバイスの後でのみ再同期する必要があることを定義する。デフォルトでは、デバイス間の順序は定義されず、すべてのデバイスが並行して再同期される。下位レベルデバイスの構成、および使用可能なネットワークとディスクの帯域幅によっては、全体の再同期プロセスが遅くなる可能性がある。このオプションは、デバイス間の依存関係チェーンやツリーを形成するために使用できる。
+.RE
+.PP
+\fB\-\-size \fR\fB\fIsize\fR\fR
+.RS 4
+下位レベルデバイスのサイズを自動的に決定するのではなく、明示的に指定する。デバイスサイズは一度決定されると、デバイスのライフタイムの間、維持される。自動的に決定するには、すべてのノードのすべての下位レベルデバイスの接続が必要であるが、サイズが明示的に指定されている場合は、これが必要でない。\fBsize\fR
+値はデフォルトでセクタ （512バイト） 単位であるとみなされる。
+.RE
+.PP
+\fB\-\-discard\-zeroes\-if\-aligned \fR\fB{yes | no}\fR
+.RS 4
+Linux のブロックデバイスで discard/trim/unmap のサポートにはいくつかの側面がある。discard が一般的にサポートされていても、暗黙に失敗したり、discard リクエストを部分的に無視したりすることがある。デバイスは、また、マップされていないブロックからの読み込みが、定義済みのデータ（通常はゼロ）、未定義のデータ（おそらく古いデータか、ゴミ）のどちらを返すか通知する。
+.sp
+異なるノードで DRBD が discard 特性が異なるデバイスによって構成されている場合、discard はデータの不一致（古いデータまたはゴミが 1 つのバックエンドに残り、別のバックエンドではゼロが残る）の原因となる。オンライン照合は、数多くの偽の差異を報告する可能性がある。たぶんほとんどのユースケース （ファイルシステム上の fstrim） では無害であるが、DRBD はそれを持つことはできない。
+.sp
+安全に動作させるには、ローカルのバックエンド（プライマリ上）が "discard_zeroes_data=true" をサポートしていない場合、 discard のサポートを無効にする必要がある。受信側（セカンダリ）がマップされていなかった領域を割り当て、 "discard_zeroes_data = true" をサポートしていない場合、受信側で discard を明示的にゼロに変換する必要がある。
+.sp
+discard をサポートしているのに、discard_zeroes_data = false をアナウンスするデバイス（特に LVM/DM シンプロビジョニング）がある。DM\-thin の場合、チャンクサイズに合わせた discard はマップされず、マッピングされていないセクタからの読み込みはゼロを返す。ただし、discard リクエストのアライメントされていない部分ヘッドまたはテール領域は暗黙に無視する。
+.sp
+整列したフル・チャンクの discard をパスし、これらの整列していない部分領域を明示的にゼロ・アウトするヘルパーを追加すると、そのようなデバイスでは discard_zeroes_data = true を効果的に達成する。
+.sp
+\fB discard\-zeroes\-if\-aligned \fR
+を
+\fByes\fR
+に設定すると、 discard_zeroes_data = false を通知するバックエンドであっても DRBD は discard を使用し、 discard_zeroes_data = true を通知する。
+.sp
+\fB discard\-zeroes\-if\-aligned \fR
+を
+\fBno\fR
+に設定すると、それぞれのバックエンドが discard_zeroes_data = false をアナウンスする場合、DRBD は常に受信側でゼロアウトにフォールバックし、プライマリ側では discard に関して通知しない。
+.sp
+私たちは、 discard_zeroes_data 設定を完全に無視していました。確立し、期待された動作を壊さず、シンプロビジョニング LV の fstrim がスペースを解放する代わりにスペースを使い果たさないためのデフォルト値は
+\fByes\fR
+である。
+.sp
+このオプションは 8\&.4\&.7 から有効である。
+.RE
+.PP
+\fB\-\-rs\-discard\-granularity \fR\fB\fIbyte\fR\fR
+.RS 4
+\fB rs\-discard\-granularity \fR
+がゼロ以外の正の値に設定されている場合、DRBD はこのサイズで再同期操作をリクエストする。そのようなブロックが同期ソースノード上にゼロバイトしか含まない場合、同期ターゲットノードは、その領域に対して discard/trim/unmap コマンドを発行する。
+.sp
+この値は、下位ブロックデバイスの discard 粒度によって制約される。\fB rs\-discard\-granularity \fRが下位ブロックデバイスの discard 粒度の乗数でない場合、DRBD はそれを切り上げる。この機能は、下位ブロックデバイスが discard コマンドの後に、ゼロを読み戻す場合にのみアクティブになる。
+.sp
+デフォルト値は 0 である。このオプションは 8\&.4\&.7 から有効である。
+.RE
+.RE
+.PP
+\fBdrbdsetup\fR peer\-device\-options \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+これらは、
+\fIpeer\fR
+のデバイスに影響を与えるオプションである。
+.PP
+\fB\-\-c\-delay\-target \fR\fB\fIdelay_target\fR\fR, 
+.br
+\fB\-\-c\-fill\-target \fR\fB\fIfill_target\fR\fR, 
+.br
+\fB\-\-c\-max\-rate \fR\fB\fImax_rate\fR\fR, 
+.br
+\fB\-\-c\-plan\-ahead \fR\fB\fIplan_time\fR\fR
+.RS 4
+再同期速度を動的に制御する。これは
+\fBc\-plan\-ahead\fR
+を正の値に設定すると有効になる。\fBc\-fill\-target\fR
+が指定されている場合は、バッファが指定された値を満たすよう、\fBc\-delay\-target\fR
+が指定されている場合は、指定した遅延になるように制御する。最大帯域幅は、
+\fBc\-max\-rate\fR
+で制限する。
+.sp
+\fBc\-plan\-ahead\fR
+は、DRBD が再同期速度の変化にどのくらい速く適応するかを定義する。ネットワークのラウンドトリップタイム (RTT) の 5 倍以上に設定するのが望まれる。「通常の」データパスで
+\fBc\-fill\-target\fR
+の共通の値の範囲は 4K から 100K である。drbd\-proxy を使用している場合は、
+\fBc\-fill\-target\fR
+の代わりに
+\fBc\-delay\-target\fR
+を使用することを推奨する。\fBc\-delay\-target\fR
+は、
+\fBc\-fill\-target\fR
+が定義されていないか、または 0 に設定されているときに使用される。\fBc\-delay\-target\fR
+は、ネットワークのラウンドトリップタイム (RTT) の 5 倍以上に設定するのが望まれる。\fBc\-max\-rate\fR
+には DRBD 間または DRBD\-Proxy 間の帯域幅あるいはディスク帯域幅を指定する。
+.sp
+これらのパラメータのデフォルト値は次のとおり。
+\fBc\-plan\-ahead\fR
+= 20 （0\&.1 秒単位）、
+\fBc\-fill\-target\fR
+= 0 （セクタ単位）、
+\fBc\-delay\-target\fR
+= 1 （単位 0\&.1 秒）、および
+\fBc\-max\-rate\fR
+= 102400 （単位 KiB/s）。
+.sp
+動的な再同期速度制御は DRBD 8\&.3\&.9 から有効である。
+.RE
+.PP
+.RS 4
+.RE
+.PP
+.RS 4
+.RE
+.PP
+\fB\-\-c\-min\-rate \fR\fB\fImin_rate\fR\fR
+.RS 4
+同期元のプライマリノードは、アプリケーションの書き込みと再同期の書き込みの配分を管理する必要がある。\fBc\-min\-rate\fR
+は、再同期の書き込みに使用できる帯域幅を制限する。残りの帯域幅はアプリケーションの書き込みに使用される。
+.sp
+\fBc\-min\-rate\fR
+の値 0 は、再同期の書き込みに使用できる帯域幅に制限がないことを意味する。これにより、アプリケーションの書き込みが大幅に遅くなる可能性がある。再同期速度の最低値は 1（1 KiB/s） である。
+.sp
+\fBc\-min\-rate\fR
+のデフォルト値は 4096 で、 単位は KiB/s である。
+.RE
+.PP
+.RS 4
+.RE
+.PP
+\fB\-\-resync\-rate \fR\fB\fIrate\fR\fR
+.RS 4
+DRBD が再同期に使用できる帯域幅を定義する。DRBD では、再同期中でも「通常の」アプリケーション I/O が可能である。再同期の帯域幅が大きすぎると、アプリケーション I/O が非常に遅くなる可能性がある。このパラメータは、これを避けることができる。これは、動的な再同期コントローラが無効の場合にのみ機能する。
+.RE
+.RE
+.PP
+\fBdrbdsetup\fR check\-resize \fIminor\fR
+.RS 4
+指定された複製デバイスの下位デバイスの現在のサイズを記録する。drbdadm によって使用される。サイズ情報は、/var/lib/drbd/drbd\-minor\-\fIminor\fR\&.lkbd という名前で記録される。
+.RE
+.PP
+\fBdrbdsetup\fR new\-peer \fIresource\fR \fIpeer_node_id\fR, 
+.br
+\fBdrbdsetup\fR net\-options \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+\fBnew\-peer\fR
+コマンドは、
+\fIresource\fR
+に接続を作成する。リソースは
+\fBdrbdsetup new\-resource\fR
+で作成されている必要がある。\fBnet\-options\fR
+オプションは、既存の接続のネットワークオプションを変更する。\fBconnect\fR
+コマンドで接続をアクティブにする前に、少なくとも1つのパスを
+\fBnew\-path\fR
+コマンドで追加する必要がある。利用可能なオプション:
+.PP
+\fB\-\-after\-sb\-0pri \fR\fB\fIpolicy\fR\fR
+.RS 4
+スプリットブレインが検出され、2 つのノードのいずれもプライマリでない場合の対応方法を定義する。（2 つのノードが接続されたときにスプリットブレインを検出する、スプリットブレインの決定は常に2つのノード間である） 定義されたポリシーは次のとおり:
+.PP
+\fBdisconnect\fR
+.RS 4
+自動再同期はしない。単に切断する。
+.RE
+.PP
+\fBdiscard\-younger\-primary\fR, 
+.br
+\fBdiscard\-older\-primary\fR
+.RS 4
+最初（\fBdiscard\-younger\-primary\fR）、または最後（\fBdiscard\-older\-primary\fR） にプライマリなったノード から再同期する。両方のノードが独立してプライマリになった場合、
+\fBdiscard\-least\-changes\fR
+ポリシーが使用される。
+.RE
+.PP
+\fBdiscard\-zero\-changes\fR
+.RS 4
+スプリットブレイン状況が検出されてからノードの 1 つだけがデータを書き込んだ場合は、このノードからもう 1 つのノードに再同期する。両方のノードがデータを書き込んだ場合は切断する。
+.RE
+.PP
+\fBdiscard\-least\-changes\fR
+.RS 4
+より多くの変更されたブロックを持つノードから再同期する。
+.RE
+.PP
+\fBdiscard\-node\-\fR\fB\fInodename\fR\fR
+.RS 4
+名前付きノードと常に再同期する。
+.RE
+.RE
+.PP
+\fB\-\-after\-sb\-1pri \fR\fB\fIpolicy\fR\fR
+.RS 4
+1 つのノードがプライマリ、もう 1 つのノードをセカンダリのときに、スプリットブレインが検出された場合の対応方法を定義する。（2 つのノードが接続されたときにスプリットブレインを検出する、スプリットブレインの決定は常に2つのノード間である） 定義されたポリシーは次のとおり:
+.PP
+\fBdisconnect\fR
+.RS 4
+自動再同期を行わず接続を切断する。
+.RE
+.PP
+\fBconsensus\fR
+.RS 4
+\fBafter\-sb\-0pri\fR
+アルゴリズムの結果が現在のセカンダリノードのデータを破棄することになる場合、セカンダリノードのデータを破棄する。それ以外の場合は切断する。
+.RE
+.PP
+\fBviolently\-as0p\fR
+.RS 4
+プライマリのデータに大きな変更がある場合でも、常に
+\fBafter\-sb\-0pri\fR
+アルゴリズムの判断を採用する。このポリシーは
+\fBallow\-two\-primaries\fR
+オプションを指定し、 1 ノードファイルシステム (OCF2 や GFS ではない) を使用している場合のみ有用である。このオプションを使用すると、プライマリノードがクラッシュする可能性があり、推奨しない。
+.RE
+.PP
+\fBdiscard\-secondary\fR
+.RS 4
+セカンダリノード上のデータを破棄する。
+.RE
+.PP
+\fBcall\-pri\-lost\-after\-sb\fR
+.RS 4
+常に
+\fBafter\-sb\-0pri\fR
+アルゴリズムの判断を採用する。プライマリノードでデータを破棄することになる場合は、 プライマリノードで
+\fBpri\-lost\-after\-sb\fR
+ハンドラを呼び出す。
+.RE
+.RE
+.PP
+\fB\-\-after\-sb\-2pri \fR\fB\fIpolicy\fR\fR
+.RS 4
+スプリットブレインが検出され、両方のノードがプライマリである場合の対応方法を定義する。（2 つのノードが接続されたときにスプリットブレインを検出する、スプリットブレインの決定は常に2つのノード間である） 定義されたポリシーは次のとおり:
+.PP
+\fBdisconnect\fR
+.RS 4
+自動再同期を行わず接続を切断する。
+.RE
+.PP
+\fBviolently\-as0p\fR
+.RS 4
+\fBafter\-sb\-1pri\fR
+の
+\fBviolently\-as0p\fR
+ポリシーを参照。
+.RE
+.PP
+\fBcall\-pri\-lost\-after\-sb\fR
+.RS 4
+そのマシンがセカンダリに降格できる場合を除いて、いずれかのマシンの
+\fBpri\-lost\-after\-sb\fR
+ヘルパープログラムを呼び出す。ヘルパープログラムはマシンを再起動することが期待され、ノードをセカンダリにする。どのマシンがヘルパープログラムを実行するかは、
+\fBafter\-sb\-0pri\fR
+ポリシーによって決定される。
+.RE
+.RE
+.PP
+\fB\-\-allow\-two\-primaries\fR
+.RS 4
+DRBD デバイスを構成する最も一般的な方法は、一度に 1 つのノードのみをプライマリ（したがって書き込み可能）にすることである。
+.sp
+いくつかのシナリオでは、2 つのノードを一度にプライマリにしたい場合がある。 DRBD 以外のメカニズムで、共有され複製されたデバイスへの書き込みが調整される方法を使用する必要がある。これは、OCFS2 や GFS などの共有ストレージクラスタファイルシステム、または仮想マシンイメージと仮想マシンを物理マシン間で移動できる仮想マシンマネージャを使用して実行できる。
+.sp
+\fBallow\-two\-primaries\fR
+は、2つのノードを同時にプライマリにすることを DRBD に指示する。非分散ファイルシステムを使用する場合は、このオプションを有効にしてはならない。データ破損とノードクラッシュが発生する。
+.RE
+.PP
+\fB\-\-always\-asbp\fR
+.RS 4
+通常、3 番目のノードが存在しないことが現在の UUID 値から明らかな場合のみ、スプリットブレイン発生後の修復ポリシーだけが適用される。
+.sp
+このオプションを指定すると、両ノードのデータに関連性があるとして、スプリットブレイン発生後のポリシーが適用される。UUID の分析により 3 番目のノードの存在が疑われる場合には、フル同期が行われることがある。(または、なんらかの別の原因によって間違った UUID セットで判断してしまった場合)
+.RE
+.PP
+\fB\-\-connect\-int \fR\fB\fItime\fR\fR
+.RS 4
+2つのノード間の接続が
+\fBdrbdsetup connect\fR
+で構成される、DRBD はすぐに接続を確立しようとする。これが失敗すると、DRBD は\fBconnect\-int\fR
+秒後に接続を試みる。\fBconnect\-int\fR
+のデフォルト値は 10 秒である。
+.RE
+.PP
+\fB\-\-cram\-hmac\-alg \fR\fB\fIhash\-algorithm\fR\fR
+.RS 4
+対向ノードの認証に使用するハッシュベースのメッセージ認証コード （HMAC） またはセキュアハッシュアルゴリズムを構成する。カーネルはいくつかの異なるアルゴリズムをサポートしており、その中にはカーネルモジュールとしてロード可能なものもある。/proc/crypto にリストされている shash アルゴリズムを参照。デフォルトで
+\fBcram\-hmac\-alg\fR
+は設定されていない。対向ノードの認証には、\fBshared\-secret\fR
+も構成する必要がある。
+.RE
+.PP
+\fB\-\-csums\-alg \fR\fB\fIhash\-algorithm\fR\fR
+.RS 4
+通常、2 つのノードが再同期するとき、同期ターゲットは同期ソースから非同期データ\:\:を要求し、同期ソースはデータを送信する。多くの使用パターンで、それらのブロックのかなりの数が実際には同一になっている。
+.sp
+\fBcsums\-alg\fR
+アルゴリズムが指定されている場合、同期ターゲットは、非同期データの要求と、現在持っているデータのハッシュ値も送信する。同期ソースは、このハッシュ値とそれ自身のバージョンのデータを比較する。ハッシュ値が異なる場合、新しいデータを同期ターゲットに送信し、そうでない場合はデータが同じであることを通知する。これにより、必要なネットワーク帯域幅が削減されるが、CPU 使用率が高くなり、同期ターゲットの I/O が増加する可能性がある。
+.sp
+\fBcsums\-alg\fR
+は、カーネルによってサポートされている安全なハッシュアルゴリズムの 1 つに設定できる。 /proc/crypto にリストされている shash アルゴリズムを参照。デフォルトでは、
+\fBcsums\-alg\fR
+設定されていない。
+.RE
+.PP
+\fB\-\-csums\-after\-crash\-only\fR
+.RS 4
+このオプション（および上記の csums\-alg） を有効にすると、プライマリクラッシュ後の最初の再同期に対してのみチェックサムベースの再同期を使用するが、その後の「ネットワーク復帰」では使用しない。
+.sp
+ほとんどの場合、再同期が必要であるとマークされたブロックは実際に変更されているため、チェックサムの計算、および再同期ターゲット上のブロックの読み書きはすべてオーバーヘッドである。
+.sp
+チェックサムベースの再同期の利点は、大部分がプライマリのクラッシュリカバリの後である。リカバリでは、アクティビティログでカバーされるより大きな領域が再同期が必要なものとしてマークされている。8\&.4\&.5 から導入された。
+.RE
+.PP
+\fB\-\-data\-integrity\-alg \fR \fIalg\fR
+.RS 4
+DRBD は通常、 TCP/IP プロトコルに組み込まれたデータ整合性チェックに依存するが、データ整合性アルゴリズムが設定されている場合は、さらに、このアルゴリズムを使用して、ネットワーク経由で受信したデータが送信者のものと一致することを確認する。データの整合性エラーが検出された場合、DRBD はネットワーク接続を閉じ、再接続し、再同期を行う。
+.sp
+\fBdata\-integrity\-alg\fR
+は、カーネルによってサポートされている安全なハッシュアルゴリズムの 1 つに設定できる。 /proc/crypto にリストされている shash アルゴリズムを参照。デフォルトでは、このメカニズムは無効である。
+.sp
+CPU のオーバーヘッドが発生するため、本番環境でこのオプションを使用しないことを推奨する。また、「データ整合性に関する注意」も参照。
+.RE
+.PP
+\fB\-\-fencing \fR\fB\fIfencing_policy\fR\fR
+.RS 4
+\fBフェンシング\fRは、両方のノードがプライマリで切断されている状態を回避するための予防措置である。これはスプリットブレイン状態とも呼ばれている。DRBDは、次のフェンシングポリシーをサポートする：
+.PP
+\fBdont\-care\fR
+.RS 4
+フェンシングのためのアクションを実行しない。これがデフォルトのポリシーである。
+.RE
+.PP
+\fBresource\-only\fR
+.RS 4
+ノードが切り離されたプライマリ状態になると、対向ノードをフェンシングしようとする。この動作は
+\fBfence\-peer\fR
+ハンドラによって行われる。このハンドラは、レプリケーション用とは別のネットワーク経由で対向ノードにアクセスし、 そこで \*(Aq\fBdrbdadm outdate minor\fR\*(Aq の実行を想定する。
+.RE
+.PP
+\fBresource\-and\-stonith\fR
+.RS 4
+ノードが切り離されたプライマリ状態になると、 DRBD はすべてのディスク I/O を停止して fence\-peer ハンドラを呼び出す。このハンドラは、レプリケーション用とは別のネットワーク経由で対向ノードにアクセスし、 そこで \*(Aq\fBdrbdadm outdate minor\fR\*(Aq の実行を想定する。これが実行できない場合、 STONITH 機能を使って対向ノードを強制排除する。これらが完了したら、ディスク I/O を再開する。fence\-peer ハンドラが失敗した場合、 \*(Aq\fBdrbdadm resume\-io\fR\*(Aq コマンドでディスク I/O を再開できる。
+.RE
+.RE
+.PP
+\fB\-\-ko\-count \fR\fB\fInumber\fR\fR
+.RS 4
+セカンダリノードが書き込みリクエストを
+\fBtimeout\fR
+内で
+\fBko\-count\fR
+回以上失敗した場合、そのセカンダリノードはクラスタから排除される。プライマリノードは、このセカンダリノードへの接続をスタンドアロンに設定する。この機能を無効にするには、明示的に 0 に設定する必要がある。デフォルトはバージョン間で変更されている。8\&.4 は 7 がデフォルト値である。
+.RE
+.PP
+\fB\-\-max\-buffers \fR\fB\fInumber\fR\fR
+.RS 4
+再同期、オンライン照合を行う際に、受信側で DRBD マイナーデバイスあたりに使用するメモリを制限する。単位は PAGE_SIZE で、ほとんどのシステムで 4KiB である。設定できる最小値は 32 (=128 KiB) でハードコードされている。これらバッファはディスクからの読み書きの際にデータブロックを保持するために使用される。輻輳時のデッドロックを回避するために、この設定はハード制限というよりは閾値として使用される。最大バッファページが使用されると、プールからのそれ以上の割り当てが制限される。受信側の I/O バックエンドに余裕がない場合には、 max\-buffers を増やすとよい。
+.RE
+.PP
+\fB\-\-max\-epoch\-size \fR\fB\fInumber\fR\fR
+.RS 4
+書き込みバリアを発行する前に DRBD が発行できる書き込みリクエストの最大数を定義する。デフォルト値は 2048 で、最小値は 1 、最大値は 20000 である。このパラメータを 10 未満の値に設定すると、パフォーマンスが低下する可能性がある。
+.RE
+.PP
+\fB\-\-on\-congestion \fR\fB\fIpolicy\fR\fR, 
+.br
+\fB\-\-congestion\-fill \fR\fB\fIthreshold\fR\fR, 
+.br
+\fB\-\-congestion\-extents \fR\fB\fIthreshold\fR\fR
+.RS 4
+デフォルトでは、 TCP 送信キューが一杯になると、 DRBD は書き込みをブロックする。これにより、より多くのバッファスペースが再び利用可能になるまで、アプリケーションがさらに書き込みリクエストを生成するのを防ぐ。
+.sp
+DRBD を DRBD\-proxy と一緒に使用する場合は、 送信キューがいっぱいになる前に DRBD を AHEAD/BEAIND モードに切り替える
+\fBpull\-ahead\fR
+\fBon\-congestion\fR
+ポリシーといっしょに使用することが望ましい。DRBD は、自身と対向ノードとの間の違いをビットマップに記録するが、もはや対向ノードに複製はしない。十分なバッファスペースが再び利用可能になると、ノードは対向ノードと同期を再開し、通常の複製に戻る。
+.sp
+これには、キューがいっぱいになってもアプリケーションの I/O をブロックしないという利点があるが、対向ノードの同期が大幅に遅れるという欠点もある。また、再同期している間、対向ノードは inconsistent(不整合) になる。
+.sp
+利用可能な congestion ポリシーは
+\fBblock\fR
+(デフォルト),
+\fBpull\-ahead\fR
+である。\fBcongestion\-fill\fR
+は、この接続で動作中に許可されているデータ量を定義する。デフォルト値は 0 で、この輻輳制御のメカニズムを無効にする（最大 10 ギガバイト）。\fBcongestion\-extents\fR
+は、 AHEAD/BEAIND モードに切り替える前にアクティブにできるビットマップエクステントの数を定義する。
+\fBal\-extents\fR
+と同じデフォルトと制限をもつ。\fBcongestion\-extents\fR
+は、
+\fBal\-extents\fR
+より小さい値に設定した場合のみ有効である。
+.sp
+AHEAD/BEHIND モードは DRBD 8\&.3\&.10 から有効である。
+.RE
+.PP
+\fB\-\-ping\-int \fR\fB\fIinterval\fR\fR
+.RS 4
+対向ノードへの TCP/IP 接続で
+\fBping\-int\fR
+秒間に何も通信が行われなかった場合、DRBD はキープアライブパケットを送信して、対向ノードまたはネットワーク接続の失敗がすぐに検出されるようにする。デフォルト値は 10 秒で、最小値は 1 、最大値は 120 秒である。単位は秒である。
+.RE
+.PP
+\fB\-\-ping\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+キープアライブパケットへの応答のタイムアウトを定義する。対向ノードが
+\fBping\-timeout\fR
+間で応答しない場合、 DRBD は接続を終了し、再接続しようとする。デフォルト値は 0\&.5 秒で、最小値は 0\&.1 秒、最大値は 3 秒である。単位は 10 分の 1 秒である。
+.RE
+.PP
+\fB\-\-socket\-check\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+DRBD\-Proxy を使っていて大量のバッファを確保する必要がある環境では ping\-timeout に非現実的な大きな値を指定しなければならないことがある。TCP コネクションが開始したときの安定するのを待つ局面でも、 DRBD はデフォルトで ping\-timeout を使ってしまう。DRBD\-Proxy は通常、同じデータセンターに配置されているため、長い待機時間は DRBD の接続プロセスを妨げる可能性がある。
+.sp
+このような場合、\fBsocket\-check\-timeout\fR
+に DRBD と DRBD\-Proxy 間の round trip time(RTT) を設定するとよい。たいていの場合 1 である。
+.sp
+デフォルトの単位は 10 分の 1 秒である。デフォルト値は 0 で socket\-check\-timeout 値の代わりに
+\fBping\-timeout\fR
+値を使用する。8\&.4\&.5 から導入された。
+.RE
+.PP
+\fB\-\-protocol \fR\fB\fIname\fR\fR
+.RS 4
+この接続で指定されたプロトコルを使用する。サポートされているプロトコルは次のとおり:
+.PP
+\fBA\fR
+.RS 4
+DRBD デバイスへの書き込みは、ローカルディスクへの書き込みと TCP/IP 送信バッファに到達した時点で完了とする。
+.RE
+.PP
+\fBB\fR
+.RS 4
+DRBD デバイスへの書き込みは、ローカルディスクへの書き込みと、すべての対向ノードが書き込みリクエストを受信をした時点で完了とする。
+.RE
+.PP
+\fBC\fR
+.RS 4
+DRBD デバイスへの書き込みは、ローカルディスクとすべてのリモートディスクへの書き込みが終わった時点で完了とする。
+.RE
+.sp
+.RE
+.PP
+\fB\-\-rcvbuf\-size \fR\fB\fIsize\fR\fR
+.RS 4
+TCP/IP 受信バッファのサイズを指定する。0（デフォルト） を指定すると、バッファサイズが動的に調整される。このパラメータは通常設定する必要はないが、最大 10MiB まで設定できる。デフォルトの単位はバイトである。
+.RE
+.PP
+\fB\-\-rr\-conflict\fR \fIpolicy\fR
+.RS 4
+このオプションは、再同期決定の結果がクラスタ内の現在のロール割り当てと互換性がない場合を解決するのに役立つ。定義されたポリシーは次のとおり:
+.PP
+\fBdisconnect\fR
+.RS 4
+自動再同期を行わず接続を切断する。
+.RE
+.PP
+\fBviolently\fR
+.RS 4
+プライマリノードへの再同期が許可され、ブロックデバイス上のデータがノードの 1 つに対して安定しているという前提に反す。\fIこのオプションは危険であり、使ってはならない。\fR
+.RE
+.PP
+\fBcall\-pri\-lost\fR
+.RS 4
+どこか 1 つのマシンで
+\fBpri\-lost\fR
+ハンドラを呼び出す。ハンドラはマシンを再起動することが期待され、ノードをセカンダリにする。
+.RE
+.RE
+.PP
+\fB\-\-shared\-secret \fR\fB\fIsecret\fR\fR
+.RS 4
+対向ノードの認証に使用する共有秘密鍵を設定する。secret は 64 文字までで指定する。対向ノードの認証には、
+\fBcram\-hmac\-alg\fR
+も設定する必要がある。
+.RE
+.PP
+\fB\-\-sndbuf\-size \fR\fB\fIsize\fR\fR
+.RS 4
+TCP/IP 送信バッファのサイズを指定する。DRBD 8\&.0\&.13/8\&.2\&.7 以降、 0 （デフォルト） を指定すると、バッファサイズが動的に調整される。32 KiB 未満の値は、この接続のスループットに有害である。大きなバッファサイズは、プロトコル A が遅延の大きいネットワークで使用される場合に特に有用である。サポートされる最大値は 10 MiB である。
+.RE
+.PP
+\fB\-\-tcp\-cork\fR
+.RS 4
+デフォルトで、DRBD は TCP_CORK ソケットオプションを使用して、カーネルが部分的なメッセージを送信しないようにする。その結果、ネットワーク上のパケット量が少なくなり、サイズが大きくなる。一部のネットワークスタックでは、この最適化で悪化する可能性がある。\fBtcp\-cork\fR
+を使用してこの最適化を無効にすることができる。
+.RE
+.PP
+\fB\-\-timeout \fR\fB\fItime\fR\fR
+.RS 4
+ネットワークを介した応答のタイムアウトを定義する。対向ノードが指定された
+\fBtimeout\fR
+時間内で応答を送信しない場合、対向ノードが死んだと判断して TCP/IP コネクションを切断する。タイムアウト値は、
+\fBconnect\-int\fR、\fBping\-int\fR
+より小さい値でなければならない。デフォルトは 6 秒である。値は 10 分の 1 秒単位で指定する。
+.RE
+.PP
+\fB\-\-use\-rle\fR
+.RS 4
+クラスタノード上の複製された各デバイスには、それぞれの対向ノードデバイス用の個別のビットマップがあある。このビットマップは、ローカルデバイスと対向ノードデバイスの違いを追跡するために使用される。クラスタの状態によっては、デバイスのビットマップ、対向ノードデバイスのビットマップ、または両方のビットマップにディスクが異なるとマークできる。2つのクラスタノードが接続すると、相互のビットマップを交換し、ローカルと対向ノードのビットマップを検査して全体的な違いを判断する。
+.sp
+非常に大きなデバイスのビットマップは比較的大きいが、通常、ランレングス符号化を使用して非常にうまく圧縮される。これにより、ビットマップ転送の時間と帯域幅を節約できる。
+.sp
+\fBuse\-rle\fR
+は run\-length エンコーディングを使用するかどうかを指定する。DRBD 8\&.4\&.0 以降デフォルトで有効である。
+.RE
+.PP
+\fB\-\-verify\-alg \fR\fB\fIhash\-algorithm\fR\fR
+.RS 4
+オンライン照合（\fBdrbdadm verify\fR） は、ディスクブロックのチェックサム（すなわち、ハッシュ値）を計算して比較し、それらが異なるかどうかを検出する。\fBverify\-alg\fR
+は、これらのチェックサムに使用するアルゴリズムを決定する。オンライン照合を使用するには、カーネルでサポートされている安全なハッシュアルゴリズムの1つに設定する必要がある。 /proc/crypto にリストされている shash アルゴリズムを参照。
+.sp
+低負荷の期間（例えば、月に1回）で定期的にオンライン照合をスケジュールすることを推奨する。また、「データ整合性に関する注意」も参照。
+.RE
+.RE
+.PP
+\fBdrbdsetup\fR new\-path \fIresource\fR \fIpeer_node_id\fR \fIlocal\-addr\fR \fIremote\-addr\fR
+.RS 4
+\fBnew\-path\fR
+コマンドは、\fI接続\fRにパスを作成する。接続は
+\fBdrbdsetup new\-peer\fR
+で作成されている必要がある。\fIlocal_addr\fR,
+\fIremote_addr\fR
+は、ローカルとリモートのプロトコル、ネットワークアドレス、ポートの形式を
+[\fIaddress\-family\fR:]\fIaddress\fR[:\fIport\fR]
+で参照する。アドレスファミリは、
+\fBipv4\fR,
+\fBipv6\fR,
+\fBssocks\fR
+(Dolphin Interconnect Solutionsの「スーパーソケット」),
+\fBsdp\fR
+(Infiniband Sockets Direct Protocol),
+\fBsci\fR
+がサポートされる(\fBsci\fR
+は、
+\fBssocks\fR
+の別名である)。アドレスファミリが指定されていない場合、
+\fBipv4\fR
+を仮定する。\fBipv6\fR
+アドレスファミリ以外は、
+\fIaddress\fR
+に IPv4 アドレス表記を使用する（たとえば、1\&.2\&.3\&.4）。\fBipv6\fR
+アドレスは角括弧で囲み、 IPv6 アドレス表記法を使用する（たとえば、 [fd01：2345：6789：abcd :: 1]）。\fIport\fR
+のデフォルトは 7788 である。
+.RE
+.PP
+\fBdrbdsetup\fR connect \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+\fBconnect\fR
+コマンドは接続をアクティブにする。つまり、DRBD ドライバは接続パスのすべてのローカルアドレスをバインドしてリッスンする。接続パスを 1 つ以上確立しようとする。利用可能なオプション:
+.PP
+\fB\-\-tentative\fR
+.RS 4
+対向ノードへの接続が確立できるかどうか、および実際に接続を確立したり、再同期を開始したりすることなく、再同期が必要かどうか（また、その方向も）を判断する。\fB\-\-tentative\fR
+なしだと、DRBD が何をするかシステムログを調べて、確認する。
+.RE
+.PP
+\fB\-\-discard\-my\-data\fR
+.RS 4
+ローカルデータを破棄して、最新データを持つ対向ノードと再同期する。スプリットブレイン状態から復旧するときに、このオプションを手作業で指定する。
+.RE
+.RE
+.PP
+\fBdrbdsetup\fR del\-peer \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+\fBdel\-peer\fR
+コマンドは、
+\fIresource\fR
+から接続を削除する。
+.RE
+.PP
+\fBdrbdsetup\fR del\-path \fIresource\fR \fIpeer_node_id\fR \fIlocal\-addr\fR \fIremote\-addr\fR
+.RS 4
+\fBdel\-path\fR
+コマンドは、\fI接続\fRからパスを削除する。接続先の接続を維持するためにパスが必要な場合は失敗しないようにする。すべてのパスを削除するには、まず接続を切断する。
+.RE
+.PP
+\fBdrbdsetup\fR cstate \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+接続の現在の状態を表示する。接続は、対向ノードの node\-id によって識別される。\fBdrbdsetup connect\fR
+コマンを参照。
+.RE
+.PP
+\fBdrbdsetup\fR del\-minor \fIminor\fR
+.RS 4
+複製されたデバイスを削除する。下位レベルのデバイスに接続できまない。\fBdrbdsetup detach\fR
+を参照。
+.RE
+.PP
+\fBdrbdsetup\fR del\-resource \fIresource\fR
+.RS 4
+リソースを削除する。すべてのボリュームと接続を最初に削除する必要がある （\fBdrbdsetup del\-minor\fR、
+\fBdrbdsetup disconnect\fR）。あるいは、
+\fBdrbdsetup down\fR
+すべてのボリュームと接続とともにリソースを削除するために使用できる。
+.RE
+.PP
+\fBdrbdsetup\fR detach \fIminor\fR
+.RS 4
+複製されたデバイスの下位デバイスを切り離す。利用可能なオプション:
+.PP
+\fB\-\-force\fR
+.RS 4
+強制的に切り離し、すぐに戻る。これにより、保留中のすべての I/O が完了するまで下位レベルのデバイスが失敗した状態になり、デバイスが切り離される。下位レベルのデバイスにまだ送信されていない I/O （デバイスの I/O が中断されたなど） は失敗したものとみなされる。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR disconnect \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+対向ノードへの接続を削除する。接続は、対向ノードの node\-id によって識別される。\fBdrbdsetup connect\fR
+コマンを参照。
+.RE
+.PP
+\fBdrbdsetup\fR down {\fIresource\fR | \fIall\fR}
+.RS 4
+すべてのボリューム、接続、およびリソース自体を削除して、リソースを落とす。
+.RE
+.PP
+\fBdrbdsetup\fR dstate \fIminor\fR
+.RS 4
+下位デバイスの現在のディスク状態を表示する。
+.RE
+.PP
+\fBdrbdsetup\fR events2 {\fIresource\fR | \fIall\fR}
+.RS 4
+設定されたすべての DRBD オブジェクトの現在の状態、状態へのすべての変更を表示する。
+.sp
+出力形式は、機械だけでなく人も読める形式である。各行は、イベントの種類を示す単語で始まる:
+\fBexists\fR
+は既存オブジェクトの場合;
+\fBcreate\fR,
+\fBdestroy\fR,
+\fBchange\fR
+はオブジェクトが作成、破棄、変更された場合;
+\fBcall\fR,
+\fBresponse\fR
+はイベントハンドラが呼び出された、戻った場合。2 番目の単語は、イベントが適用されるオブジェクトを示す:
+\fBresource\fR,
+\fBdevice\fR,
+\fBconnection\fR,
+\fBpeer\-device\fR,
+\fBhelper\fR, 現在の状態が完全にダンプされたことを示すための dash (\fB\-\fR) 。
+.sp
+残りの単語はオブジェクトを識別し、オブジェクトが入っている状態を記述する。利用可能なオプション:
+.PP
+\fB\-\-now\fR
+.RS 4
+現在の状態を報告した後に終了する。デフォルトでは、継続的に監視し、状態の変化を報告する。
+.RE
+.PP
+\fB\-\-statistics\fR
+.RS 4
+統計情報を出力に含める。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR get\-gi \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+特定の接続上のデバイスのデータ世代識別子を表示する。デバイスは、そのボリューム番号によって識別される。接続はそのエンドポイントによって識別される。\fBdrbdsetup connect\fR
+コマンドを参照。
+.sp
+出力は、現在の UUID、ビットマップ UUID、および最初の2つの履歴 UUID で構成され、一連のフラグが続く。現在の UUID と履歴 UUID はデバイス固有である。ビットマップ UUID およびフラグは、対向ノードのデバイス固有である。このコマンドは、最初の2つの履歴 UUID のみを表示する。内部的には、DRBD は各対向ノードのデバイスの履歴 UUID を1つ保持する。
+.RE
+.PP
+\fBdrbdsetup\fR invalidate \fIminor\fR
+.RS 4
+デバイスのローカルデータを対向ノードのローカルデータで置き換える。すべてのローカルデータが非同期とマークされ、指定された対向ノードデバイスとの再同期が始まる。
+.RE
+.PP
+\fBdrbdsetup\fR invalidate\-remote \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+対向ノードのリソースデータをローカルデータで置き換える。対向ノードデバイスのデータは非同期にマークされ、ローカルノードから指定された対向ノードへの再同期が始まる。
+.RE
+.PP
+\fBdrbdsetup\fR new\-current\-uuid \fIminor\fR
+.RS 4
+現在 UUID を生成して、他のすべての UUID をローテートする。このコマンドには 2 通りの利用シーンが考えられる。まず、初期同期を省略する際に利用する。また、 1 台で設定を行った後遠隔サイトに運搬することにより帯域幅を節約するためにも利用できる。
+.sp
+利用可能なオプション:
+.PP
+\fB\-\-clear\-bitmap\fR
+.RS 4
+現在 UUID を生成すると同時に同期ビットマップをクリアする。
+.RE
+.sp
+このオプションは、ゼロから新規に構築する際に初期同期を省略するために使用する。この方法は、作ったばかりのメタデータに対して効果がある。必要なステップは以下のとおり:
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  1." 4.2
+.\}
+両ノードでメタデータを初期化してデバイスを設定する。
+.sp
+\fBdrbdadm create\-md \-\-force \fR\fB\fIres\fR\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  2." 4.2
+.\}
+それぞれのサイズを知るために初期ハンドシェークが必要となる。
+.sp
+\fBdrbdadm up \fR\fB\fIres\fR\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 3.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  3." 4.2
+.\}
+Secondary/Secondary Inconsistent/Inconsistent の状態で接続される。新しい現在 UUID を作りダーティなビットマップをクリアする。
+.sp
+\fBdrbdadm \-\-clear\-bitmap new\-current\-uuid \fR\fB\fIres\fR\fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 4.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  4." 4.2
+.\}
+Secondary/Secondary UpToDate/UpToDate の状態で接続される。片方をプライマリに切り替えてファイルシステムを作成する。
+.sp
+\fBdrbdadm primary \fR\fB\fIres\fR\fR
+.sp
+\fBmkfs \-t \fR\fB\fIfs\-type\fR\fR\fB $(drbdadm sh\-dev \fR\fB\fIres\fR\fR\fB)\fR
+.RE
+.sp
+この方法の明らかな欠点は、別の方法でディスク内容を同一にしない限り、複製物全体に古いゴミのデータが残ることである。このため、オンライン照合は多数の非同期ブロックを見出してしまう。
+.sp
+\fIこの方法は、すでにデータのあるディスクに適用してはならない！\fR
+最初は動作しているように見えても、ノードの切り替えを行うとデータが壊れてしまい二度と使えなくなる。そのため、\fImkfs を省略してはならない\fR　(またはそれに相当する操作)。
+.sp
+このコマンドは、最初のノードを本稼働させた後でディスク自体を 2 番目のノードに移すという手法により、クラスタの初期化時間を短縮する目的にも適用できる。この方法は、切断されたデバイスに対してのみ有効である。デバイスのロールはプライマリでもセカンダリでもよい。
+.sp
+必要なステップは以下のとおり:
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  1." 4.2
+.\}
+\fBdrbdsetup new\-current\-uuid \-\-clear\-bitmap \fR\fB\fIminor\fR\fR\fB \fR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  2." 4.2
+.\}
+現在のアクティブなサーバのディスクをコピーする。たとえば RAID1 コントローラ配下のディスクを 1 本抜く、 dd でコピーするなど。実際のデータ領域とメタデータの両方をコピーする必要がある。
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04' 3.\h'+01'\c
+.\}
+.el \{\
+.sp -1
+.IP "  3." 4.2
+.\}
+\fBdrbdsetup new\-current\-uuid \fR\fB\fIminor\fR\fR\fB \fR
+.RE
+.sp
+このディスクをセカンダリのノードに挿入してクラスタに参加させる。ステップ 1 での
+\fBdrbdsetup\fR
+の実行以降に変更した箇所の再同期が行われる。
+.RE
+.PP
+\fBdrbdsetup\fR new\-minor \fIresource\fR \fIminor\fR \fIvolume\fR
+.RS 4
+リソース内に新しい複製されたデバイスを作成する。このコマンドは、複製されたデバイス用のブロックデバイスの inode を作成する（デフォルトでは、/dev/drbd\fIminor\fR）。\fIvolume\fR
+番号は
+\fIresource\fR
+内のデバイスを認識する。
+.RE
+.PP
+\fBdrbdsetup\fR new\-resource \fIresource\fR \fInode_id\fR, 
+.br
+\fBdrbdsetup\fR resource\-options \fIresource\fR
+.RS 4
+\fBnew\-resource\fR
+コマンドは、新しいリソースを作成する。\fBresource\-options\fR
+コマンドは、既存のリソースのリソースオプションを変更する。利用可能なオプション:
+.PP
+\fB\-\-auto\-promote \fR\fB\fIbool\-value\fR\fR
+.RS 4
+書き込みのためにデバイスをマウントまたはオープンする前に、リソースをプライマリに昇格させる必要がある。
+.sp
+DRBD 9 より前は、これを明示的に行う必要があった（ "drbdadm primary"）。DRBD 9 以降、
+\fBauto\-promote\fR
+を使用すると、デバイスの 1 つが書き込み用にマウントまたはオープンされるときに、リソースをプライマリに自動的に昇格させることができる。すべてのデバイスがアンマウントされるか、オープンしているユーザがいなくなると、すぐにリソースの役割がセカンダリになる。
+.sp
+自動プロモーションは、クラスタの状態が許可する場合にのみ成功する（つまり、明示的な
+\fBdrbdadm primary\fR
+コマンドが成功するなら）。それ以外の場合は、DRBD 9 より前と同様にデバイスのマウントまたはオープンが失敗する:
+\fBmount\fR(2)
+システムコールは、 errno を EROFS（読み取り専用ファイルシステム） に設定して失敗する。\fBopen\fR(2)
+システムコールは、 errno を EMEDIUMTYPE（メディアタイプが間違っている） に設定してが失敗する。
+.sp
+\fBauto\-promote\fR
+の設定に関係なく、デバイスが明示的に昇格された場合 （\fBdrbdadm primary\fR）、明示的に降格する必要がある（\fBdrbdadm secondary\fR）。
+.sp
+\fBauto\-promote\fR
+は DRBD 9\&.0\&.0 から有効で、デフォルトは
+\fByes\fR
+である。
+.RE
+.PP
+\fB\-\-cpu\-mask \fR\fB\fIcpu\-mask\fR\fR
+.RS 4
+DRBD のカーネルスレッドに CPU アフィニティマスクを設定する。CPU マスクは 16 進数で指定する。デフォルト値は 0 で、スケジューラがどの CPU 上でカーネルスレッドを実行するかを決定する。システムに存在しない
+\fBcpu\-mask\fR
+CPU番号は無視される。
+.RE
+.PP
+\fB\-\-on\-no\-data\-accessible \fR\fB\fIpolicy\fR\fR
+.RS 4
+要求されたデータがローカルまたはリモートで使用できない場合に（たとえば、すべてのディスクに障害が発生した場合など）、どのように I/O 要求を処理するかを決定する。定義されたポリシーは次のとおり:
+.PP
+\fBio\-error\fR
+.RS 4
+errno を EIO に設定してシステムコールは失敗する。
+.RE
+.PP
+\fBsuspend\-io\fR
+.RS 4
+リソースは I/O を中断する。下位レベルのデバイスを接続（再接続）したり、データにアクセスできる対向ノードに接続したり、\fBdrbdadm resume\-io \fR\fB\fIres\fR\fR
+で DRBD に I/O を再開させたりすることで、 再開できる。データがない場合、 I/O を強制的に再開すると、
+\fBio\-error\fR
+ポリシーと同じ結果になる。
+.RE
+.sp
+この設定は、DRBD 8\&.3\&.9 から有効である。デフォルトのポリシーは
+\fBio\-error\fR
+である。
+.RE
+.PP
+\fB\-\-peer\-ack\-window \fR\fB\fIvalue\fR\fR
+.RS 4
+各ノード上の各デバイスのために、DRBD は、ローカルデータと各対向ノードデバイスのリモートデータの差分のビットマップを維持する。例えば、それぞれが単一デバイスを有する 3 ノード構成 （ノード A、B、C） において、各ノードは、各対向ノードに対して 1 つのビットマップを維持する。
+.sp
+ノードが書き込みリクエストを受け取ると、書き込みノードのビットマップを更新する方法はわかるが、ノード間のビットマップを更新する方法はわからない。この例では、書き込みリクエストがノード A から B および C に伝搬するとき、ノード B および C はノード A と同じデータを有するが、両方が同じデータを有するか不明である。
+.sp
+是正措置として、書き込みノードは、時には、相手との間にどのような状態があるかを示すピアツーピアパケットを対向ノードに送信する。
+.sp
+\fBpeer\-ack\-window\fR
+は、peer\-ack パケットを送信する前に、プライマリノードが送信するデータ量を指定する。値が小さいとネットワークトラフィックが増加する。値が大きいとネットワークトラフィックは減少するが、セカンダリノードのメモリ消費量が大きくなり、プライマリノードの障害後に、セカンダリノード間の再同期時間が長くなる。（注：peer\-ack パケットは、他の理由でも送信される場合がある。たとえば、メンバーシップの変更または
+\fBpeer\-ack\-delay\fR
+タイマーの満了など）。
+.sp
+\fBpeer\-ack\-window\fR
+のデフォルト値は、2 MiB であり、単位はセクタである。このオプションは 9\&.0\&.0 から有効である。
+.RE
+.PP
+\fB\-\-peer\-ack\-delay \fR\fB\fIexpiry\-time\fR\fR
+.RS 4
+最後に終了した書き込みリクエストの後に
+\fIexpiry\-time\fR
+間、新しい書き込みリクエストが発行されない場合、peer\-ack パケットが送信される。タイマーが満了する前に新しい書き込みリクエストが発行されると、タイマーは
+\fIexpiry\-time\fR
+にリセットされる。（注：peer\-ack パケットは、他の理由でも送信される場合がある。たとえば、メンバーシップの変更または
+\fBpeer\-ack\-window\fR
+オプションなど）。
+.sp
+このパラメータは、リモートノードの再同期動作に影響を与える可能性がある。対向ノードは、 AL\-extent のロックを解除する peer\-ack を受信するまで待つ必要がある。対向ノード間の再同期操作は、これらのロックを待つ必要がある。
+.sp
+\fBpeer\-ack\-delay\fR
+のデフォルト値は、100 ミリ秒であり、単位はミリ秒である。このオプションは 9\&.0\&.0 から有効である。
+.RE
+.PP
+\fB\-\-quorum \fR\fB\fIvalue\fR\fR
+.RS 4
+有効にすると、レプリケートされたデータセットを変更するために、クラスタパーティションはクォーラムを必要とする。つまり、クラスタパーティション内のノードは、クラスタパーティションにクォーラムがある場合にのみプライマリに昇格できる。昇格すべきノードにディスクが直接接続されているすべてのノードが対象である。プライマリノードが書き込みリクエストを実行する必要があるが、クラスタパーティションがクォーラムを失った場合、 I/O をフリーズするか、または書き込みリクエストを拒否する（\fBon\-no\-quorum\fR
+の設定に依存）。クォーラムが失われると、プライマリは常に
+\fBquorum\-lost\fR
+ハンドラを呼び出す。ハンドラは通知のためのものであり、リターンコードは無視される。
+.sp
+オプションの値は、
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR, または数値である。数値を設定する場合は、値がノード数の半分を超えていることを確認すること。クォーラムはデータの不一致を回避するメカニズムであり、2 つ以上の複製が存在する場合にフェンシングの代わりに使用されるときがある。デフォルトは
+\fBoff\fR
+である。
+.sp
+切断されたノードがすべて outdated(無効) としてマークされている場合、パーティションのサイズに関係なく、常にクォーラムを持つ。つまり、すべてのセカンダリノードを正常に切断すると、1 つのプライマリが動作し続ける。1 つのセカンダリが切断された瞬間に、切断されたすべてのセカンダリノードがパーティションを形成すると仮定する。パーティションが他のパーティションよりも小さい場合、この時点ではクォーラムは失われる。
+.sp
+ディスクレスノードがクォーラムを常に取得できるようにする場合、\fBmajority\fR,
+\fBall\fR
+オプションは使用しないことを推奨する。クラスタ内のディスクフルノードの完全な数を決定するための DBRD のヒューリスティックな方法は正確でないため、絶対数を指定することを推奨する。
+.sp
+クォーラムの実装は、DRBD カーネルドライバのバージョン 9\&.0\&.7 から有効である。
+.RE
+.PP
+\fB\-\-quorum\-minimum\-redundancy \fR\fB\fIvalue\fR\fR
+.RS 4
+このオプションは、パーティションがクォーラムを獲得できるように UpToDate のディスクを持つノードの必要最小限の数を設定する。これは、素の
+\fBquorum\fR
+とは異なる要件である。
+.sp
+オプションの値は、
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR, または数値である。数値を設定する場合は、値がノード数の半分を超えていることを確認すること。
+.sp
+ディスクレスノードがクォーラムを常に取得できるようにする場合、\fBmajority\fR,
+\fBall\fR
+オプションは使用しないことを推奨する。クラスタ内のディスクフルノードの完全な数を決定するための DBRD のヒューリスティックな方法は正確でないため、絶対数を指定することを推奨する。
+.sp
+このオプションは、DRBD カーネルドライバのバージョン 9\&.0\&.10 から有効である。
+.RE
+.PP
+\fB\-\-on\-no\-quorum \fR\fB{io\-error | suspend\-io}\fR\fB \fR
+.RS 4
+デフォルトで DRBD はクォーラムを失うと、デバイス上の I/O をフリーズする。\fBon\-no\-quorum\fR
+を
+\fBio\-error\fR
+に設定すると、クォーラムが失われた場合、すべての I/O 操作をエラーで完了する。
+.sp
+\fBon\-no\-quorum\fR
+オプションは、DRBD カーネルドライバのバージョン 9\&.0\&.8 から有効である。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR outdate \fIminor\fR
+.RS 4
+下位デバイスのデータ内容が「無効」であるとマークする。これはフェンシングに使用され、デバイスが含まれているリソースが将来プライマリになるのを防ぐ。\fB\-\-fencing\fR
+ディスクオプションを参照。
+.RE
+.PP
+\fBdrbdsetup\fR pause\-sync \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+ローカルポーズフラグを設定して、ローカルデバイスと対向ノードとの再同期を停止する。再同期は、接続の両側の一時停止フラグがクリアされた場合にのみ再開することができる。
+.RE
+.PP
+\fBdrbdsetup\fR primary \fIresource\fR
+.RS 4
+リソース内のノードの役割をプライマリに変更する。これにより、このリソース内の複製されたデバイスを書き込み用にマウントまたはオープンすることができる。利用可能なオプション:
+.PP
+\fB\-\-overwrite\-data\-of\-peer\fR
+.RS 4
+このオプションは、
+\fB\-\-force\fR
+オプション の別名である。
+.RE
+.PP
+\fB\-\-force\fR
+.RS 4
+一部のデバイスで最新のデータが保証されていない場合でも、リソースを強制的にプライマリにする。このオプションは、新しく作成されたクラスタ内のいずれかのノードをプライマリノードに切り替える場合や、障害から手動で回復する場合に使用する。
+.sp
+これは、スプリットブレインにつながる可能性があることに注意すること。また、不整合なデバイスを最新のデバイスに強制的に変更する場合は、使用可能な完全性チェック（ファイルシステムチェックなど）を使用して、システムをクラッシュさせずにデバイスを使用できることを確認すること。
+.RE
+.sp
+DRBD では、通常、クラスタ内の 1 つのノードだけがプライマリの役割を果たすことができる。 DRBD はノード間のリソース内のデバイスを調整できる。\fB\-\-allow\-two\-primaries\fR
+ネットワークオプションは、これを変更する。その場合、DRBD 以外のメカニズムはデバイスアクセスを調整する必要がある。
+.RE
+.PP
+\fBdrbdsetup\fR resize \fIminor\fR
+.RS 4
+すべてのノードで、複製されたデバイスの下位デバイスのサイズを再確認する。このコマンドは、複製されたデバイスのサイズを調整するために、すべてのノードの下位レベルのデバイスが拡張された後に呼び出されれる。利用可能なオプション:
+.PP
+\fB\-\-assume\-peer\-has\-space\fR
+.RS 4
+現時点では、対向ノードのデバイスの一部が接続されていない場合でも、デバイスのサイズを変更する。DRBD は、次に接続するときに対向ノードのデバイスのサイズを変更しようとする。対向ノードの小さすぎるデバイスへの接続は拒否する。
+.RE
+.PP
+\fB\-\-assume\-clean\fR
+.RS 4
+追加されたディスクスペースを再同期しない。代わりに、すべてのノードで同一であると仮定する。このオプションは、ディスクスペースが初期化されておらず、相違していない場合や、すべてのノードで同一であることが分かっている場合に使用できる。\fBdrbdsetup verify\fR
+コマンドを参照。
+.RE
+.PP
+\fB\-\-size \fR\fB\fIval\fR\fR
+.RS 4
+このオプションは、DRBD デバイスの使用可能なサイズをオンラインで縮小するために使用できる。ファイルシステムがこの操作によって破損しないことはユーザ責任において確認する。
+.RE
+.PP
+\fB\-\-al\-stripes \fR\fB\fIval\fR\fR \fB\-\-al\-stripes \fR\fB\fIval\fR\fR
+.RS 4
+これらのオプションを使用して、アクティビティログのレイアウトをオンラインで変更することができる。内部メタデータの場合には、同時に、下位デバイスのユーザーに見えるサイズ(\fB\-\-size\fR
+を使用して)の縮小、または拡大が必要である。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR resume\-io \fIminor\fR
+.RS 4
+複製されたデバイスの I/O を再開する。\fB\-\-fencing\fR
+ネットオプションを参照。
+.RE
+.PP
+\fBdrbdsetup\fR resume\-sync \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+ローカル同期の一時停止フラグをクリアして、再同期を再開できるようにする。
+.RE
+.PP
+\fBdrbdsetup\fR role \fIresource\fR
+.RS 4
+リソースの現在の役割を表示する。
+.RE
+.PP
+\fBdrbdsetup\fR secondary \fIresource\fR
+.RS 4
+リソース内のノードの役割をセカンダリに変更する。複製されたデバイスが使用中の場合、このコマンドは失敗する。
+.RE
+.PP
+\fBdrbdsetup\fR show {\fIresource\fR | \fIall\fR}
+.RS 4
+リソースまたはすべてのリソースの現在の構成を表示する。利用可能なオプション:
+.PP
+\fB\-\-show\-defaults\fR
+.RS 4
+すべての設定パラメータを表示する。設定ファイルに未設定のパラメータも初期値の設定で表示する。このオプションをつけないと、初期値のパラメータは確認できない。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR show\-gi \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+特定の接続上のデバイスのデータ世代識別子を表示する。さらに、出力の説明を行う。他は
+\fBdrbdsetup get\-gi\fR
+コマンドと同じである。
+.RE
+.PP
+\fBdrbdsetup\fR state
+.RS 4
+これは
+\fBdrbdsetup role\fR
+の別名である。推奨しない。
+.RE
+.PP
+\fBdrbdsetup\fR status {\fIresource\fR | \fIall\fR}
+.RS 4
+リソースの全ての有効な設定情報を表示する。出力は、構成されたリソースごとに 1 つの段落で構成される。各段落は、リソースごとに 1 行、各デバイスに 1 行、接続ごとに 1 行が続く。デバイスと接続行はインテンドされる。各接続行は、対向ノードのデバイスごとに 1 行、これらは接続行に対してインテンドされる。
+.sp
+長い行は端末の幅で折り返され、どの行に属しているかを示すためにインデントされる。利用可能なオプション:
+.PP
+\fB\-\-verbose\fR
+.RS 4
+冗長か無関係であっても、より多くの情報を出力に含める。
+.RE
+.PP
+\fB\-\-statistics\fR
+.RS 4
+出力にデータ転送の統計情報を含める。
+.RE
+.PP
+\fB\-\-color=\fR\fB{always | auto | never}\fR\fB \fR
+.RS 4
+出力をカラー化する。
+\fB\-\-color=auto\fR,
+\fBdrbdsetup\fR
+は標準出力が端末に接続されている場合にのみカラーコードを出力する。
+.RE
+.sp
+たとえば、1 つの接続と1 つのボリュームのみを持つリソースの出力は、次のようになる。
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+drbd0 role:Primary
+  disk:UpToDate
+  host2\&.example\&.com role:Secondary
+    disk:UpToDate
+	      
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+\fB\-\-verbose\fR
+を使用すると, 同じリソースは次のように出力される:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+drbd0 node\-id:1 role:Primary suspended:no
+  volume:0 minor:1 disk:UpToDate blocked:no
+  host2\&.example\&.com local:ipv4:192\&.168\&.123\&.4:7788
+      peer:ipv4:192\&.168\&.123\&.2:7788 node\-id:0 connection:WFReportParams
+      role:Secondary congested:no
+    volume:0 replication:Connected disk:UpToDate resync\-suspended:no
+	      
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR suspend\-io \fIminor\fR
+.RS 4
+複製されたデバイスの I/O を停止する。通常、このコマンドを使用する必要はない。
+.RE
+.PP
+\fBdrbdsetup\fR verify \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR
+.RS 4
+オンライン照合を開始するか、デバイスの検証部分を変更するか、オンライン照合を停止する。このコマンドでは、指定した対向ノードを接続する必要がある。
+.sp
+オンライン照合では、ローカルと対向ノードの各ディスクブロックを比較する。ノード間で異なるブロックは非同期としてマークされるが、 自動的に同期化\fIされない\fR。それらを同期させるには、リソースを切断して再接続する必要がある。進行状況は、
+\fBdrbdsetup status \-\-statistics\fR
+の出力で監視できる。利用可能なオプション:
+.PP
+\fB\-\-start \fR\fB\fIposition\fR\fR
+.RS 4
+オンライン照合を開始する場所を定義する。オンライン照合がすでに進行中の場合、このパラメータは無視される。開始パラメータが指定されていない場合、オンライン照合は以前に中断された場所（対向ノードの接続が照合中に失われた場合）、前回の終了したセクタの後（以前にオンライン照合が完了した場合）、またはデバイスの最初（以前に終わりに達した場合、または以前にオンライン照合が実行されていない場合）から続けられる。
+.sp
+ディスク上の位置は、デフォルトでディスクセクタ（512バイト）で指定される。
+.RE
+.PP
+\fB\-\-stop \fR\fB\fIposition\fR\fR
+.RS 4
+オンライン照合を停止する場所を定義する。オンライン照合が既に進行中の場合、進行中のオンライン照合プロセスの停止位置が変更される。これを使用してオンライン照合を停止する。
+.sp
+ディスク上の位置は、デフォルトでディスクセクタ（512バイト）で指定される。
+.RE
+.sp
+また、\*(Aqnotes\*(Aq のデータの完全性に関する注意を参照。\fBdrbd.conf\fR(5)
+manual page\&.
+.RE
+.PP
+\fBdrbdsetup\fR wait\-connect\-volume \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR, 
+.br
+\fBdrbdsetup\fR wait\-connect\-connection \fIresource\fR \fIpeer_node_id\fR, 
+.br
+\fBdrbdsetup\fR wait\-connect\-resource \fIresource\fR, 
+.br
+\fBdrbdsetup\fR wait\-sync\-volume \fIresource\fR \fIpeer_node_id\fR \fIvolume\fR, 
+.br
+\fBdrbdsetup\fR wait\-sync\-connection \fIresource\fR \fIpeer_node_id\fR, 
+.br
+\fBdrbdsetup\fR wait\-sync\-resource \fIresource\fR
+.RS 4
+\fBwait\-connect\-*\fR
+コマンドは、対向ノード上のデバイスが表示されるまで待機する。\fBwait\-sync\-*\fR
+コマンドは、対向ノード上のデバイスが最新の状態になるまで待機する。両方のコマンドで利用可能なオプション：.PP
+\fB\-\-degr\-wfc\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+システムが停止したとき、クラスタが単一ノードで構成されている場合、すべてのピアが接続されるまで待機する時間を定義する。このパラメータは通常、
+\fBwfc\-timeout\fR
+より小さい値に設定する。再起動前に到達できなかった対向ノードが再起動後に到達できる可能性は低いため、待機が助けになる可能性は低いということである。
+.sp
+タイムアウトは秒単位で指定する。デフォルト値は 0 であり、無限のタイムアウトを意味する。\fBwfc\-timeout\fR
+パラーメータも参照。
+.RE
+.PP
+\fB\-\-outdated\-wfc\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+システムが停止したとき、すべての対向ノードが outdated(無効) であった場合、すべての対向ノードが接続されるまで待機する時間を定義する。このパラメータは通常、
+\fBwfc\-timeout\fR
+より小さい値に設定する。outdated(無効) の対向ノードがその間にプライマリになることはできないので、以前に生存していたノードを待つ必要がないということである。
+.sp
+タイムアウトは秒単位で指定する。デフォルト値は 0 であり、無限のタイムアウトを意味する。\fBwfc\-timeout\fR
+パラーメータも参照。
+.RE
+.PP
+\fB\-\-wait\-after\-sb\fR
+.RS 4
+このパラメータは、スプリットブレイン状況が検出された場合でも、DRBD が init スクリプトで待機し続けるため、ノード間の接続が拒否される。
+.RE
+.PP
+\fB\-\-wfc\-timeout \fR\fB\fItimeout\fR\fR
+.RS 4
+すべての対向ノードが接続されるまで init スクリプトが待機する時間を定義する。これは、DRBD リソースを管理できないクラスタマネージャと組み合わせて使用\:\:する場合に便利である。クラスタマネージャが起動すると、DRBD リ ソースはすでに起動して実行されている。Pacemaker などのより優れたクラスターマネージャを使用すると、クラスターマネージャが DRBD リソースを制御できるようになる。タイムアウトは秒単位で指定する。デフォルト値は 0 であり、無限のタイムアウトを意味する。\fBdegr\-wfc\-timeout\fR
+パラーメータも参照。
+.RE
+.sp
+.RE
+.PP
+\fBdrbdsetup\fR forget\-peer \fIresource\fR \fIpeer_node_id\fR
+.RS 4
+\fBforget\-peer\fR
+コマンドは、対向ノードのすべての痕跡をメタデータから削除する。これは、メタデータ内のビットマップスロットを解放し、今まで接続したことのないノードが接続した場合、より多くのビットマップスロットを割り当てることを可能にする。
+.sp
+このコマンドを使用するには、接続を解除する必要がある。対向ノードが後で再接続する場合、ビットマップベースの再同期は完全同期に変わる。
+.RE
+.SH "EXAMPLES"
+.PP
+詳しくは
+\m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2
+を参照。
+.SH "VERSION"
+.sp
+このドキュメントは DRBD バージョン 9\&.0\&.0 向けに改訂されている。
+.SH "AUTHOR"
+.sp
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>\&.
+.SH "REPORTING BUGS"
+.sp
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
+.SH "COPYRIGHT"
+.sp
+Copyright 2001\-2018 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+.SH "SEE ALSO"
+.PP
+\fBdrbd.conf\fR(5),
+\fBdrbd\fR(8),
+\fBdrbdadm\fR(8),
+\m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,
+\m[blue]\fBDRBD Web Site\fR\m[]\&\s-2\u[2]\d\s+2
+.SH "NOTES"
+.IP " 1." 4
+DRBD User's Guide
+.RS 4
+\%http://www.drbd.org/users-guide/
+.RE
+.IP " 2." 4
+DRBD Web Site
+.RS 4
+\%http://www.drbd.org/
+.RE

@@ -1,0 +1,393 @@
+'\" t
+.\"     Title: drbdadm
+.\"    Author: [see the "Author" section]
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 17 January 2018
+.\"    Manual: System Administration
+.\"    Source: DRBD 9.0.x
+.\"  Language: English
+.\"
+.TH "DRBDADM" "8" "17 January 2018" "DRBD 9.0.x" "System Administration"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+drbdadm \- DRBD 管理のためのユーティリティ
+.SH "SYNOPSIS"
+.HP \w'\fBdrbdadm\fR\ 'u
+\fBdrbdadm\fR [options...] [\-\-\ [\fIbackend\-options\fR...]] {\fIcommand\fR} {\fIcontext\fR...}
+.SH "DESCRIPTION"
+.PP
+\fBdrbdadm\fR
+ユーティリティーは、構成ファイルに基づいて DRBD を管理するために使用される。次のマニュアルを参照:
+\fBdrbd.conf\fR(5)。これは、高レベルのコマンドを 1 つまたは複数の下位レベルのコマンド
+\fBdrbdsetup\fR、\fBdrbdmeta\fR
+に変換する。これらのコマンドはカーネルモジュールを制御し、ディスク上のメタデータを操作する。
+.PP
+コマンドに応じて、
+\fBdrbdadm\fR
+ユーティリティは、 1 つまたは複数のリソース、デバイス、接続、または対向ノード上で動作する。次のコマンドコンテキストが有効である。
+.PP
+.PP
+\fIresource\fR
+.RS 4
+resource で指定されたリソース、またはキーワード
+\fBall\fR
+は定義されたすべてのリソースを意味する。
+.RE
+.PP
+\fIdevice\fR
+.RS 4
+マイナー番号で指定されたデバイス （例えば
+\fBminor\-\fR\fI0\fR） またはリソースとボリューム番号 （\fIresource\fR/\fIvolume\fR）。\fIresource\fR
+が指定された場合、コマンドはそのリソースのすべてのデバイスに対して反復処理を行う。
+.RE
+.PP
+\fIconnection\fR
+.RS 4
+リソースと接続名で指定された接続 （\fIresource\fR:\fIconnection\-name\fR)。\fIresource\fR
+が指定された場合、コマンドはそのリソースのすべての接続に対して反復処理を行う。
+.RE
+.PP
+\fIpeer_device\fR
+.RS 4
+リソース、接続名、およびボリューム番号で指定された対向ノード （\fIresource\fR:\fIconnection\-name\fR/\fIvolume\fR）。\fIresource\fR,
+\fIdevice\fR,
+\fIconnection\fR
+が指定された場合、コマンドはそのリソース、デバイス、または接続のすべての対向ノード上に対して反復処理を行う。
+.RE
+.PP
+二重ダッシュに続くすべてのオプションは、指定された下位レベルのユーティリティに渡される。さらに
+\fBdrbdadm\fR
+は
+\fBdrbdsetup\fR
+の多くのオプションを理解する。二重ダッシュを使わなくてもそれらを drbdsetup に渡せる。
+.SH "OPTIONS"
+.PP
+\fB\-d\fR, \fB\-\-dry\-run\fR
+.RS 4
+\fBdrbdadm\fR
+がどのコマンドを実行するか、それらを実際に実行する代わりに表示する （たとえば、
+\fBdrbdadm \-d up \fR\fB\fIresource\fR\fR）。これは、\fBdrbdsetup\fR、\fBdrbdmeta\fR
+がどのように使用されてるかを学習するのに便利な方法である。
+.RE
+.PP
+\fB\-c\fR, \fB\-\-config\-file\fR \fIfile\fR
+.RS 4
+代わりの設定ファイルを指定する。デフォルトで
+\fBdrbdadm\fR
+は、存在する次のファイルのうちの最初のものを使用する。
+\fB/etc/drbd\-90\&.conf\fR、
+\fB/etc/drbd\-84\&.conf\fR、
+\fB/etc/drbd\-83\&.conf\fR、
+\fB/etc/drbd\-82\&.conf\fR、
+\fB/etc/drbd\-08\&.conf\fR、
+\fB/etc/drbd\&.conf\fR。
+.RE
+.PP
+\fB\-t\fR, \fB\-\-config\-to\-test\fR \fIfile\fR
+.RS 4
+追加の構成ファイルを確認する。dump コマンドまたは sh\-nop コマンドと共に使用する場合のみ有効である。
+.RE
+.PP
+\fB\-s\fR, \fB\-\-drbdsetup\fR \fIfile\fR
+.RS 4
+\fBdrbdsetup\fR
+プログラムのフルパスを指定する。省略すると、自身のコマンド配置場所配下と、$PATH が参照される。
+.RE
+.PP
+\fB\-m\fR, \fB\-\-drbdmeta\fR \fIfile\fR
+.RS 4
+\fBdrbdmeta\fR
+プログラムのフルパスを指定する。省略すると、自身のコマンド配置場所配下と、$PATH が参照される。
+.RE
+.PP
+\fB\-S\fR, \fB\-\-stacked\fR
+.RS 4
+スタックリソースに対してコマンドを実行する。
+.RE
+.SH "COMMANDS"
+.PP
+adjust {\fIresource\fR}
+.RS 4
+カーネルモジュールの設定を、設定ファイルと一致するように調整する。結果は、すべてのリソースを停止して再起動する場合と同じになる （\fBdrbdadm down all\fR
+の後に
+\fBdrbdadm up all\fR）。中断することないだけが違いである。
+.sp
+adjust コマンドは、場合によっては設定変更を誤って解釈する可能性があるので注意すべきである。安全を期すために、実行前にコマンドが何をするのかを
+\fB\-\-dry\-run\fR
+オプションを使用して確認すること。
+.RE
+.PP
+adjust\-with\-progress {\fIresource\fR}
+.RS 4
+\fBadjust\fR
+と同じだが、コマンドの進捗状況についてさらに詳しい情報がある。
+.RE
+.PP
+apply\-al {\fIdevice\fR}
+.RS 4
+指定したデバイスのアクティビティログを適用する。次のマニュアルを参照:
+\fBdrbdmeta\fR(8)
+.RE
+.PP
+attach {\fIdevice\fR}
+.RS 4
+下位デバイスを既存の複製デバイスに接続する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+check\-resize {\fIdevice\fR}
+.RS 4
+内部メタデータの移動のために drbdmeta を呼び出す。DRBD の停止中に下位デバイスのサイズが変更された場合、次回の
+\fBattach\fR
+コマンドが成功するように、メタデータをデバイスの最後に移動する必要がある。
+.RE
+.PP
+connect {\fIconnection\fR}
+.RS 4
+対向ノードへの既存の接続をアクティブにする。最初に
+\fBnew\-peer\fR
+コマンドを使用して接続を作成する必要があり、少なくとも １ つ作られている必要がある。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+create\-md {\fIdevice\fR}
+.RS 4
+デバイスのメタデータを初期化する。これは、デバイスを接続する前に必要である。次のマニュアルを参照:
+\fBdrbdmeta\fR(8)
+.RE
+.PP
+cstate {\fIconnection\fR}
+.RS 4
+接続の現在の状態を表示する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+detach {\fIdevice\fR}
+.RS 4
+複製されたデバイスの下位デバイスを切り離す。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+disconnect {\fIconnection\fR}
+.RS 4
+対向ノードへの接続を削除する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+disk\-options {\fIdevice\fR}
+.RS 4
+接続された下位デバイスのディスクオプションを変更する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+down {\fIresource\fR}
+.RS 4
+すべてのボリューム、接続、およびリソース自体を削除して、リソースを落とす。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+dstate {\fIdevice\fR}
+.RS 4
+下位デバイスの現在のディスク状態を表示する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+dump {\fIresource\fR}
+.RS 4
+設定ファイルを解析して標準出力に出力する。構成ファイルが構文的に正しくない場合、失敗する。
+.RE
+.PP
+dump\-md {\fIdevice\fR}
+.RS 4
+ビットマップおよびアクティビティログを含むデバイスのメタデータをテキスト形式でダンプする。次のマニュアルを参照:
+\fBdrbdmeta\fR(8)
+.RE
+.PP
+get\-gi {\fIpeer_device\fR}
+.RS 4
+特定の接続上のデバイスのデータ世代識別子を表示する。接続されたデバイスには
+\fBdrbdsetup\fR
+を、接続されていないデバイスには
+\fBdrbdmeta\fR
+を使用する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+hidden\-commands
+.RS 4
+明示的に文書化されていないすべてのコマンドを表示する。
+.RE
+.PP
+invalidate {\fIpeer_device\fR}
+.RS 4
+デバイスのローカルデータを対向ノードのローカルデータで置き換える。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+invalidate\-remote {\fIpeer_device\fR}
+.RS 4
+対向ノードのリソースデータをローカルデータで置き換える。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+net\-options {\fIconnection\fR}
+.RS 4
+既存の接続のネットワークオプションを変更する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+new\-current\-uuid {\fIdevice\fR}
+.RS 4
+新しい currend UUID を生成する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+outdate {\fIdevice\fR}
+.RS 4
+下位デバイスのデータ内容が「無効」であるとマークする。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+pause\-sync {\fIpeer_device\fR}
+.RS 4
+ローカルポーズフラグを設定して、ローカルデバイスと対向ノードとの再同期を停止する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+primary {\fIresource\fR}
+.RS 4
+リソース内のノードの役割をプライマリに変更する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+resize {\fIdevice\fR}
+.RS 4
+すべてのノードで、複製されたデバイスの下位デバイスのサイズを変更する。これは
+\fBcheck\-resize\fR
+と下位レベルの
+\fBresize\fR
+コマンドを組み合わせる。以下のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+resource\-options {\fIresource\fR}
+.RS 4
+既存のリソースのリソースオプションを変更する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+resume\-sync {\fIpeer_device\fR}
+.RS 4
+ローカル同期の一時停止フラグをクリアして、再同期を再開できるようにする。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+role {\fIresource\fR}
+.RS 4
+リソースの現在の役割を表示する。
+.RE
+.PP
+secondary {\fIresource\fR}
+.RS 4
+リソース内のノードの役割をセカンダリに変更する。複製されたデバイスが使用中の場合、このコマンドは失敗する。
+.RE
+.PP
+show\-gi {\fIpeer_device\fR}
+.RS 4
+特定の接続上のデバイスのデータ世代識別子を表示する。さらに、出力の説明を行う。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+state {\fIresource\fR}
+.RS 4
+これは
+\fBdrbdsetup role\fR
+の別名である。推奨しない。
+.RE
+.PP
+up {\fIresource\fR}
+.RS 4
+すべてのボリュームのアクティビティ・ログを適用し、リソースを作成し、複製されたデバイスを作成し、下位デバイスを接続し、すべての対向ノードに接続することにより、リソースを起動する。drbdmeta コマンドの
+\fBapply\-al\fR
+, drbdsetup コマンドの
+\fBnew\-resource\fR,
+\fBnew\-device\fR,
+\fBnew\-minor\fR,
+\fBattach\fR,
+\fBconnect\fR
+を参照。
+.RE
+.PP
+verify {\fIpeer_device\fR}
+.RS 4
+オンライン照合を開始するか、デバイスの検証部分を変更するか、オンライン照合を停止する。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+wait\-connect {[\fIdevice\fR] | [\fIconnection\fR] | [\fIresource\fR]}
+.RS 4
+対向ノード上のデバイス、接続上のすべてのデバイス、またはすべての対向ノード上のすべてのデバイスが見つかるまで待つ。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+wait\-sync {[\fIdevice\fR] | [\fIconnection\fR] | [\fIresource\fR]}
+.RS 4
+デバイスが接続され、最終的に再同期操作が終了するまで待つ。接続とリソースレベルでも使用できる。次のマニュアルを参照:
+\fBdrbdsetup\fR(8)
+.RE
+.PP
+wipe\-md {\fIdevice\fR}
+.RS 4
+デバイスのDRBDメタデータを消去する。次のマニュアルを参照:
+\fBdrbdmeta\fR(8)
+.RE
+.PP
+forget\-peer {\fIconnection\fR}
+.RS 4
+接続されていない対向ノードへの参照をすべてメタデータから完全に削除する。次のマニュアルを参照:
+\fBdrbdmeta\fR(8)
+.RE
+.SH "VERSION"
+.sp
+このドキュメントは DRBD バージョン 9\&.0\&.0 向けに改訂されている。
+.SH "AUTHOR"
+.sp
+Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <lars\&.ellenberg@linbit\&.com>
+.SH "REPORTING BUGS"
+.sp
+Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
+.SH "COPYRIGHT"
+.sp
+Copyright 2001\-2018 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+.SH "SEE ALSO"
+.PP
+\fBdrbd.conf\fR(5),
+\fBdrbd\fR(8),
+\fBdrbdsetup\fR(8),
+\fBdrbdmeta\fR(8)
+and the
+\m[blue]\fBDRBD project web site\fR\m[]\&\s-2\u[1]\d\s+2
+.SH "NOTES"
+.IP " 1." 4
+DRBD project web site
+.RS 4
+\%http://www.drbd.org/
+.RE

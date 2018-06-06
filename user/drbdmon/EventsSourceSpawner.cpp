@@ -1,4 +1,5 @@
 #include <EventsSourceSpawner.h>
+#include <memory>
 #include <cstring>
 
 extern "C"
@@ -23,7 +24,8 @@ const char* EventsSourceSpawner::EVENTS_PROGRAM_ARGS[] =
 const int EventsSourceSpawner::PIPE_READ_SIDE  = 0;
 const int EventsSourceSpawner::PIPE_WRITE_SIDE = 1;
 
-EventsSourceSpawner::EventsSourceSpawner()
+EventsSourceSpawner::EventsSourceSpawner(MessageLog& logRef):
+    log(logRef)
 {
 }
 
@@ -55,6 +57,9 @@ int EventsSourceSpawner::get_events_source_fd()
 // @throws std::bad_alloc, EventSourceException
 int EventsSourceSpawner::spawn_source()
 {
+    const std::unique_ptr<posix_spawn_file_actions_t> pipe_init_actions_alloc(new posix_spawn_file_actions_t);
+    const std::unique_ptr<posix_spawnattr_t> spawn_attr_alloc(new posix_spawnattr_t);
+
     posix_spawn_file_actions_t* pipe_init_actions {nullptr};
     posix_spawnattr_t* spawn_attr {nullptr};
     char** spawn_args {nullptr};
@@ -77,8 +82,9 @@ int EventsSourceSpawner::spawn_source()
 
         // Initialize the datastructures for posix_spawn())
         {
-            pipe_init_actions = new posix_spawn_file_actions_t;
-            spawn_attr = new posix_spawnattr_t;
+            // Use direct pointers
+            pipe_init_actions = pipe_init_actions_alloc.get();
+            spawn_attr = spawn_attr_alloc.get();
 
             // Initialize a copy of the spawn arguments
             spawn_args = init_spawn_args();
@@ -122,7 +128,10 @@ int EventsSourceSpawner::spawn_source()
             if (spawn_rc != 0)
             {
                 spawned_pid = -1;
-                // TODO: log spawn problem
+                log.add_entry(
+                    MessageLog::log_level::ALERT,
+                    "Spawning the events source process failed"
+                );
                 throw EventsSourceException();
             }
 
@@ -140,35 +149,34 @@ int EventsSourceSpawner::spawn_source()
             }
 
             // Cleanup pipe_init_actions
-            posix_spawn_file_actions_destroy(pipe_init_actions);
+            static_cast<void> (posix_spawn_file_actions_destroy(pipe_init_actions));
             cleanup_pipe_init_actions = false;
             // Cleanup spawn_attr
-            posix_spawnattr_destroy(spawn_attr);
+            static_cast<void> (posix_spawnattr_destroy(spawn_attr));
             cleanup_spawn_attr = false;
         }
-
-        delete pipe_init_actions;
-        delete spawn_attr;
     }
     catch (EventsSourceException&)
     {
+        // Cleanup calls below may change errno, so the relevant
+        // information must be cached
+        bool spawn_out_of_memory = (errno == ENOMEM);
+
         if (cleanup_pipe_init_actions)
         {
-            posix_spawn_file_actions_destroy(pipe_init_actions);
+            static_cast<void> (posix_spawn_file_actions_destroy(pipe_init_actions));
         }
-        delete pipe_init_actions;
 
         if (cleanup_spawn_attr)
         {
-            posix_spawnattr_destroy(spawn_attr);
+            static_cast<void> (posix_spawnattr_destroy(spawn_attr));
         }
-        delete spawn_attr;
 
         destroy_spawn_args(spawn_args);
 
         close_pipe();
 
-        if (errno == ENOMEM)
+        if (spawn_out_of_memory)
         {
             throw std::bad_alloc();
         }
@@ -178,15 +186,13 @@ int EventsSourceSpawner::spawn_source()
     {
         if (cleanup_pipe_init_actions)
         {
-            posix_spawn_file_actions_destroy(pipe_init_actions);
+            static_cast<void> (posix_spawn_file_actions_destroy(pipe_init_actions));
         }
-        delete pipe_init_actions;
 
         if (cleanup_spawn_attr)
         {
-            posix_spawnattr_destroy(spawn_attr);
+            static_cast<void> (posix_spawnattr_destroy(spawn_attr));
         }
-        delete spawn_attr;
 
         destroy_spawn_args(spawn_args);
 

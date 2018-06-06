@@ -2,6 +2,7 @@
 #define	LIVESTATUS_H
 
 #include <new>
+#include <memory>
 #include <cstdint>
 
 #include <map_types.h>
@@ -29,7 +30,9 @@ class DrbdMon : public Configurable, public Configurator
     static const std::string TOKEN_DELIMITER;
 
     static const std::string OPT_HELP_KEY;
+    static const std::string OPT_VERSION_KEY;
     static const ConfigOption OPT_HELP;
+    static const ConfigOption OPT_VERSION;
 
     static const std::string TYPE_RESOURCE;
     static const std::string TYPE_CONNECTION;
@@ -46,6 +49,7 @@ class DrbdMon : public Configurable, public Configurator
     static const char HOTKEY_REPAINT;
     static const char HOTKEY_CLEAR_MSG;
     static const char HOTKEY_REINIT;
+    static const char HOTKEY_VERSION;
 
     static const std::string DESC_QUIT;
     static const std::string DESC_REPAINT;
@@ -80,7 +84,13 @@ class DrbdMon : public Configurable, public Configurator
     };
 
     // @throws std::bad_alloc
-    DrbdMon(int argc, char* argv[], MessageLog& log_ref, fail_info& fail_data_ref);
+    DrbdMon(
+        int argc,
+        char* argv[],
+        MessageLog& log_ref,
+        fail_info& fail_data_ref,
+        const std::string* const node_name_ref
+    );
     DrbdMon(const DrbdMon& orig) = delete;
     DrbdMon& operator=(const DrbdMon& orig) = delete;
     DrbdMon(DrbdMon&& orig) = default;
@@ -117,6 +127,8 @@ class DrbdMon : public Configurable, public Configurator
     // @throws std::bad_alloc
     virtual void set_option(std::string& key, std::string& value) override;
 
+    virtual uint64_t get_problem_count() const noexcept;
+
   private:
     typedef struct option_entry_s
     {
@@ -130,15 +142,23 @@ class DrbdMon : public Configurable, public Configurator
     const int    arg_count;
     char** const arg_values;
 
-    ResourcesMap* resources_map {nullptr};
-    HotkeysMap*   hotkeys_info  {nullptr};
-    OptionsMap*   options       {nullptr};
+    const std::unique_ptr<ResourcesMap> resources_map;
+    const std::unique_ptr<HotkeysMap>   hotkeys_info;
+
+    std::unique_ptr<OptionsMap>   options;
+
     fail_info&    fail_data;
     finish_action fin_action {DrbdMon::finish_action::RESTART_IMMED};
     MessageLog&   log;
-    bool          shutdown      {false};
+    const std::string* const node_name;
 
-    Configurable** configurables {nullptr};
+    bool          shutdown      {false};
+    bool          have_initial_state {false};
+
+    uint64_t problem_count {0};
+
+    std::unique_ptr<GenericDisplay>  display {nullptr};
+    std::unique_ptr<Configurable*[]> configurables {nullptr};
 
     // @throws std::bad_alloc, EventMessageException
     void create_connection(PropsMap& event_props);
@@ -195,14 +215,13 @@ class DrbdMon : public Configurable, public Configurator
     // Frees the options map
     void options_cleanup() noexcept;
 
+    void problem_counter_update(StateFlags::state res_last_state, StateFlags::state res_new_state) noexcept;
+
     // Frees resources
     // @throws std::bad_alloc
     void cleanup(
-        GenericDisplay*         display,
-        TermSize*               term_size,
         PropsMap*               event_props,
-        EventsIo*               events_io,
-        EventsSourceSpawner*    events_source
+        EventsIo*               events_io
     );
 };
 

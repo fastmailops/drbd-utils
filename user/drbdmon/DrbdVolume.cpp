@@ -7,6 +7,9 @@ const std::string DrbdVolume::PROP_KEY_MINOR       = "minor";
 const std::string DrbdVolume::PROP_KEY_DISK        = "disk";
 const std::string DrbdVolume::PROP_KEY_PEER_DISK   = "peer-disk";
 const std::string DrbdVolume::PROP_KEY_REPLICATION = "replication";
+const std::string DrbdVolume::PROP_KEY_CLIENT      = "client";
+const std::string DrbdVolume::PROP_KEY_PEER_CLIENT = "peer-client";
+const std::string DrbdVolume::PROP_KEY_QUORUM      = "quorum";
 
 const char* DrbdVolume::DS_LABEL_DISKLESS     = "Diskless";
 const char* DrbdVolume::DS_LABEL_ATTACHING    = "Attaching";
@@ -36,12 +39,20 @@ const char* DrbdVolume::RS_LABEL_AHEAD                = "Ahead";
 const char* DrbdVolume::RS_LABEL_BEHIND               = "Behind";
 const char* DrbdVolume::RS_LABEL_UNKNOWN              = "Unknown";
 
+const char* DrbdVolume::CS_LABEL_ENABLED              = "yes";
+const char* DrbdVolume::CS_LABEL_DISABLED             = "no";
+const char* DrbdVolume::CS_LABEL_UNKNOWN              = "unknown";
+
+const char* DrbdVolume::QU_LABEL_PRESENT              = "yes";
+const char* DrbdVolume::QU_LABEL_LOST                 = "no";
+
 DrbdVolume::DrbdVolume(uint16_t volume_nr) :
     vol_nr(volume_nr)
 {
     minor_nr = -1;
     vol_disk_state = DrbdVolume::disk_state::UNKNOWN;
     vol_repl_state = DrbdVolume::repl_state::UNKNOWN;
+    vol_client_state = DrbdVolume::client_state::UNKNOWN;
 }
 
 const uint16_t DrbdVolume::get_volume_nr() const
@@ -80,6 +91,23 @@ void DrbdVolume::update(PropsMap& event_props)
         {
             throw EventMessageException();
         }
+    }
+
+    std::string* prop_client = event_props.get(&PROP_KEY_CLIENT);
+    if (prop_client == nullptr)
+    {
+        prop_client = event_props.get(&PROP_KEY_PEER_CLIENT);
+    }
+
+    if (prop_client != nullptr)
+    {
+        vol_client_state = parse_client_state(*prop_client);
+    }
+
+    std::string* prop_quorum = event_props.get(&PROP_KEY_QUORUM);
+    if (prop_quorum != nullptr)
+    {
+        quorum_alert = !parse_quorum_state(*prop_quorum);
     }
 }
 
@@ -229,6 +257,11 @@ bool DrbdVolume::has_replication_alert()
     return repl_alert;
 }
 
+bool DrbdVolume::has_quorum_alert()
+{
+    return quorum_alert;
+}
+
 void DrbdVolume::clear_state_flags()
 {
     disk_alert = false;
@@ -240,6 +273,7 @@ void DrbdVolume::clear_state_flags()
 StateFlags::state DrbdVolume::update_state_flags()
 {
     // Reset the state to normal
+    // quorum_alert is set directly by update()
     StateFlags::clear_state_flags();
     disk_alert = false;
     repl_warn  = false;
@@ -249,10 +283,16 @@ StateFlags::state DrbdVolume::update_state_flags()
     switch (vol_disk_state)
     {
         case DrbdVolume::disk_state::UP_TO_DATE:
-            // fall-through
+            // UpToDate disk, no alert
+            break;
         case DrbdVolume::disk_state::DISKLESS:
-            // UpToDate disk or diskless client
-            // no warning, no alert
+            // If the volume is not configured as a diskless DRBD client,
+            // then trigger a disk alert
+            if (vol_client_state != DrbdVolume::client_state::ENABLED)
+            {
+                disk_alert = true;
+                set_alert();
+            }
             break;
         case DrbdVolume::disk_state::UNKNOWN:
             if (connection == nullptr)
@@ -273,7 +313,6 @@ StateFlags::state DrbdVolume::update_state_flags()
                     set_alert();
                 }
             }
-
             break;
         case DrbdVolume::disk_state::ATTACHING:
             // fall-through
@@ -352,7 +391,20 @@ StateFlags::state DrbdVolume::update_state_flags()
             break;
     }
 
+    // Set alert status on the volume if the quorum has been lost
+    if (quorum_alert)
+    {
+        set_alert();
+    }
+
     return obj_state;
+}
+
+StateFlags::state DrbdVolume::child_state_flags_changed()
+{
+    // No-op, the DrbdVolume does not have child objects
+
+    return StateFlags::state::NORM;
 }
 
 // @throws EventMessageException
@@ -500,6 +552,48 @@ DrbdVolume::repl_state DrbdVolume::parse_repl_state(std::string& state_name)
 
     return state;
 }
+
+// @throws EventMessageException
+DrbdVolume::client_state DrbdVolume::parse_client_state(std::string& value_str)
+{
+    DrbdVolume::client_state state = DrbdVolume::client_state::UNKNOWN;
+
+    if (value_str == CS_LABEL_DISABLED)
+    {
+        state = DrbdVolume::client_state::DISABLED;
+    }
+    else
+    if (value_str == CS_LABEL_ENABLED)
+    {
+        state = DrbdVolume::client_state::ENABLED;
+    }
+    else
+    if (value_str != CS_LABEL_UNKNOWN)
+    {
+        throw EventMessageException();
+    }
+
+    return state;
+}
+
+// @throws EventMessageException
+bool DrbdVolume::parse_quorum_state(std::string& value_str)
+{
+    bool quorum_present {false};
+
+    if (value_str == QU_LABEL_PRESENT)
+    {
+        quorum_present = true;
+    }
+    else
+    if (value_str != QU_LABEL_LOST)
+    {
+        throw EventMessageException();
+    }
+
+    return quorum_present;
+}
+
 
 // @throws NumberFormatException
 uint16_t DrbdVolume::parse_volume_nr(std::string& value_str)

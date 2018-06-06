@@ -2,12 +2,12 @@
 .\"     Title: drbd.conf
 .\"    Author: [see the "Author" section]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 3 December 2012
+.\"      Date: 17 January 2018
 .\"    Manual: Configuration Files
-.\"    Source: DRBD 9.0.0
+.\"    Source: DRBD 9.0.x
 .\"  Language: English
 .\"
-.TH "DRBD\&.CONF" "5" "3 December 2012" "DRBD 9.0.0" "Configuration Files"
+.TH "DRBD\&.CONF" "5" "17 January 2018" "DRBD 9.0.x" "Configuration Files"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -63,6 +63,10 @@ or a similar tool\&.
 .RS 4
 .\}
 .nf
+global {
+	usage\-count yes;
+	udev\-always\-use\-vnr;
+}
 resource r0 {
       net {
 	      cram\-hmac\-alg sha1;
@@ -151,6 +155,9 @@ resource
    connection
       path
       net
+        volume
+           peer\-device\-options
+      [peer\-device\-options]
    connection\-mesh
       net
    [disk]
@@ -187,6 +194,22 @@ section applies to all connections of that resource\&. This allows to avoid repe
 \fBon\fR, or
 \fBvolume\fR
 section\&.
+.PP
+\fBpeer\-device\-options\fR
+are
+\fBresync\-rate\fR,
+\fBc\-plan\-ahead\fR,
+\fBc\-delay\-target\fR,
+\fBc\-fill\-target\fR,
+\fBc\-max\-rate\fR
+and
+\fBc\-min\-rate\fR\&. Due to backward comapatibility they can be specified in any disk options section as well\&. They are inherited into all relevant connections\&. If they are given on
+\fBconnection\fR
+level they are inherited to all volumes on that connection\&. A
+\fBpeer\-device\-options\fR
+section is started with the
+\fBdisk\fR
+keyword\&.
 .SS "Sections"
 .PP
 \fBcommon\fR
@@ -483,69 +506,6 @@ is
 \fByes\fR\&.
 .RE
 .PP
-\fBc\-delay\-target \fR\fB\fIdelay_target\fR\fR, 
-.br
-\fBc\-fill\-target \fR\fB\fIfill_target\fR\fR, 
-.br
-\fBc\-max\-rate \fR\fB\fImax_rate\fR\fR, 
-.br
-\fBc\-plan\-ahead \fR\fB\fIplan_time\fR\fR
-.RS 4
-Dynamically control the resync speed\&. This mechanism is enabled by setting the
-\fBc\-plan\-ahead\fR
-parameter to a positive value\&. The goal is to either fill the buffers along the data path with a defined amount of data if
-\fBc\-fill\-target\fR
-is defined, or to have a defined delay along the path if
-\fBc\-delay\-target\fR
-is defined\&. The maximum bandwidth is limited by the
-\fBc\-max\-rate\fR
-parameter\&.
-.sp
-The
-\fBc\-plan\-ahead\fR
-parameter defines how fast drbd adapts to changes in the resync speed\&. It should be set to five times the network round\-trip time or more\&. Common values for
-\fBc\-fill\-target\fR
-for "normal" data paths range from 4K to 100K\&. If drbd\-proxy is used, it is advised to use
-\fBc\-delay\-target\fR
-instead of
-\fBc\-fill\-target\fR\&. The
-\fBc\-delay\-target\fR
-parameter is used if the
-\fBc\-fill\-target\fR
-parameter is undefined or set to 0\&. The
-\fBc\-delay\-target\fR
-parameter should be set to five times the network round\-trip time or more\&. The
-\fBc\-max\-rate\fR
-option should be set to either the bandwidth available between the DRBD\-hosts and the machines hosting DRBD\-proxy, or to the available disk bandwidth\&.
-.sp
-The default values of these parameters are:
-\fBc\-plan\-ahead\fR
-= 20 (in units of 0\&.1 seconds),
-\fBc\-fill\-target\fR
-= 0 (in units of sectors),
-\fBc\-delay\-target\fR
-= 1 (in units of 0\&.1 seconds), and
-\fBc\-max\-rate\fR
-= 102400 (in units of KiB/s)\&.
-.sp
-Dynamic resync speed control is available since DRBD 8\&.3\&.9\&.
-.RE
-.PP
-\fBc\-min\-rate \fR\fB\fImin_rate\fR\fR
-.RS 4
-A node which is primary and sync\-source has to schedule application I/O requests and resync I/O requests\&. The
-\fBc\-min\-rate\fR
-parameter limits how much bandwidth is available for resync I/O; the remaining bandwidth is used for application I/O\&.
-.sp
-A
-\fBc\-min\-rate\fR
-value of 0 means that there is no limit on the resync I/O bandwidth\&. This can slow down application I/O significantly\&. Use a value of 1 (1 KiB/s) for the lowest possible resync rate\&.
-.sp
-The default value of
-\fBc\-min\-rate\fR
-is 4096, in units of KiB/s\&.
-.RE
-.PP
 \fBdisk\-barrier\fR, 
 .br
 \fBdisk\-flushes\fR, 
@@ -661,12 +621,6 @@ This option is available since DRBD 8\&.4\&.1\&.
 Define that a device should only resynchronize after the specified other device\&. By default, no order between devices is defined, and all devices will resynchronize in parallel\&. Depending on the configuration of the lower\-level devices, and the available network and disk bandwidth, this can slow down the overall resync process\&. This option can be used to form a chain or tree of dependencies among devices\&.
 .RE
 .PP
-\fBresync\-rate \fR\fB\fIrate\fR\fR
-.RS 4
-
-Define how much bandwidth DRBD may use for resynchronizing\&. DRBD allows "normal" application I/O even during a resync\&. If the resync takes up too much bandwidth, application I/O can become very slow\&. This parameter allows to avoid that\&. Please note this is option only works when the dynamic resync controller is disabled\&.
-.RE
-.PP
 \fBrs\-discard\-granularity \fR\fB\fIbyte\fR\fR
 .RS 4
 When
@@ -710,6 +664,80 @@ We used to ignore the discard_zeroes_data setting completely\&. To not break est
 .sp
 This option is available since 8\&.4\&.7\&.
 .RE
+.SS "Section peer\-device\-options Parameters"
+.PP
+Please note that you open the section with the
+\fBdisk\fR
+keyword\&.
+.PP
+\fBc\-delay\-target \fR\fB\fIdelay_target\fR\fR, 
+.br
+\fBc\-fill\-target \fR\fB\fIfill_target\fR\fR, 
+.br
+\fBc\-max\-rate \fR\fB\fImax_rate\fR\fR, 
+.br
+\fBc\-plan\-ahead \fR\fB\fIplan_time\fR\fR
+.RS 4
+Dynamically control the resync speed\&. This mechanism is enabled by setting the
+\fBc\-plan\-ahead\fR
+parameter to a positive value\&. The goal is to either fill the buffers along the data path with a defined amount of data if
+\fBc\-fill\-target\fR
+is defined, or to have a defined delay along the path if
+\fBc\-delay\-target\fR
+is defined\&. The maximum bandwidth is limited by the
+\fBc\-max\-rate\fR
+parameter\&.
+.sp
+The
+\fBc\-plan\-ahead\fR
+parameter defines how fast drbd adapts to changes in the resync speed\&. It should be set to five times the network round\-trip time or more\&. Common values for
+\fBc\-fill\-target\fR
+for "normal" data paths range from 4K to 100K\&. If drbd\-proxy is used, it is advised to use
+\fBc\-delay\-target\fR
+instead of
+\fBc\-fill\-target\fR\&. The
+\fBc\-delay\-target\fR
+parameter is used if the
+\fBc\-fill\-target\fR
+parameter is undefined or set to 0\&. The
+\fBc\-delay\-target\fR
+parameter should be set to five times the network round\-trip time or more\&. The
+\fBc\-max\-rate\fR
+option should be set to either the bandwidth available between the DRBD\-hosts and the machines hosting DRBD\-proxy, or to the available disk bandwidth\&.
+.sp
+The default values of these parameters are:
+\fBc\-plan\-ahead\fR
+= 20 (in units of 0\&.1 seconds),
+\fBc\-fill\-target\fR
+= 0 (in units of sectors),
+\fBc\-delay\-target\fR
+= 1 (in units of 0\&.1 seconds), and
+\fBc\-max\-rate\fR
+= 102400 (in units of KiB/s)\&.
+.sp
+Dynamic resync speed control is available since DRBD 8\&.3\&.9\&.
+.RE
+.PP
+\fBc\-min\-rate \fR\fB\fImin_rate\fR\fR
+.RS 4
+A node which is primary and sync\-source has to schedule application I/O requests and resync I/O requests\&. The
+\fBc\-min\-rate\fR
+parameter limits how much bandwidth is available for resync I/O; the remaining bandwidth is used for application I/O\&.
+.sp
+A
+\fBc\-min\-rate\fR
+value of 0 means that there is no limit on the resync I/O bandwidth\&. This can slow down application I/O significantly\&. Use a value of 1 (1 KiB/s) for the lowest possible resync rate\&.
+.sp
+The default value of
+\fBc\-min\-rate\fR
+is 4096, in units of KiB/s\&.
+.RE
+.PP
+\fBresync\-rate \fR\fB\fIrate\fR\fR
+.RS 4
+
+Define how much bandwidth DRBD may use for resynchronizing\&. DRBD allows "normal" application I/O even during a resync\&. If the resync takes up too much bandwidth, application I/O can become very slow\&. This parameter allows to avoid that\&. Please note this is option only works when the dynamic resync controller is disabled\&.
+.RE
 .SS "Section global Parameters"
 .PP
 \fBdialog\-refresh \fR\fB\fItime\fR\fR
@@ -740,6 +768,37 @@ This parameter defines if a cluster node participates in the usage counter; the 
 (ask the user, the default)\&.
 .sp
 We would like to ask users to participate in the online usage counter as this provides us valuable feedback for steering the development of DRBD\&.
+.RE
+.PP
+\fBudev\-always\-use\-vnr\fR
+.RS 4
+When udev asks drbdadm for a list of device related symlinks, drbdadm would suggest symlinks with differing naming conventions, depending on whether the resource has explicit
+volume VNR { }
+definitions, or only one single volume with the implicit volume number 0:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+# implicit single volume without "volume 0 {}" block
+DEVICE=drbd<minor>
+SYMLINK_BY_RES=drbd/by\-res/<resource\-name>
+SYMLINK_BY_DISK=drbd/by\-disk/<backing\-disk\-name>
+
+# explicit volume definition: volume VNR { }
+DEVICE=drbd<minor>
+SYMLINK_BY_RES=drbd/by\-res/<resource\-name>/VNR
+SYMLINK_BY_DISK=drbd/by\-disk/<backing\-disk\-name>
+.fi
+.if n \{\
+.RE
+.\}
+.sp
+If you define this parameter in the global section, drbdadm will always add the
+\&.\&.\&./VNR
+part, and will not care for whether the volume definition was implicit or explicit\&.
+.sp
+For legacy backward compatibility, this is off by default, but we do recommend to enable it\&.
 .RE
 .SS "Section handlers Parameters"
 .PP
@@ -1329,6 +1388,67 @@ The default value for
 \fBpeer\-ack\-delay\fR
 is 100 milliseconds, the default unit is milliseconds\&. This option is available since 9\&.0\&.0\&.
 .RE
+.PP
+\fBquorum \fR\fB\fIvalue\fR\fR
+.RS 4
+
+When activated, a cluster partition requires quorum in order to modify the replicated data set\&. That means a node in the cluster partition can only be promoted to primary if the cluster partition has quorum\&. Every node with a disk directly connected to the node that should be promoted counts\&. If a primary node should execute a write request, but the cluster partition has lost quorum, it will freeze IO or reject the write request with an error (depending on the
+\fBon\-no\-quorum\fR
+setting)\&. Upon loosing quorum a primary always invokes the
+\fBquorum\-lost\fR
+handler\&. The handler is intended for notification purposes, its return code is ignored\&.
+.sp
+The option\*(Aqs value might be set to
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR
+or a numeric value\&. If you set it to a numeric value, make sure that the value is greater than half of your number of nodes\&. Quorum is a mechanism to avoid data divergence, it might be used instead of fencing when there are more than two repicas\&. It defaults to
+\fBoff\fR
+.sp
+If all missing nodes are marked as outdated, a partition always has quorum, no matter how small it is\&. I\&.e\&. If you disconnect all secondary nodes gracefully a single primary continues to operate\&. In the moment a single secondary is lost, it has to be assumed that it forms a partition with all the missing outdated nodes\&. In case my partition might be smaller than the other, quorum is lost in this moment\&.
+.sp
+In case you want to allow permanently diskless nodes to gain quorum it is recommendet to not use
+\fBmajority\fR
+or
+\fBall\fR\&. It is recommended to specify an absolute number, since DBRD\*(Aqs heuristic to determine the complete number of diskfull nodes in the cluster is unreliable\&.
+.sp
+The quorum implementation is available starting with the DRBD kernel driver version 9\&.0\&.7\&.
+.RE
+.PP
+\fBquorum\-minimum\-redundancy \fR\fB\fIvalue\fR\fR
+.RS 4
+
+This option sets the minimal required number of nodes with an UpToDate disk to allow the partition to gain quorum\&. This is a different requirement than the plain
+\fBquorum\fR
+option expresses\&.
+.sp
+The option\*(Aqs value might be set to
+\fBoff\fR,
+\fBmajority\fR,
+\fBall\fR
+or a numeric value\&. If you set it to a numeric value, make sure that the value is greater than half of your number of nodes\&.
+.sp
+In case you want to allow permanently diskless nodes to gain quorum it is recommendet to not use
+\fBmajority\fR
+or
+\fBall\fR\&. It is recommended to specify an absolute number, since DBRD\*(Aqs heuristic to determine the complete number of diskfull nodes in the cluster is unreliable\&.
+.sp
+This option is available starting with the DRBD kernel driver version 9\&.0\&.10\&.
+.RE
+.PP
+\fBon\-no\-quorum \fR\fB{io\-error | suspend\-io}\fR\fB \fR
+.RS 4
+
+By default DRBD freezes IO on a device, that lost quorum\&. By setting the
+\fBon\-no\-quorum\fR
+to
+\fBio\-error\fR
+it completes all IO operations with an error if quorum ist lost\&.
+.sp
+The
+\fBon\-no\-quorum\fR
+options is available starting with the DRBD kernel driver version 9\&.0\&.8\&.
+.RE
 .SS "Section startup Parameters"
 .PP
 The parameters in this section define the behavior of DRBD at system startup time, in the DRBD init script\&. They have no effect once the system is up and running\&.
@@ -1337,7 +1457,7 @@ The parameters in this section define the behavior of DRBD at system startup tim
 .RS 4
 
 Define how long to wait until all peers are connected in case the cluster consisted of a single node only when the system went down\&. This parameter is usually set to a value smaller than
-\fBwfc\-timeout\fR\&. The assumption here is that peers which were unreachable before a reboot are less likely to be be reachable after the reboot, so waiting is less likely to help\&.
+\fBwfc\-timeout\fR\&. The assumption here is that peers which were unreachable before a reboot are less likely to be reachable after the reboot, so waiting is less likely to help\&.
 .sp
 The timeout is specified in seconds\&. The default value is 0, which stands for an infinite timeout\&. Also see the
 \fBwfc\-timeout\fR
@@ -1465,11 +1585,10 @@ Written by Philipp Reisner <philipp\&.reisner@linbit\&.com> and Lars Ellenberg <
 Report bugs to <drbd\-user@lists\&.linbit\&.com>\&.
 .SH "COPYRIGHT"
 .sp
-Copyright 2001\-2012 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
+Copyright 2001\-2018 LINBIT Information Technologies, Philipp Reisner, Lars Ellenberg\&. This is free software; see the source for copying conditions\&. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE\&.
 .SH "SEE ALSO"
 .PP
 \fBdrbd\fR(8),
-\fBdrbddisk\fR(8),
 \fBdrbdsetup\fR(8),
 \fBdrbdadm\fR(8),
 \m[blue]\fBDRBD User\*(Aqs Guide\fR\m[]\&\s-2\u[1]\d\s+2,

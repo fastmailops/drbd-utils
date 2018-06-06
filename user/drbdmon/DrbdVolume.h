@@ -52,11 +52,21 @@ class DrbdVolume : private StateFlags
         UNKNOWN
     };
 
+    enum class client_state : uint16_t
+    {
+        ENABLED,
+        DISABLED,
+        UNKNOWN
+    };
+
     static const std::string PROP_KEY_VOL_NR;
     static const std::string PROP_KEY_MINOR;
     static const std::string PROP_KEY_DISK;
     static const std::string PROP_KEY_PEER_DISK;
     static const std::string PROP_KEY_REPLICATION;
+    static const std::string PROP_KEY_CLIENT;
+    static const std::string PROP_KEY_PEER_CLIENT;
+    static const std::string PROP_KEY_QUORUM;
 
     static const char* DS_LABEL_DISKLESS;
     static const char* DS_LABEL_ATTACHING;
@@ -85,6 +95,14 @@ class DrbdVolume : private StateFlags
     static const char* RS_LABEL_AHEAD;
     static const char* RS_LABEL_BEHIND;
     static const char* RS_LABEL_UNKNOWN;
+
+    static const char* CS_LABEL_ENABLED;
+    static const char* CS_LABEL_DISABLED;
+    static const char* CS_LABEL_UNKNOWN;
+
+    static const char* QU_LABEL_PRESENT;
+    static const char* QU_LABEL_LOST;
+
 
     explicit DrbdVolume(uint16_t volume_nr);
     DrbdVolume(const DrbdVolume& orig) = delete;
@@ -119,9 +137,11 @@ class DrbdVolume : private StateFlags
     using StateFlags::get_state;
     virtual void clear_state_flags() override;
     virtual StateFlags::state update_state_flags() override;
+    virtual StateFlags::state child_state_flags_changed() override;
     virtual bool has_disk_alert();
     virtual bool has_replication_warning();
     virtual bool has_replication_alert();
+    virtual bool has_quorum_alert();
 
     // Creates (allocates and initializes) a new DrbdVolume object from a map of properties
     //
@@ -142,15 +162,23 @@ class DrbdVolume : private StateFlags
     // @throws NumberFormatException
     static int32_t parse_minor_nr(std::string& value_str);
 
+    // @throws EventMessageException
+    static client_state parse_client_state(std::string& value_str);
+
+    // @throws EventMessageException
+    static bool parse_quorum_state(std::string& value_str);
+
   private:
     const uint16_t vol_nr;
     int32_t minor_nr {-1};
     disk_state vol_disk_state;
     repl_state vol_repl_state;
+    client_state vol_client_state;
     DrbdConnection* connection {nullptr};
-    bool disk_alert {false};
-    bool repl_warn  {false};
-    bool repl_alert {false};
+    bool disk_alert     {false};
+    bool repl_warn      {false};
+    bool repl_alert     {false};
+    bool quorum_alert   {false};
 };
 
 #endif	/* DRBDVOLUME_H */

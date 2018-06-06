@@ -6,12 +6,16 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <sys/sysmacros.h>
 
 #ifndef IN_IS_ADDR_LOOPBACK
 #define IN_IS_ADDR_LOOPBACK(a) ((htonl((a)->s_addr) & 0xff000000) == 0x7f000000)
 #endif
 
 #define COMM_TIMEOUT 120
+
+extern const char *IPV4_STR;
+extern const char *IPV6_STR;
 
 /* MetaDataIndex for v06 / v07 style meta data blocks */
 enum MetaDataIndex {
@@ -88,7 +92,7 @@ extern int lk_bdev_delete(const unsigned minor);
  * caller should free(bd->bd_name) once it is no longer needed. */
 extern int lk_bdev_load(const unsigned minor, struct bdev_info *bd);
 
-extern void get_random_bytes(void* buffer, int len);
+extern void get_random_bytes(void *buffer, size_t len);
 
 /* Since glibc 2.8~20080505-0ubuntu7 asprintf() is declared with the
    warn_unused_result attribute.... */
@@ -113,6 +117,14 @@ extern void initialize_err(void);
 extern int err(const char *format, ...);
 extern const char *esc_xml(char *str);
 extern const char *esc(char *str);
+
+bool ipv4_addresses_match(const char *addr_1st, const char *addr_2nd);
+
+bool ipv6_addresses_match(const char *addr_1st, const char *addr_2nd);
+
+bool addresses_match(const char *af_1st, const char *addr_1st,
+                     const char *af_2nd, const char *addr_2nd);
+
 
 
 #endif

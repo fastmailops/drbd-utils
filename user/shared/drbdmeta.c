@@ -26,8 +26,6 @@
 /* have the <sys/....h> first, otherwise you get e.g. "redefined" types from
  * sys/types.h and other weird stuff */
 
-#define INITIALIZE_BITMAP 0
-
 #define _GNU_SOURCE
 #define _XOPEN_SOURCE 600
 #define _FILE_OFFSET_BITS 64
@@ -61,6 +59,16 @@
 #include "drbdmeta_parser.h"
 
 #include "config.h"
+
+/* BLKZEROOUT, available on linux-3.6 and later,
+ * and maybe backported to distribution kernels,
+ * even if they pretend to be older.
+ * Yes, we encountered a number of systems that already had it in their
+ * kernels, but not yet in the headers used to build userland stuff like this.
+ */
+#ifndef BLKZEROOUT
+# define BLKZEROOUT	_IO(0x12,127)
+#endif
 
 extern FILE* yyin;
 YYSTYPE yylval;
@@ -407,7 +415,7 @@ int v06_validate_md(struct format *cfg)
 /*
  * -- DRBD 0.7 --------------------------------------
  */
-unsigned long bm_bytes(const struct md_cpu const *md, uint64_t sectors);
+unsigned long bm_bytes(const struct md_cpu * const md, uint64_t sectors);
 
 struct __packed md_on_disk_07 {
 	be_u64 la_kb;		/* last agreed size. */
@@ -439,7 +447,7 @@ void md_disk_07_to_cpu(struct md_cpu *cpu, const struct md_on_disk_07 *disk)
 	cpu->al_stripe_size_4k = 8;
 }
 
-void md_cpu_to_disk_07(struct md_on_disk_07 *disk, const struct md_cpu const *cpu)
+void md_cpu_to_disk_07(struct md_on_disk_07 *disk, const struct md_cpu * const cpu)
 {
 	int i;
 
@@ -455,7 +463,7 @@ void md_cpu_to_disk_07(struct md_on_disk_07 *disk, const struct md_cpu const *cp
 }
 
 int is_valid_md(enum md_format f,
-	const struct md_cpu const *md, const int md_index, const uint64_t ll_size)
+	const struct md_cpu * const md, const int md_index, const uint64_t ll_size)
 {
 	uint64_t md_size_sect;
 	const char *v = f_ops[f].name;
@@ -1388,6 +1396,7 @@ void m_set_v9_uuid(struct md_cpu *md, int node_id, char **argv, int argc __attri
 		if (!m_strsep_bit(str, &md->flags, MDF_CRASHED_PRIMARY)) break;
 		if (!m_strsep_bit(str, &md->flags, MDF_AL_CLEAN)) break;
 		if (!m_strsep_bit(str, &md->flags, MDF_AL_DISABLED)) break;
+		if (!m_strsep_bit(str, &md->flags, MDF_PRIMARY_LOST_QUORUM)) break;
 		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_CONNECTED)) break;
 		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_OUTDATED)) break;
 		if (!m_strsep_bit(str, &md->peers[node_id].flags, MDF_PEER_FENCING)) break;
@@ -1696,6 +1705,58 @@ void initialize_al(struct format *cfg)
 
 void check_for_existing_data(struct format *cfg);
 
+static void zeroout_bitmap(struct format *cfg)
+{
+	const size_t bitmap_bytes =
+		ALIGN(bm_bytes(&cfg->md, cfg->bd_size >> 9), cfg->md_hard_sect_size);
+	uint64_t range[2];
+	int err;
+
+	range[0] = cfg->bm_offset; /* start offset */
+	range[1] = bitmap_bytes; /* len */
+
+	fprintf(stderr,"initializing bitmap (%u KB) to all zero\n",
+		(unsigned int)(bitmap_bytes>>10));
+
+	err = ioctl(cfg->md_fd, BLKZEROOUT, &range);
+	if (!err)
+		return;
+
+	PERROR("ioctl(%s, BLKZEROOUT, [%llu, %llu]) failed", cfg->md_device_name,
+			(unsigned long long)range[0], (unsigned long long)range[1]);
+	fprintf(stderr, "Using slow(er) fallback.\n");
+
+	{
+		/* need to sector-align this for O_DIRECT.
+		 * "sector" here means hard-sect size, which may be != 512.
+		 * Note that even though ALIGN does round up, for sector sizes
+		 * of 512, 1024, 2048, 4096 Bytes, this will be fully within
+		 * the claimed meta data area, since we already align all
+		 * "interesting" parts of that to 4kB */
+		size_t i = bitmap_bytes;
+		off_t bm_on_disk_off = cfg->bm_offset;
+		unsigned int percent_done = 0;
+		unsigned int percent_last_report = 0;
+		size_t chunk;
+
+		memset(on_disk_buffer, 0x00, buffer_size);
+		while (i) {
+			chunk = buffer_size < i ? buffer_size : i;
+			pwrite_or_die(cfg, on_disk_buffer,
+				      chunk, bm_on_disk_off,
+				      "md_initialize_common:BM");
+			bm_on_disk_off += chunk;
+			i -= chunk;
+			percent_done = 100*(bitmap_bytes-i)/bitmap_bytes;
+			if (percent_done != percent_last_report) {
+				fprintf(stderr,"\r%u%%", percent_done);
+				percent_last_report = percent_done;
+			}
+		}
+		fprintf(stderr,"\r100%%\n");
+	}
+}
+
 /* MAYBE DOES DISK WRITES!! */
 int md_initialize_common(struct format *cfg, int do_disk_writes)
 {
@@ -1717,42 +1778,15 @@ int md_initialize_common(struct format *cfg, int do_disk_writes)
 	}
 	initialize_al(cfg);
 
-	/* THINK
-	 * do we really need to initialize the bitmap? */
-	if (INITIALIZE_BITMAP) {
-		/* need to sector-align this for O_DIRECT.
-		 * "sector" here means hard-sect size, which may be != 512.
-		 * Note that even though ALIGN does round up, for sector sizes
-		 * of 512, 1024, 2048, 4096 Bytes, this will be fully within
-		 * the claimed meta data area, since we already align all
-		 * "interesting" parts of that to 4kB */
-		const size_t bm_bytes = ALIGN(cfg->bm_bytes, cfg->md_hard_sect_size);
-		size_t i = bm_bytes;
-		off_t bm_on_disk_off = cfg->bm_offset;
-		unsigned int percent_done = 0;
-		unsigned int percent_last_report = 0;
-		size_t chunk;
-		fprintf(stderr,"initializing bitmap (%u KB)\n",
-			(unsigned int)(bm_bytes>>10));
+	/* We initialize the bitmap to all 0 for the use case that someone
+	 * might use set-gi to pretend that the backend devices are completely
+	 * in sync. (I.e. thinly provisioned storage, all zeroes)
+	 *
+	 * In case it current UUID is left at UUID_JUST_CREATED the kernel
+	 * driver will set all bits to 1 when using it in a handshake...
+	 */
+	zeroout_bitmap(cfg);
 
-		memset(on_disk_buffer, 0xff, buffer_size);
-		while (i) {
-			chunk = buffer_size < i ? buffer_size : i;
-			pwrite_or_die(cfg, on_disk_buffer,
-				chunk, bm_on_disk_off,
-				"md_initialize_common:BM");
-			bm_on_disk_off += chunk;
-			i -= chunk;
-			percent_done = 100*(bm_bytes-i)/bm_bytes;
-			if (percent_done != percent_last_report) {
-				fprintf(stderr,"\r%u%%", percent_done);
-				percent_last_report = percent_done;
-			}
-		}
-		fprintf(stderr,"\r100%%\n");
-	} else {
-		fprintf(stderr,"NOT initializing bitmap\n");
-	}
 	return 0;
 }
 
@@ -2415,7 +2449,7 @@ int meta_apply_al(struct format *cfg, char **argv __attribute((unused)), int arg
 	return err;
 }
 
-unsigned long bm_bytes(const struct md_cpu const *md, uint64_t sectors)
+unsigned long bm_bytes(const struct md_cpu * const md, uint64_t sectors)
 {
 	unsigned long long bm_bits;
 	unsigned long sectors_per_bit = md->bm_bytes_per_bit >> 9;
@@ -3151,6 +3185,42 @@ void print_dump_header()
 	printf("\n#\n\n");
 }
 
+char *pretty_peer_md_flags(char *inbuf, unsigned int buf_size, unsigned int flags, const char *first_sep, const char *sep)
+{
+	static const char *flag_name[32] = {
+	/* MDF_PEER_CONNECTED   */ [0] = "connected",
+	/* MDF_PEER_OUTDATED    */ [1] = "<=outdated",
+	/* MDF_PEER_FENCING     */ [2] = "fencing",
+	/* MDF_PEER_FULL_SYNC   */ [3] = "full-sync",
+	/* MDF_PEER_DEVICE_SEEN */ [4] = "seen",
+	/* MDF_NODE_EXISTS      */ [16] = "exists",
+	};
+
+	char *buf = inbuf;
+	int n = buf_size;
+	int c;
+	int i;
+	const char *cur_sep = first_sep;
+
+	*buf = '\0';
+	for (i = 0; i < 32; i++) {
+		unsigned int f = 1U << i;
+		if ((flags & f) == 0)
+			continue;
+
+		if (flag_name[i])
+			c = snprintf(buf, n, "%s%s", cur_sep, flag_name[i]);
+		else
+			c = snprintf(buf, n, "%s0x%x=?", cur_sep, f);
+		cur_sep = sep;
+		if (c < 0 || c >= n)
+			break;
+		buf += c;
+		n -= c;
+	}
+	return inbuf;
+}
+
 int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc)
 {
 	int al_is_clean;
@@ -3245,6 +3315,7 @@ int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc
 		       cfg->md.current_uuid, cfg->md.flags);
 		for (i = 0; i < DRBD_NODE_ID_MAX; i++) {
 			struct peer_md_cpu *peer = &cfg->md.peers[i];
+			char flag_buf[80];
 
 			printf("peer[%d] {\n", i);
 			if (format_version(cfg) >= DRBD_V09) {
@@ -3253,10 +3324,12 @@ int meta_dump_md(struct format *cfg, char **argv __attribute((unused)), int argc
 			}
 			printf("    bitmap-uuid 0x"X64(016)";\n"
 			       "    bitmap-dagtag 0x"X64(016)";\n"
-			       "    flags 0x"X32(08)";\n",
+			       "    flags 0x"X32(08)";%s\n",
 			       peer->bitmap_uuid,
 			       peer->bitmap_dagtag,
-			       peer->flags);
+			       peer->flags,
+			       pretty_peer_md_flags(flag_buf, sizeof(flag_buf),
+					peer->flags, " # ", " | "));
 			printf("}\n");
 		}
 		printf("history-uuids {");
@@ -3868,6 +3941,7 @@ void md_convert_08_to_09(struct format *cfg)
 
 	cfg->md.flags &= ~(MDF_CONNECTED_IND | MDF_FULL_SYNC | MDF_PEER_OUT_DATED);
 
+	cfg->md.node_id = -1;
 	cfg->md.magic = DRBD_MD_MAGIC_09;
 	re_initialize_md_offsets(cfg);
 
@@ -4281,25 +4355,25 @@ void check_for_existing_data(struct format *cfg)
 }
 
 /* tries to guess what is in the on_disk_buffer */
-enum md_format detect_md(struct md_cpu *md, const uint64_t ll_size)
+enum md_format detect_md(struct md_cpu *md, const uint64_t ll_size, int index_format)
 {
 	struct md_cpu md_test;
 	enum md_format have = DRBD_UNKNOWN;
 
 	md_disk_07_to_cpu(&md_test, (struct md_on_disk_07*)on_disk_buffer);
-	if (is_valid_md(DRBD_V07, &md_test, DRBD_MD_INDEX_FLEX_INT, ll_size)) {
+	if (is_valid_md(DRBD_V07, &md_test, index_format, ll_size)) {
 		have = DRBD_V07;
 		*md = md_test;
 	}
 
 	md_disk_08_to_cpu(&md_test, (struct md_on_disk_08*)on_disk_buffer);
-	if (is_valid_md(DRBD_V08, &md_test, DRBD_MD_INDEX_FLEX_INT, ll_size)) {
+	if (is_valid_md(DRBD_V08, &md_test, index_format, ll_size)) {
 		have = DRBD_V08;
 		*md = md_test;
 	}
 
 	md_disk_09_to_cpu(&md_test, (struct meta_data_on_disk_9*)on_disk_buffer);
-	if (is_valid_md(DRBD_V09, &md_test, DRBD_MD_INDEX_FLEX_INT, ll_size)) {
+	if (is_valid_md(DRBD_V09, &md_test, index_format, ll_size)) {
 		have = DRBD_V09;
 		*md = md_test;
 	}
@@ -4339,7 +4413,7 @@ void check_internal_md_flavours(struct format * cfg) {
 
 	if (have == DRBD_UNKNOWN) {
 		PREAD(cfg, on_disk_buffer, 4096, flex_offset);
-		have = detect_md(&md_now, cfg->bd_size);
+		have = detect_md(&md_now, cfg->bd_size, DRBD_MD_INDEX_FLEX_INT);
 	}
 
 	if (have == DRBD_UNKNOWN)
@@ -4448,7 +4522,7 @@ void check_external_md_flavours(struct format * cfg) {
 	}
 
 	PREAD(cfg, on_disk_buffer, 4096, cfg->md_offset);
-	have = detect_md(&md_now, cfg->bd_size);
+	have = detect_md(&md_now, cfg->bd_size, DRBD_MD_INDEX_FLEX_EXT);
 
 	if (have == DRBD_UNKNOWN)
 		return;
@@ -5204,7 +5278,8 @@ int main(int argc, char **argv)
 	if (minor_attached)
 		fprintf(stderr, "# Output might be stale, since minor %d is attached\n", cfg->minor);
 
-	return rv;
+	// dummy bool normalization to not return negative values, the usual "FIXME sane exit codes" still applies */
+	return !!rv;
 	/* and if we want an explicit free,
 	 * this would be the place for it.
 	 * free(cfg->md_device_name), free(cfg) ...

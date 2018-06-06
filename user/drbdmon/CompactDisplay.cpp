@@ -5,9 +5,24 @@
 #include <DrbdMon.h>
 #include <ConfigOption.h>
 
+#include <cstring>
+#include <cctype>
+#include <cstdio>
+#include <cstdarg>
+
+extern "C"
+{
+    #include <pthread.h>
+    #include <errno.h>
+}
+
 const std::string CompactDisplay::OPT_NO_HEADER_KEY("no-header");
 const std::string CompactDisplay::OPT_NO_HOTKEYS_KEY("no-hotkeys");
 const std::string CompactDisplay::OPT_ASCII_KEY("ascii");
+
+const std::string CompactDisplay::HDR_SPACER(" | ");
+const std::string CompactDisplay::NODE_DSP_PREFIX("Node ");
+const std::string CompactDisplay::TRUNC_MARKER("...");
 
 const ConfigOption CompactDisplay::OPT_NO_HEADER(true, OPT_NO_HEADER_KEY);
 const ConfigOption CompactDisplay::OPT_NO_HOTKEYS(true, OPT_NO_HOTKEYS_KEY);
@@ -30,16 +45,27 @@ const char* CompactDisplay::F_VOL_MINOR  = "\x1b[0;4;36m";
 const char* CompactDisplay::F_CONN_NORM  = "\x1b[0;37;44m";
 const char* CompactDisplay::F_PRIMARY    = "\x1b[1;36m";
 const char* CompactDisplay::F_SECONDARY  = "\x1b[0;36m";
+const char* CompactDisplay::QUORUM_ALERT = "\x1b[1;33;41mQUORUM LOST\x1b[0m";
+
+const int CompactDisplay::QUORUM_ALERT_WIDTH = 11;
 
 // Foreground color for the 'Primary' role highlighting
 // of connections (peer resource role)
 const char* CompactDisplay::F_CONN_PRI_FG = "\x1b[1;36;44m";
 
 const char* CompactDisplay::F_RES_NAME   = "\x1b[0;4;32m";
+const char* CompactDisplay::F_RES_COUNT  = "\x1b[0;32mResources: %6llu\x1b[0m";
+const char* CompactDisplay::F_PRB_COUNT  = "\x1b[0;1;31m (%llu degraded)\x1b[0m";
 
 const char* CompactDisplay::F_CURSOR_POS = "\x1b[%u;%uH";
 const char* CompactDisplay::F_HOTKEY     = "\x1b[0;30;47m%c\x1b[0;37;44m %s \033[0m";
 const char* CompactDisplay::F_ALERT_HOTKEY = "\x1b[0;30;47m%c\x1b[1;33;41m %s \033[0m";
+
+const char* CompactDisplay::F_PAGE       = "Page: %5llu\n";
+const int   CompactDisplay::PAGE_POS_R   = 15;
+const char* CompactDisplay::F_GOTO_PAGE  = "\x1b[1;37m[Go to page: %5llu]\x1b[0m";
+const int   CompactDisplay::GOTO_PAGE_POS_R = 37;
+const int   CompactDisplay::GOTO_PAGE_CURSOR_POS = 17;
 
 const char* CompactDisplay::UTF8_PRIMARY   = "\xE2\x9A\xAB";
 const char* CompactDisplay::UTF8_SECONDARY = " "; // otherwise UTF-8 E2 9A AA
@@ -67,13 +93,21 @@ const char* CompactDisplay::ANSI_CURSOR_ON  = "\x1b[?25h";
 
 const char CompactDisplay::HOTKEY_PGUP = '<';
 const char CompactDisplay::HOTKEY_PGDN = '>';
-const char CompactDisplay::HOTKEY_PGZERO = '0';
+const char CompactDisplay::HOTKEY_PGONE = '!';
 
-const std::string CompactDisplay::LABEL_MESSAGES = "Messages";
-const std::string CompactDisplay::LABEL_MONITOR  = "Monitor";
-const std::string CompactDisplay::LABEL_PGUP      = "PgUp";
-const std::string CompactDisplay::LABEL_PGDN      = "PgDn";
-const std::string CompactDisplay::LABEL_PGZERO    = "Pg0";
+const char CompactDisplay::KEY_BACKSPACE = 127;
+const char CompactDisplay::KEY_CTRL_H    = 8;
+const char CompactDisplay::KEY_NEWLINE   = '\n';
+const char CompactDisplay::KEY_ENTER     = '\r';
+const char CompactDisplay::KEY_ESC       = 0x1B;
+
+const std::string CompactDisplay::LABEL_MESSAGES    = "Messages";
+const std::string CompactDisplay::LABEL_MONITOR     = "Monitor";
+const std::string CompactDisplay::LABEL_PROBLEMS    = "Problems";
+const std::string CompactDisplay::LABEL_STATUS      = "Status";
+const std::string CompactDisplay::LABEL_PGUP        = "PgUp";
+const std::string CompactDisplay::LABEL_PGDN        = "PgDn";
+const std::string CompactDisplay::LABEL_PGZERO      = "Pg1";
 
 const uint16_t CompactDisplay::MIN_SIZE_X =   40;
 const uint16_t CompactDisplay::MAX_SIZE_X = 1024;
@@ -89,62 +123,70 @@ const int CompactDisplay::CONN_STATE_WIDTH = 20;
 const int CompactDisplay::DISK_STATE_WIDTH = 20;
 const int CompactDisplay::REPL_STATE_WIDTH = 20;
 
-const uint16_t CompactDisplay::INDENT_STEP_SIZE = 4;
+const uint16_t CompactDisplay::INDENT_STEP_SIZE     = 4;
+const uint16_t CompactDisplay::OUTPUT_BUFFER_SIZE   = 1024;
+
+const uint16_t CompactDisplay::MIN_NODENAME_DSP_LENGTH = 4;
+const uint32_t CompactDisplay::MAX_YIELD_LOOP = 10;
 
 // @throws std::bad_alloc
 CompactDisplay::CompactDisplay(
-    std::ostream& out_ref,
+    DrbdMon& drbdmon_ref,
     ResourcesMap& resources_map_ref,
     MessageLog&   log_ref,
-    HotkeysMap&   hotkeys_info_ref
+    HotkeysMap&   hotkeys_info_ref,
+    const std::string* const node_name_ref
 ):
+    drbdmon(drbdmon_ref),
     resources_map(resources_map_ref),
-    out(out_ref),
     log(log_ref),
-    hotkeys_info(hotkeys_info_ref)
+    hotkeys_info(hotkeys_info_ref),
+    node_name(node_name_ref)
 {
     // Allocate and initialize the indent buffer
-    indent_buffer = new char[INDENT_STEP_SIZE + 1];
+    indent_buffer_mgr = std::unique_ptr<char[]>(new char[INDENT_STEP_SIZE + 1]);
+    indent_buffer = indent_buffer_mgr.get();
     for (size_t index = 0; index < INDENT_STEP_SIZE; ++index)
     {
         indent_buffer[index] = ' ';
     }
     indent_buffer[INDENT_STEP_SIZE] = '\0';
 
-    // Hide the cursor
-    std::fputs(ANSI_CURSOR_OFF, stdout);
-    std::fflush(stdout);
+    output_buffer_mgr = std::unique_ptr<char[]>(new char[OUTPUT_BUFFER_SIZE]);
+    output_buffer = output_buffer_mgr.get();
 
-    hotkeys_info.append(&HOTKEY_PGZERO, &LABEL_PGZERO);
+    // Hide the cursor
+    write_text(ANSI_CURSOR_OFF);
+
+    hotkeys_info.append(&HOTKEY_PGONE, &LABEL_PGZERO);
     hotkeys_info.append(&HOTKEY_PGUP, &LABEL_PGUP);
     hotkeys_info.append(&HOTKEY_PGDN, &LABEL_PGDN);
+
+    node_label = std::unique_ptr<std::string>(new std::string(HDR_SPACER));
+    *node_label += NODE_DSP_PREFIX;
 }
 
 CompactDisplay::~CompactDisplay() noexcept
 {
-    delete[] indent_buffer;
-
     // Show the cursor
-    std::fputs(ANSI_CURSOR_ON, stdout);
-    std::fflush(stdout);
+    write_text(ANSI_CURSOR_ON);
 }
 
 void CompactDisplay::clear()
 {
-    std::fputs(ANSI_CLEAR, stdout);
-    std::fflush(stdout);
+    if (mode == input_mode::PAGE_NR)
+    {
+        // Page navigation may have turned the cursor on
+        write_text(ANSI_CURSOR_OFF);
+    }
+    write_text(ANSI_CLEAR);
 
     current_x = 0;
     current_y = 0;
 }
 
-void CompactDisplay::status_display()
+void CompactDisplay::initial_display()
 {
-    uint32_t current_page = page;
-    page_start = (term_y - 4) * current_page;
-    page_end   = (term_y - 4) * (current_page + 1) - 1;
-
-    prepare_flags();
     clear();
     display_header();
 
@@ -159,39 +201,150 @@ void CompactDisplay::status_display()
             dsp_msg_active = false;
         }
 
-        if (resources_map.get_size() >= 1)
-        {
-            list_resources();
-        }
-        else
-        {
-            std::fprintf(stdout, "%sNo active DRBD resources.%s\n", F_RES_NAME, F_RESET);
-        }
+        write_fmt("%sReading initial DRBD status...%s\n", F_RES_NAME, F_RESET);
     }
 
-    // End line & flush, if not already done
+    // End line
     next_line();
 
     display_hotkeys_info();
-    std::fflush(stdout);
+    if (mode == input_mode::PAGE_NR)
+    {
+        page_nav_cursor();
+    }
+}
+
+void CompactDisplay::status_display()
+{
+    uint32_t current_page = page;
+    page_start = (term_y - 4) * current_page;
+    page_end   = (term_y - 4) * (current_page + 1) - 1;
+
+    problem_check();
+    clear();
+    display_header();
+
+    if (log.has_entries() && dsp_msg_active)
+    {
+        log.display_messages(stdout);
+    }
+    else
+    {
+        if (!log.has_entries())
+        {
+            dsp_msg_active = false;
+        }
+
+        bool resources_listed = list_resources();
+        if (!resources_listed)
+        {
+            if (dsp_problems_active)
+            {
+                write_fmt("%sNo resources with problems to display.%s\n", F_RES_NAME, F_RESET);
+            }
+            else
+            {
+                write_fmt("%sNo active DRBD resources.%s\n", F_RES_NAME, F_RESET);
+            }
+        }
+    }
+
+    // End line
+    next_line();
+
+    display_counts();
+
+    display_hotkeys_info();
+    if (mode == input_mode::PAGE_NR)
+    {
+        page_nav_cursor();
+    }
 }
 
 void CompactDisplay::display_header() const
 {
     if (show_header)
     {
-        std::fprintf(stdout, "%s%s%s v%s\n", F_HEADER, ANSI_CLEAR_LINE,
-                     DrbdMon::PROGRAM_NAME.c_str(), DrbdMon::VERSION.c_str());
-        if (enable_term_size && term_y > MIN_SIZE_Y && term_x > 15)
+        write_fmt("%s%s%s v%s", F_HEADER, ANSI_CLEAR_LINE,
+                  DrbdMon::PROGRAM_NAME.c_str(), DrbdMon::VERSION.c_str());
+
+        if (node_name != nullptr)
         {
-            std::fprintf(stdout, F_CURSOR_POS, 2, static_cast<int> (term_x) - 15);
-            std::fputs(F_RESET, stdout);
-            std::fprintf(stdout, "Page %5lu\n", static_cast<long> (page) + 1);
+            if (enable_term_size)
+            {
+                // "%s v%s" format for PROGRAM_NAME and VERSION
+                uint16_t x_pos = DrbdMon::PROGRAM_NAME.length() + DrbdMon::VERSION.length() + 2;
+                if (term_x >= x_pos)
+                {
+                    uint16_t free_x = term_x - x_pos;
+                    size_t label_length = node_label->length();
+                    if (free_x >= label_length)
+                    {
+                        free_x -= label_length;
+                        size_t name_length = node_name->length();
+                        if (free_x > name_length)
+                        {
+                            // Entire node name fits on the header line
+                            write_text(node_label->c_str());
+                            write_text(node_name->c_str());
+                        }
+                        else
+                        {
+                            if (free_x > MIN_NODENAME_DSP_LENGTH + TRUNC_MARKER.length())
+                            {
+                                free_x -= TRUNC_MARKER.length() + 1;
+                                // Minimum node name length and truncation marker fit on the header line
+                                write_text(node_label->c_str());
+                                size_t write_length = free_x < name_length ? free_x : name_length;
+                                write_buffer(node_name->c_str(), write_length);
+                                write_text(TRUNC_MARKER.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                write_text(node_label->c_str());
+                write_text(node_name->c_str());
+            }
+        }
+        write_char('\n');
+
+        // Print right-aligned page number if the terminal size is known
+        if (enable_term_size)
+        {
+            if (mode == input_mode::PAGE_NR)
+            {
+                page_nav_display();
+            }
+            write_fmt(F_CURSOR_POS, 2, static_cast<int> (term_x) - PAGE_POS_R);
+            write_text(F_RESET);
+            write_fmt(F_PAGE, static_cast<unsigned long long> (page) + 1);
         }
         else
         {
-            std::fputc('\n', stdout);
+            write_char('\n');
         }
+    }
+}
+
+void CompactDisplay::page_nav_display() const
+{
+    if (enable_term_size)
+    {
+        write_fmt(F_CURSOR_POS, 2, static_cast<int> (term_x) - GOTO_PAGE_POS_R);
+        write_text(F_RESET);
+        write_fmt(F_GOTO_PAGE, static_cast<unsigned long long> (goto_page) > 0 ? goto_page : 1);
+    }
+}
+
+void CompactDisplay::page_nav_cursor() const
+{
+    if (enable_term_size)
+    {
+        write_fmt(F_CURSOR_POS, 2, static_cast<int> (term_x) - GOTO_PAGE_POS_R + GOTO_PAGE_CURSOR_POS);
+        write_fmt(ANSI_CURSOR_ON);
     }
 }
 
@@ -201,7 +354,7 @@ void CompactDisplay::display_hotkeys_info() const
     {
         if (enable_term_size)
         {
-            std::fprintf(stdout, F_CURSOR_POS, static_cast<int> (term_y), 1);
+            write_fmt(F_CURSOR_POS, static_cast<int> (term_y), 1);
         }
 
         HotkeysMap::NodesIterator hotkeys_iter(hotkeys_info);
@@ -214,45 +367,64 @@ void CompactDisplay::display_hotkeys_info() const
             const std::string& description = *(node->get_value());
             if (index > 0)
             {
-                std::fputc(' ', stdout);
+                write_char(' ');
             }
-            std::fprintf(stdout, F_HOTKEY, hotkey, description.c_str());
+            write_fmt(F_HOTKEY, hotkey, description.c_str());
             ++index;
         }
+
+        if (index > 0)
+        {
+            write_char(' ');
+        }
+        if (dsp_problems_active)
+        {
+            write_fmt(F_HOTKEY, 'p', LABEL_STATUS.c_str());
+        }
+        else
+        {
+            const char* format = problem_alert ? F_ALERT_HOTKEY : F_HOTKEY;
+            write_fmt(format, 'p', LABEL_PROBLEMS.c_str());
+        }
+
         if (dsp_msg_active)
         {
-            if (index > 0)
-            {
-                std::fputc(' ', stdout);
-            }
-            std::fprintf(stdout, F_HOTKEY, 'm', LABEL_MONITOR.c_str());
+            write_char(' ');
+            write_fmt(F_HOTKEY, 'm', LABEL_MONITOR.c_str());
         }
         else
         if (log.has_entries())
         {
-            if (index > 0)
-            {
-                std::fputc(' ', stdout);
-            }
-            std::fprintf(stdout, F_ALERT_HOTKEY, 'm', LABEL_MESSAGES.c_str());
+            write_char(' ');
+            write_fmt(F_ALERT_HOTKEY, 'm', LABEL_MESSAGES.c_str());
         }
-        std::fprintf(stdout, F_CURSOR_POS, 1, 1);
+        write_fmt(F_CURSOR_POS, 1, 1);
     }
 }
 
-void CompactDisplay::prepare_flags()
+void CompactDisplay::display_counts() const
 {
-    ResourcesMap::ValuesIterator res_iter(resources_map);
-    size_t res_count = res_iter.get_size();
-    for (size_t res_index = 0; res_index < res_count; ++res_index)
+    if (enable_term_size)
     {
-        DrbdResource& res = *(res_iter.next());
-        static_cast<void> (res.update_state_flags());
+        write_fmt(F_CURSOR_POS, static_cast<int> (term_y - 1), 1);
+    }
+    write_fmt(F_RES_COUNT, static_cast<unsigned long long> (resources_map.get_size()));
+
+    if (problem_alert)
+    {
+        write_fmt(F_PRB_COUNT, static_cast<unsigned long long> (drbdmon.get_problem_count()));
     }
 }
 
-void CompactDisplay::list_resources()
+void CompactDisplay::problem_check()
 {
+    problem_alert = drbdmon.get_problem_count() > 0;
+}
+
+bool CompactDisplay::list_resources()
+{
+    bool resources_listed {false};
+
     // Reset columns tracking
     reset_positions();
 
@@ -262,56 +434,77 @@ void CompactDisplay::list_resources()
     {
         DrbdResource& res = *(res_iter.next());
 
-        // Setup view of the "RES:" label
-        const char* f_res = F_RES_NORM;
-        if (res.has_alert_state())
+        bool marked = res.has_mark_state();
+        // If the problem display is active, show only resources that
+        // are marked for having warnings or alerts
+        if (!dsp_problems_active || marked)
         {
-            f_res = F_ALERT;
-        }
-        else
-        if (res.has_warn_state())
-        {
-            f_res = F_WARN;
-        }
+            resources_listed = true;
 
-        // Setup view of the sub-object warning mark
-        const char* f_mark = F_RES_NORM;
-        const char* mark_icon = mark_off;
-        if (res.has_mark_state())
-        {
-            f_mark = F_MARK;
-            mark_icon = mark_on;
-        }
+            // Setup view of the "RES:" label
+            const char* f_res = F_RES_NORM;
+            if (res.has_alert_state())
+            {
+                f_res = F_ALERT;
+            }
+            else
+            if (res.has_warn_state())
+            {
+                f_res = F_WARN;
+            }
 
-        // Setup view of the resource's role
-        const char* f_role = F_SECONDARY;
-        const char* role_icon = sec_icon;
-        if (res.has_role_alert())
-        {
-            f_role = F_ALERT;
-            role_icon = " ";
-        }
-        else
-        if (res.get_role() == DrbdRole::resource_role::PRIMARY)
-        {
-            f_role = F_PRIMARY;
-            role_icon = pri_icon;
-        }
+            // Setup view of the sub-object warning mark
+            const char* f_mark = F_RES_NORM;
+            const char* mark_icon = mark_off;
+            if (res.has_mark_state())
+            {
+                f_mark = F_MARK;
+                mark_icon = mark_on;
+            }
 
-        next_line();
-        // Marker (1) + "RES:" (4) + RES_NAME_WIDTH + " " (1) + role icon (1) + ROLE_WIDTH
-        if (next_column(6 + RES_NAME_WIDTH + ROLE_WIDTH))
-        {
-            std::fprintf(stdout, "%s%s%sRES:%s%-*s%s %s%s%-*s%s",
-                         f_mark, mark_icon, f_res, F_RES_NAME, RES_NAME_WIDTH, res.get_name().c_str(), F_RESET,
-                         f_role, role_icon, ROLE_WIDTH, res.get_role_label(), F_RESET);
-        }
+            // Setup view of the resource's role
+            const char* f_role = F_SECONDARY;
+            const char* role_icon = sec_icon;
+            if (res.has_role_alert())
+            {
+                f_role = F_ALERT;
+                role_icon = " ";
+            }
+            else
+            if (res.get_role() == DrbdRole::resource_role::PRIMARY)
+            {
+                f_role = F_PRIMARY;
+                role_icon = pri_icon;
+            }
 
-        increase_indent();
-        list_volumes(res);
-        list_connections(res);
-        decrease_indent();
+            next_line();
+            // Marker (1) + "RES:" (4) + RES_NAME_WIDTH + " " (1) + role icon (1) + ROLE_WIDTH
+            if (next_column(6 + RES_NAME_WIDTH + ROLE_WIDTH))
+            {
+                write_fmt(
+                    "%s%s%sRES:%s%-*s%s %s%s%-*s%s",
+                    f_mark, mark_icon, f_res, F_RES_NAME, RES_NAME_WIDTH, res.get_name().c_str(), F_RESET,
+                    f_role, role_icon, ROLE_WIDTH, res.get_role_label(), F_RESET
+                );
+            }
+
+            // Show quorum alert warning
+            if (res.has_quorum_alert())
+            {
+                if (next_column(1 + QUORUM_ALERT_WIDTH))
+                {
+                    write_fmt(" %s", QUORUM_ALERT);
+                }
+            }
+
+            increase_indent();
+            list_volumes(res);
+            list_connections(res);
+            decrease_indent();
+        }
     }
+
+    return resources_listed;
 }
 
 void CompactDisplay::list_connections(DrbdResource& res)
@@ -345,8 +538,10 @@ void CompactDisplay::list_connections(DrbdResource& res)
                 // Mark (1) + connection icon (1) + role icon (1) + name length
                 if (next_column(3 + conn_name.length()))
                 {
-                    std::fprintf(stdout, "%s%s%s%s%s%s%s",
-                                 f_conn, mark_off, conn_good, f_role, role_icon, conn_name.c_str(), F_RESET);
+                    write_fmt(
+                        "%s%s%s%s%s%s%s",
+                        f_conn, mark_off, conn_good, f_role, role_icon, conn_name.c_str(), F_RESET
+                    );
                 }
             }
         }
@@ -402,11 +597,13 @@ void CompactDisplay::list_connections(DrbdResource& res)
                 // " " (1) + CONN_STATE_WIDTH + " " (1) + role icon (1) + ROLE_WIDTH
                 if (next_column(6 + CONN_NAME_WIDTH + CONN_STATE_WIDTH + ROLE_WIDTH))
                 {
-                    std::fprintf(stdout, "%s%s%s%s%s%-*s%s %s%-*s%s %s%s%-*s%s",
-                                 F_MARK, mark_on, f_conn, conn_icon, role_icon, CONN_NAME_WIDTH,
-                                 conn.get_name().c_str(), F_RESET, f_conn_state, CONN_STATE_WIDTH,
-                                 conn.get_connection_state_label(), F_RESET, f_role, role_icon,
-                                 ROLE_WIDTH, conn.get_role_label(), F_RESET);
+                    write_fmt(
+                        "%s%s%s%s%s%-*s%s %s%-*s%s %s%s%-*s%s",
+                        F_MARK, mark_on, f_conn, conn_icon, role_icon, CONN_NAME_WIDTH,
+                        conn.get_name().c_str(), F_RESET, f_conn_state, CONN_STATE_WIDTH,
+                        conn.get_connection_state_label(), F_RESET, f_role, role_icon,
+                        ROLE_WIDTH, conn.get_role_label(), F_RESET
+                    );
                 }
 
                 increase_indent();
@@ -500,6 +697,8 @@ void CompactDisplay::show_volume(DrbdVolume& vol, bool peer_volume, bool long_fo
             }
         }
 
+        bool quorum_alert = vol.has_quorum_alert();
+
         next_line();
 
         // Disk icon (1) + VOL_NR_WIDTH + " " (1) + DISK_STATE_WIDTH
@@ -519,12 +718,17 @@ void CompactDisplay::show_volume(DrbdVolume& vol, bool peer_volume, bool long_fo
             vol_entry_width += 1 + REPL_STATE_WIDTH;
         }
 
+        if (quorum_alert && debug_view)
+        {
+            vol_entry_width += 1 + QUORUM_ALERT_WIDTH;
+        }
+
         bool show = next_column(vol_entry_width);
 
         if (show)
         {
-            std::fprintf(
-                stdout, "%s%s%*ld",
+            write_fmt(
+                "%s%s%*ld",
                 F_ALERT, disk_bad, VOL_NR_WIDTH, static_cast<long> (vol.get_volume_nr())
             );
         }
@@ -533,20 +737,30 @@ void CompactDisplay::show_volume(DrbdVolume& vol, bool peer_volume, bool long_fo
         if (!peer_volume && show)
         {
             // Display minor number
-            std::fprintf(stdout, ":%s%*ld", F_VOL_MINOR, MINOR_NR_WIDTH, static_cast<long> (vol.get_minor_nr()));
+            write_fmt(":%s%*ld", F_VOL_MINOR, MINOR_NR_WIDTH, static_cast<long> (vol.get_minor_nr()));
         }
 
         // Display disk state
         if (show)
         {
-            std::fprintf(stdout, " %s %-*s%s", f_disk, DISK_STATE_WIDTH, vol.get_disk_state_label(), F_RESET);
+            write_fmt(" %s %-*s%s", f_disk, DISK_STATE_WIDTH, vol.get_disk_state_label(), F_RESET);
         }
 
-        if (show_replication && show)
+        if (show)
         {
-            // Display replication state
-            std::fprintf(stdout, " %s%-*s%s", f_repl, REPL_STATE_WIDTH,
-                         vol.get_replication_state_label(), F_RESET);
+            if (show_replication)
+            {
+                // Display replication state
+                write_fmt(
+                    " %s%-*s%s", f_repl, REPL_STATE_WIDTH,
+                    vol.get_replication_state_label(), F_RESET
+                );
+            }
+
+            if (quorum_alert && debug_view)
+            {
+                write_fmt(" %s", QUORUM_ALERT);
+            }
         }
     }
     else
@@ -561,11 +775,12 @@ void CompactDisplay::show_volume(DrbdVolume& vol, bool peer_volume, bool long_fo
         // Disk icon (1) + VOL_NR_WIDTH + ":" (1) + MINOR_NR_WIDTH
         if (next_column(2 + VOL_NR_WIDTH + MINOR_NR_WIDTH))
         {
-            std::fprintf(stdout, "%s%s%s%s%*ld:%s%*ld%s",
-                         F_NORM, disk_good, F_RESET,
-                         f_vol, VOL_NR_WIDTH, static_cast<long> (vol.get_volume_nr()),
-                         F_VOL_MINOR, MINOR_NR_WIDTH, static_cast<long> (vol.get_minor_nr()),
-                         F_RESET);
+            write_fmt(
+                "%s%s%s%s%*ld:%s%*ld%s",
+                F_NORM, disk_good, F_RESET,
+                f_vol, VOL_NR_WIDTH, static_cast<long> (vol.get_volume_nr()),
+                F_VOL_MINOR, MINOR_NR_WIDTH, static_cast<long> (vol.get_minor_nr()), F_RESET
+            );
         }
     }
 }
@@ -637,7 +852,7 @@ void CompactDisplay::indent()
     {
         for (uint16_t counter = 0; counter < indent_level; ++counter)
         {
-            std::fputs(indent_buffer, stdout);
+            write_text(indent_buffer);
         }
     }
     current_x += INDENT_STEP_SIZE * indent_level;
@@ -666,7 +881,7 @@ bool CompactDisplay::next_column(uint16_t length)
             {
                 if (display_flag)
                 {
-                    std::fputc(' ', stdout);
+                    write_char(' ');
                 }
                 current_x = end_x;
             }
@@ -691,7 +906,7 @@ bool CompactDisplay::next_column(uint16_t length)
         {
             // No terminal size restrictions,
             // allow an infinite number of columns
-            std::fputc(' ', stdout);
+            write_char(' ');
         }
     }
     return display_flag;
@@ -704,7 +919,7 @@ void CompactDisplay::next_line()
         if (!(enable_term_size && term_y > MIN_SIZE_Y) ||
             (current_y >= page_start && current_y <= page_end))
         {
-            std::fputc('\n', stdout);
+            write_char('\n');
         }
         current_x = 0;
         ++current_y;
@@ -749,11 +964,12 @@ void CompactDisplay::announce_options(Configurator& collector)
 
 void CompactDisplay::options_help() noexcept
 {
-    std::cerr << "DrbdMon display configuration options:" << std::endl;
-    std::cerr << "  --ascii          Use only ASCII characters (no Unicode)" << std::endl;
-    std::cerr << "  --no-header      Do not display the DrbdMon header line" << std::endl;
-    std::cerr << "  --no-hotkeys     Do not display the hotkeys line" << std::endl;
-    std::cerr << std::endl;
+    std::fputs("DrbdMon display configuration options:\n", stderr);
+    std::fputs("  --ascii          Use only ASCII characters (no Unicode)\n", stderr);
+    std::fputs("  --no-header      Do not display the DrbdMon header line\n", stderr);
+    std::fputs("  --no-hotkeys     Do not display the hotkeys line\n", stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
 }
 
 // @throws std::bad_alloc
@@ -786,12 +1002,17 @@ void CompactDisplay::key_pressed(const char key)
 {
     switch (key)
     {
-        case '>':
+        case HOTKEY_PGDN:
             ++page;
             status_display();
             break;
-        case '<':
+        case HOTKEY_PGUP:
             --page;
+            status_display();
+            break;
+        case '%':
+            // Toggle debug view
+            debug_view = !debug_view;
             status_display();
             break;
         case 'm':
@@ -806,12 +1027,183 @@ void CompactDisplay::key_pressed(const char key)
             }
             status_display();
             break;
-        case '0':
+        case 'p':
+            if (dsp_problems_active)
+            {
+                dsp_problems_active = false;
+            }
+            else
+            {
+                dsp_problems_active = true;
+            }
+            // fall-through
+        case HOTKEY_PGONE:
             page = 0;
             status_display();
             break;
         default:
-            // no-op
+            if (isdigit(key) != 0)
+            {
+                uint32_t digit = static_cast<unsigned char> (key) - static_cast<unsigned char> ('0');
+                if (mode == input_mode::HOTKEYS && enable_term_size)
+                {
+                    goto_page = digit;
+                    mode = input_mode::PAGE_NR;
+                    page_nav_display();
+                    page_nav_cursor();
+                }
+                else
+                if (mode == input_mode::PAGE_NR)
+                {
+                    uint32_t new_goto_page = (goto_page * 10) + digit;
+                    if (new_goto_page <= static_cast<uint32_t> (1) << 16)
+                    {
+                        goto_page = new_goto_page;
+                        page_nav_display();
+                        page_nav_cursor();
+                    }
+                }
+            }
+            else
+            if (mode == input_mode::PAGE_NR)
+            {
+                if (key == KEY_BACKSPACE || key == KEY_CTRL_H)
+                {
+                    goto_page = goto_page / 10;
+                    page_nav_display();
+                    page_nav_cursor();
+                }
+                else
+                if (key == KEY_NEWLINE || key == KEY_ENTER)
+                {
+                    if (goto_page > 0)
+                    {
+                        --goto_page;
+                    }
+                    if (goto_page < static_cast<uint32_t> (1) << 16)
+                    {
+                        page = goto_page;
+                        goto_page = 0;
+                    }
+                    mode = input_mode::HOTKEYS;
+                    write_text(ANSI_CURSOR_OFF);
+                    status_display();
+                }
+                else
+                if (key == KEY_ESC)
+                {
+                    goto_page = 0;
+                    mode = input_mode::HOTKEYS;
+                    write_text(ANSI_CURSOR_OFF);
+                    status_display();
+                }
+            }
             break;
+    }
+}
+
+/**
+ * Writes a single character to the output_fd file descriptor
+ *
+ * @param ch The character to write
+ */
+void CompactDisplay::write_char(const char ch) const noexcept
+{
+    // Repeat temporarily failing write() calls until the byte has been written
+    uint32_t loop_guard {0};
+    while (write(output_fd, static_cast<const void*> (&ch), 1) != 1)
+    {
+        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        {
+            break;
+        }
+
+        if (loop_guard < MAX_YIELD_LOOP)
+        {
+            // Attempt to yield to other processes before retrying
+            static_cast<void> (sched_yield());
+            ++loop_guard;
+        }
+        else
+        {
+            // If yielding to other processes did not lead to any progress,
+            // suspend for a while
+            static_cast<void> (nanosleep(&write_retry_delay, nullptr));
+        }
+    }
+}
+
+/**
+ * Writes a text string to the output_fd file descriptor
+ *
+ * @param text The text string to write
+ */
+void CompactDisplay::write_text(const char* text) const noexcept
+{
+    size_t length = std::strlen(text);
+    write_buffer(text, length);
+}
+
+/**
+ * Formats a text string and writes the result to the output_fd file descriptor
+ *
+ * @param format Format string
+ * @param ... Arguments for the format string
+ */
+void CompactDisplay::write_fmt(const char* format, ...) const noexcept
+{
+    va_list vars;
+    va_start(vars, format);
+    size_t safe_length = 0;
+    {
+        size_t unsafe_length = vsnprintf(output_buffer, OUTPUT_BUFFER_SIZE, format, vars);
+        safe_length = unsafe_length < OUTPUT_BUFFER_SIZE ? unsafe_length : OUTPUT_BUFFER_SIZE;
+    }
+    va_end(vars);
+    write_buffer(output_buffer, safe_length);
+}
+
+/**
+ * Writes buffered data to the output_fd file descriptor
+ *
+ * Write attempts that fail temporarily or are only partially successful are retried until the
+ * all the buffered data has been written.
+ *
+ * @param buffer The buffered data to write
+ * @param length Length of the buffered data in the (possibly larger) buffer
+ */
+void CompactDisplay::write_buffer(const char* buffer, size_t length) const noexcept
+{
+    uint32_t loop_guard {0};
+    ssize_t written {0};
+    while (length > 0)
+    {
+        // Repeat temporarily failing write() calls until the entire contents of the buffer have been written
+        written = write(output_fd, static_cast<const void*> (buffer), length);
+        if (written > 0)
+        {
+            length -= written;
+        }
+        else
+        if (written == -1 && (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+        {
+            break;
+        }
+
+        if (written <= 0)
+        {
+            if (loop_guard < MAX_YIELD_LOOP)
+            {
+                // Attempt to yield to other processes before retrying
+                static_cast<void> (sched_yield());
+                ++loop_guard;
+            }
+            else
+            {
+                // If yielding to other processes did not lead to any progress,
+                // suspend for a while
+                static_cast<void> (nanosleep(&write_retry_delay, nullptr));
+            }
+        }
     }
 }

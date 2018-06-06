@@ -98,7 +98,7 @@ This is a virtual package, installing the full DRBD userland suite.
 %defattr(-,root,root,-)
 %doc COPYING
 %doc ChangeLog
-%doc README
+%doc README.md
 
 %package utils
 Summary: Management utilities for DRBD
@@ -163,11 +163,6 @@ This packages includes the DRBD administration tools.
 %if %{with drbdmon}
 %{_sbindir}/drbdmon
 %endif
-%if %{initscripttype} == "systemd"
-%{_unitdir}/drbd.service
-%{_tmpfilesdir}/drbd.conf
-/lib/drbd/drbd
-%endif
 %if %{initscripttype} == "sysv"
 %{_initddir}/drbd
 %endif
@@ -189,11 +184,15 @@ This packages includes the DRBD administration tools.
 %ghost %dir %{_var}/run/drbd
 
 %defattr(-,root,root,-)
+%if %{initscripttype} == "systemd"
+%{_unitdir}/drbd.service
+%{_tmpfilesdir}/drbd.conf
+/lib/drbd/drbd
+%endif
 %config(noreplace) %{_sysconfdir}/drbd.conf
 %dir %{_sysconfdir}/drbd.d
 %config(noreplace) %{_sysconfdir}/drbd.d/global_common.conf
-%if %{without manual}
-%else
+%if %{with manual}
 %{_mandir}/man8/drbd-*
 %{_mandir}/man8/drbdsetup-*
 %{_mandir}/man8/drbdadm-*
@@ -206,7 +205,7 @@ This packages includes the DRBD administration tools.
 %doc scripts/drbd.conf.example
 %doc COPYING
 %doc ChangeLog
-%doc README
+%doc README.md
 
 %ifarch %{ix86} x86_64
 %if %{with xen}
@@ -259,9 +258,12 @@ Pacemaker High Availability cluster manager.
 %files pacemaker
 %defattr(755,root,root,-)
 %{_prefix}/lib/drbd/crm-fence-peer.sh
+%{_prefix}/lib/drbd/crm-fence-peer.9.sh
 %{_prefix}/lib/drbd/crm-unfence-peer.sh
+%{_prefix}/lib/drbd/crm-unfence-peer.9.sh
 %{_prefix}/lib/drbd/stonith_admin-fence-peer.sh
 %{_prefix}/lib/ocf/resource.d/linbit/drbd
+%{_prefix}/lib/ocf/resource.d/linbit/drbd.shellfuncs.sh
 %endif # with pacemaker
 
 # Dependencies for drbd-rgmanager are particularly awful. On RHEL 5
@@ -308,6 +310,7 @@ in the Cluster distribution.
 %{_datadir}/cluster/drbd.metadata
 %endif # with rgmanager
 
+%if %{with 84support}%{with 83support}
 %if %{with heartbeat}
 %package heartbeat
 Summary: Heartbeat resource agent for DRBD
@@ -327,11 +330,11 @@ resource manager (in v1 compatibility mode).
 %{_sysconfdir}/ha.d/resource.d/drbdupper
 
 %defattr(-,root,root,-)
-%if %{without manual}
-%else
+%if %{with manual}
 %{_mandir}/man8/drbddisk-*
 %endif
 %endif # with heartbeat
+%endif # 83 || 84 support
 
 %if %{with bashcompletion}
 %package bash-completion
@@ -350,6 +353,47 @@ management utility.
 %config %{_sysconfdir}/bash_completion.d/drbdadm*
 %endif # with bashcompletion
 
+%if %{with manual}
+%package man-ja
+Summary: Japanese man pages for DRBD
+Group: System Environment/Base
+@RPM_SUBPACKAGE_NOARCH@
+
+%description man-ja
+This package contains Japanese man pages for DRBD.
+
+%files man-ja
+%defattr(-,root,root,-)
+%{_mandir}/ja/man8/drbd-*
+%{_mandir}/ja/man8/drbdsetup-*
+%{_mandir}/ja/man8/drbdadm-*
+%{_mandir}/ja/man5/drbd.conf-*
+%{_mandir}/ja/man8/drbdmeta-*
+%if %{with heartbeat}
+%if %{with 84support}
+%{_mandir}/ja/man8/drbddisk-*
+%endif
+%endif # with heartbeat
+%if %{with drbdmon}
+%{_mandir}/ja/man8/drbdmon-*
+%endif
+
+%post man-ja
+for f in drbd drbdadm drbdmeta drbdsetup; do
+    ln -sf $f-8.4.8.gz %{_mandir}/ja/man8/$f.8.gz
+done
+ln -sf drbd.conf-8.4.5.gz %{_mandir}/ja/man5/drbd.conf.5.gz
+%if %{with drbdmon}
+ln -sf drbdmon-9.0.8.gz %{_mandir}/ja/man8/drbdmon.8.gz
+%endif
+
+%preun man-ja
+for f in drbd drbdadm drbdmeta drbdsetup; do
+    rm -f %{_mandir}/ja/man8/$f.8.gz
+done
+rm -f %{_mandir}/ja/man5/drbd.conf.5.gz
+rm -f %{_mandir}/ja/man8/drbdmon.8.gz
+%endif # with manual
 
 %prep
 %setup -q -n drbd-utils-%{version}
@@ -402,8 +446,7 @@ rm -rf %{buildroot}
 %if %{initscripttype} == "sysv"
 chkconfig --add drbd
 %endif
-%if %{without manual}
-%else
+%if %{with manual}
 for f in drbd drbdadm drbdmeta drbdsetup; do
     ln -sf $f-8.4.8.gz %{_mandir}/man8/$f.8.gz
 done
@@ -441,6 +484,31 @@ fi
 
 
 %changelog
+* Tue May 08 2018 Roland Kammerer <roland.kammerer@linbit.com> - 9.4.0-1
+- New upstream release.
+
+* Tue Apr 17 2018 Roland Kammerer <roland.kammerer@linbit.com> - 9.3.1-1
+- New upstream release.
+
+* Wed Mar 21 2018 Roland Kammerer <roland.kammerer@linbit.com> - 9.3.0-1
+- New upstream release.
+
+* Fri Dec 22 2017 Roland Kammerer <roland.kammerer@linbit.com> - 9.2.0-1
+- New upstream release.
+
+* Tue Aug 29 2017 Roland Kammerer <roland.kammerer@linbit.com> - 9.1.0-1
+- New upstream release.
+
+* Fri Jun 02 2017 Lars Ellenberg <lars@linbit.com> - 9.0.0-1
+- New upstream release.
+
+* Fri Apr 28 2017 Lars Ellenberg <lars@linbit.com> - 8.9.11-2
+- fix for regression of drbd-8.4 pacemaker integration
+- fix 8.4 compatibility of shipped global_common.conf
+
+* Fri Mar 31 2017 Philipp Reisner <phil@linbit.com> - 8.9.11-1
+- New upstream release.
+
 * Fri Dec 23 2016 Philipp Reisner <phil@linbit.com> - 8.9.10-1
 - New upstream release.
 

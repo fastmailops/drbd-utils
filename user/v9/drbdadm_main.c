@@ -49,6 +49,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <time.h>
+#include "linux/drbd.h"
 #include "linux/drbd_limits.h"
 #include "drbdtool_common.h"
 #include "drbdadm.h"
@@ -125,6 +126,9 @@ static int adm_invalidate(const struct cfg_ctx *);
 static int __adm_drbdsetup_silent(const struct cfg_ctx *ctx);
 static int adm_forget_peer(const struct cfg_ctx *);
 static int adm_peer_device(const struct cfg_ctx *);
+static int do_proxy_conn_up(const struct cfg_ctx *ctx);
+static int do_proxy_conn_down(const struct cfg_ctx *ctx);
+static int do_proxy_conn_plugins(const struct cfg_ctx *ctx);
 
 int ctx_by_name(struct cfg_ctx *ctx, const char *id, checks check);
 int was_file_already_seen(char *fn);
@@ -156,8 +160,10 @@ int adjust_with_progress = 0;
 bool help;
 int do_verify_ips = 0;
 int do_register = 1;
-/* whether drbdadm was called with "all" instead of resource name(s) */
-int all_resources = 0;
+/* if we want to adjust more than one resource,
+ * instead of iteratively calling "drbdsetup show" for each of them,
+ * call "drbdsetup show" once for all of them. */
+int adjust_more_than_one_resource = 0;
 char *drbdsetup = NULL;
 char *drbdmeta = NULL;
 char *drbdadm_83 = NULL;
@@ -352,7 +358,7 @@ static struct adm_cmd dump_xml_cmd = {"dump-xml", adm_dump_xml, ACF1_DUMP};
 static struct adm_cmd create_md_cmd = {"create-md", adm_create_md, &create_md_ctx, ACF1_MINOR_ONLY };
 static struct adm_cmd show_gi_cmd = {"show-gi", adm_setup_and_meta, ACF1_PEER_DEVICE .disk_required = 1};
 static struct adm_cmd get_gi_cmd = {"get-gi", adm_setup_and_meta, ACF1_PEER_DEVICE .disk_required = 1};
-static struct adm_cmd dump_md_cmd = {"dump-md", adm_drbdmeta, ACF1_MINOR_ONLY };
+static struct adm_cmd dump_md_cmd = {"dump-md", adm_drbdmeta, &dump_md_ctx, ACF1_MINOR_ONLY };
 static struct adm_cmd wipe_md_cmd = {"wipe-md", adm_drbdmeta, ACF1_MINOR_ONLY };
 static struct adm_cmd apply_al_cmd = {"apply-al", adm_drbdmeta, ACF1_MINOR_ONLY };
 static struct adm_cmd forget_peer_cmd = {"forget-peer", adm_forget_peer, ACF1_DISCONNECT };
@@ -391,6 +397,7 @@ static struct adm_cmd khelper09_cmd = {"initial-split-brain", adm_khelper, ACF3_
 static struct adm_cmd khelper10_cmd = {"split-brain", adm_khelper, ACF3_RES_HANDLER};
 static struct adm_cmd khelper11_cmd = {"out-of-sync", adm_khelper, ACF3_RES_HANDLER};
 static struct adm_cmd khelper12_cmd = {"unfence-peer", adm_khelper, ACF3_RES_HANDLER};
+static struct adm_cmd khelper13_cmd = {"quorum-lost", adm_khelper, ACF3_RES_HANDLER};
 
 
 static struct adm_cmd suspend_io_cmd = {"suspend-io", adm_drbdsetup, ACF4_ADVANCED  .backend_res_name = 0 };
@@ -485,6 +492,7 @@ struct adm_cmd *cmds[] = {
 	&khelper10_cmd,
 	&khelper11_cmd,
 	&khelper12_cmd,
+	&khelper13_cmd,
 
 	&suspend_io_cmd,
 	&resume_io_cmd,
@@ -518,9 +526,9 @@ struct adm_cmd *cmds[] = {
 	&peer_device_options_ctx,
 	ACF1_CONNECT
 };
-/*  */ struct adm_cmd proxy_conn_down_cmd = { "", do_proxy_conn_down, ACF1_DEFAULT};
-/*  */ struct adm_cmd proxy_conn_up_cmd = { "", do_proxy_conn_up, ACF1_DEFAULT};
-/*  */ struct adm_cmd proxy_conn_plugins_cmd = { "", do_proxy_conn_plugins, ACF1_DEFAULT};
+/*  */ struct adm_cmd proxy_conn_down_cmd = { "", do_proxy_conn_down, ACF2_PROXY };
+/*  */ struct adm_cmd proxy_conn_up_cmd = { "", do_proxy_conn_up, ACF2_PROXY };
+/*  */ struct adm_cmd proxy_conn_plugins_cmd = { "", do_proxy_conn_plugins, ACF2_PROXY };
 
 static const struct adm_cmd invalidate_setup_cmd = {
 	"invalidate",
@@ -554,7 +562,7 @@ void schedule_deferred_cmd(struct adm_cmd *cmd,
 			if (d->ctx.cmd == cmd &&
 			    d->ctx.res == ctx->res &&
 			    d->ctx.conn == ctx->conn &&
-			    d->ctx.vol == ctx->vol)
+			    d->ctx.vol->vnr == ctx->vol->vnr)
 				return;
 		}
 	}
@@ -840,18 +848,31 @@ static int sh_udev(const struct cfg_ctx *ctx)
 	else
 		printf("DEVICE=drbd%u\n", vol->device_minor);
 
+	/* in case older udev rules are still in place,
+	 * but do not yet have the work-around for the
+	 * udev default change of "string_escape=none" -> "replace",
+	 * populate plain "SYMLINK" with just the "by-res" one. */
 	printf("SYMLINK=");
-	if (vol->implicit)
-		printf("drbd/by-res/%s", res->name);
+	if (vol->implicit && !global_options.udev_always_symlink_vnr)
+		printf("drbd/by-res/%s\n", res->name);
 	else
-		printf("drbd/by-res/%s/%u", res->name, vol->vnr);
+		printf("drbd/by-res/%s/%u\n", res->name, vol->vnr);
+
+	/* repeat, with _BY_RES */
+	printf("SYMLINK_BY_RES=");
+	if (vol->implicit && !global_options.udev_always_symlink_vnr)
+		printf("drbd/by-res/%s\n", res->name);
+	else
+		printf("drbd/by-res/%s/%u\n", res->name, vol->vnr);
+
+	/* and add the _BY_DISK one explicitly */
 	if (vol->disk) {
+		printf("SYMLINK_BY_DISK=");
 		if (!strncmp(vol->disk, "/dev/", 5))
-			printf(" drbd/by-disk/%s", vol->disk + 5);
+			printf("drbd/by-disk/%s\n", vol->disk + 5);
 		else
-			printf(" drbd/by-disk/%s", vol->disk);
+			printf("drbd/by-disk/%s\n", vol->disk);
 	}
-	printf("\n");
 
 	return 0;
 }
@@ -1170,6 +1191,8 @@ int adm_new_minor(const struct cfg_ctx *ctx)
 	argv[NA(argc)] = ssprintf("%s", ctx->res->name);
 	argv[NA(argc)] = ssprintf("%u", ctx->vol->device_minor);
 	argv[NA(argc)] = ssprintf("%u", ctx->vol->vnr);
+	if (!ctx->vol->disk)
+		argv[NA(argc)] = ssprintf("--diskless");
 	argv[NA(argc)] = NULL;
 
 	ex = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
@@ -1238,7 +1261,7 @@ int adm_resize(const struct cfg_ctx *ctx)
 	int ex;
 
 	argv[NA(argc)] = drbdsetup;
-	argv[NA(argc)] = "resize";
+	argv[NA(argc)] = "resize"; /* first execute resize, even if called from check-resize context */
 	argv[NA(argc)] = ssprintf("%d", ctx->vol->device_minor);
 	opt = find_opt(&ctx->vol->disk_options, "size");
 	if (!opt)
@@ -1256,9 +1279,9 @@ int adm_resize(const struct cfg_ctx *ctx)
 	if (is_resize && !dry_run)
 		old_size = read_drbd_dev_size(ctx->vol->device_minor);
 
-	/* if this is not "resize", but "check-resize", be silent! */
-	silent = !strcmp(ctx->cmd->name, "check-resize") ? SUPRESS_STDERR : 0;
-	ex = m_system_ex(argv, SLEEPS_SHORT | silent, ctx->res->name);
+	/* if this is a "resize" triggered by "check-resize", be silent! */
+	silent = is_resize ? 0 : SUPRESS_STDERR;
+	ex = m_system_ex(argv, SLEEPS_LONG | silent, ctx->res->name);
 
 	if (ex && target_size) {
 		new_size = read_drbd_dev_size(ctx->vol->device_minor);
@@ -1546,6 +1569,29 @@ static int adm_forget_peer(const struct cfg_ctx *ctx)
 	return rv;
 }
 
+static void setenv_node_id_and_uname(struct d_resource *res)
+{
+	char key[sizeof("DRBD_NODE_ID_32")];
+	int i;
+	struct d_host_info *host;
+
+	for (i = 0; i < DRBD_NODE_ID_MAX; i++) {
+		snprintf(key, sizeof(key), "DRBD_NODE_ID_%u", i);
+		unsetenv(key);
+	}
+	for_each_host(host, &res->all_hosts) {
+		if (!host->node_id)
+			continue;
+		/* range check in post parse has already clamped this */
+		snprintf(key, sizeof(key), "DRBD_NODE_ID_%s", host->node_id);
+		setenv(key, names_to_str(&host->on_hosts), 1);
+	}
+
+	/* Maybe we will pass it in from kernel some day */
+	if (!getenv("DRBD_MY_NODE_ID"))
+		setenv("DRBD_MY_NODE_ID", res->me->node_id, 1);
+}
+
 static int adm_khelper(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res = ctx->res;
@@ -1558,6 +1604,7 @@ static int adm_khelper(const struct cfg_ctx *ctx)
 
 	setenv("DRBD_CONF", config_save, 1);
 	setenv("DRBD_RESOURCE", res->name, 1);
+	setenv_node_id_and_uname(res);
 
 	if (vol) {
 		snprintf(minor_string, sizeof(minor_string), "%u", vol->device_minor);
@@ -1637,7 +1684,7 @@ int adm_peer_device(const struct cfg_ctx *ctx)
 	char *argv[MAX_ARGS];
 	int argc = 0;
 
-	peer_device = find_peer_device(res->me, conn, vol->vnr);
+	peer_device = find_peer_device(conn, vol->vnr);
 	if (!peer_device) {
 		err("Could not find peer_device object!\n");
 		exit(E_THINKO);
@@ -1755,104 +1802,87 @@ char *_proxy_connection_name(char *conn_name, const struct d_resource *res, cons
 	return conn_name;
 }
 
-int do_proxy_conn_up(const struct cfg_ctx *ctx)
+static int do_proxy_conn_up(const struct cfg_ctx *ctx)
 {
 	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL };
-	struct connection *conn;
+	struct connection *conn = ctx->conn;
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	char *conn_name;
-	int rv;
 
-	rv = 0;
+	if (!path->my_proxy || !path->peer_proxy)
+		return 0;
 
-	for_each_connection(conn, &ctx->res->connections) {
-		struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
-		conn_name = proxy_connection_name(ctx->res, conn);
+	conn_name = proxy_connection_name(ctx->res, conn);
 
-		argv[2] = ssprintf(
-				"add connection %s %s:%s %s:%s %s:%s %s:%s",
-				conn_name,
-				path->my_proxy->inside.addr,
-				path->my_proxy->inside.port,
-				path->peer_proxy->outside.addr,
-				path->peer_proxy->outside.port,
-				path->my_proxy->outside.addr,
-				path->my_proxy->outside.port,
-				path->my_address->addr,
-				path->my_address->port);
+	argv[2] = ssprintf(
+		"add connection %s %s:%s %s:%s %s:%s %s:%s",
+		conn_name,
+		path->my_proxy->inside.addr,
+		path->my_proxy->inside.port,
+		path->peer_proxy->outside.addr,
+		path->peer_proxy->outside.port,
+		path->my_proxy->outside.addr,
+		path->my_proxy->outside.port,
+		path->my_address->addr,
+		path->my_address->port);
 
-		rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
-		if (rv)
-			break;
-	}
-	return rv;
+	return m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
 }
 
-int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
+static int do_proxy_conn_plugins(const struct cfg_ctx *ctx)
 {
-	struct connection *conn;
+	struct connection *conn = ctx->conn;
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	char *argv[MAX_ARGS];
 	char *conn_name;
 	int argc = 0;
 	struct d_option *opt;
-	int counter;
-	int rv;
+	int counter = 0;
 
-	rv = 0;
+	if (!path->my_proxy || !path->peer_proxy)
+		return 0;
 
-	for_each_connection(conn, &ctx->res->connections) {
-		struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
-		conn_name = proxy_connection_name(ctx->res, conn);
+	conn_name = proxy_connection_name(ctx->res, conn);
 
-		argc = 0;
-		argv[NA(argc)] = drbd_proxy_ctl;
-		STAILQ_FOREACH(opt, &path->my_proxy->options, link) {
-			argv[NA(argc)] = "-c";
-			argv[NA(argc)] = ssprintf("set %s %s %s",
-					opt->name, conn_name, opt->value);
-		}
-
-		counter = 0;
-		/* Don't send the "set plugin ... END" line if no plugins are defined
-		 * - that's incompatible with the drbd proxy version 1. */
-		if (!STAILQ_EMPTY(&path->my_proxy->plugins)) {
-			STAILQ_FOREACH(opt, &path->my_proxy->plugins, link) {
-				argv[NA(argc)] = "-c";
-				argv[NA(argc)] = ssprintf("set plugin %s %d %s",
-						conn_name, counter, opt->name);
-				counter++;
-			}
-			argv[NA(argc)] = ssprintf("set plugin %s %d END", conn_name, counter);
-		}
-
-		argv[NA(argc)] = 0;
-		if (argc > 2)
-			rv = m_system_ex(argv, SLEEPS_SHORT, ctx->res->name);
-		if (rv)
-			break;
+	argc = 0;
+	argv[NA(argc)] = drbd_proxy_ctl;
+	STAILQ_FOREACH(opt, &path->my_proxy->options, link) {
+		argv[NA(argc)] = "-c";
+		argv[NA(argc)] = ssprintf("set %s %s %s",
+					  opt->name, conn_name, opt->value);
 	}
 
-	return rv;
+	/* Don't send the "set plugin ... END" line if no plugins are defined
+	 * - that's incompatible with the drbd proxy version 1. */
+	if (!STAILQ_EMPTY(&path->my_proxy->plugins)) {
+		STAILQ_FOREACH(opt, &path->my_proxy->plugins, link) {
+			argv[NA(argc)] = "-c";
+			argv[NA(argc)] = ssprintf("set plugin %s %d %s",
+						  conn_name, counter, opt->name);
+			counter++;
+		}
+		argv[NA(argc)] = ssprintf("set plugin %s %d END", conn_name, counter);
+	}
+
+	argv[NA(argc)] = 0;
+	return argc > 2 ? m_system_ex(argv, SLEEPS_SHORT, ctx->res->name) : 0;
 }
 
-int do_proxy_conn_down(const struct cfg_ctx *ctx)
+static int do_proxy_conn_down(const struct cfg_ctx *ctx)
 {
 	struct d_resource *res = ctx->res;
-	struct connection *conn;
+	struct connection *conn = ctx->conn;
+	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	char *conn_name;
 	char *argv[4] = { drbd_proxy_ctl, "-c", NULL, NULL};
-	int rv;
 
+	if (!path->my_proxy || !path->peer_proxy)
+		return 0;
 
-	rv = 0;
-	for_each_connection(conn, &res->connections) {
-		conn_name = proxy_connection_name(ctx->res, conn);
-		argv[2] = ssprintf("del connection %s", conn_name);
+	conn_name = proxy_connection_name(ctx->res, conn);
+	argv[2] = ssprintf("del connection %s", conn_name);
 
-		rv = m_system_ex(argv, SLEEPS_SHORT, res->name);
-		if (rv)
-			break;
-	}
-	return rv;
+	return m_system_ex(argv, SLEEPS_SHORT, res->name);
 }
 
 static int check_proxy(const struct cfg_ctx *ctx, int do_up)
@@ -1861,32 +1891,40 @@ static int check_proxy(const struct cfg_ctx *ctx, int do_up)
 	struct path *path = STAILQ_FIRST(&conn->paths); /* multiple paths via proxy, later! */
 	int rv;
 
-	if (!path->my_proxy) {
-		if (all_resources)
-			return 0;
-		err("%s:%d: In resource '%s',no proxy config for connection %sfrom '%s' to '%s'%s.\n",
-		    ctx->res->config_file, conn->config_line, ctx->res->name,
-		    conn->name ? ssprintf("'%s' (", conn->name) : "",
-		    hostname,
-		    names_to_str(&conn->peer->on_hosts),
-		    conn->name ? ")" : "");
+	if (STAILQ_NEXT(path, link)) {
+		err("Multiple paths in connection within proxy setup not allowed\n");
 		exit(E_CONFIG_INVALID);
+	}
+
+	if (!path->my_proxy) {
+		if (conn->on_cmdline) {
+			err("%s:%d: In resource '%s', no proxy config for connection %sfrom '%s' to '%s'%s.\n",
+			    ctx->res->config_file, conn->config_line, ctx->res->name,
+			    conn->name ? ssprintf("'%s' (", conn->name) : "",
+			    hostname,
+			    names_to_str(&conn->peer->on_hosts),
+			    conn->name ? ")" : "");
+			exit(E_CONFIG_INVALID);
+		}
+		return 0;
 	}
 
 	if (!hostname_in_list(hostname, &path->my_proxy->on_hosts)) {
-		if (all_resources)
-			return 0;
-		err("The proxy config in resource %s is not for %s.\n",
-		    ctx->res->name, hostname);
-		exit(E_CONFIG_INVALID);
+		if (conn->on_cmdline) {
+			err("The proxy config in resource %s is not for %s.\n",
+			    ctx->res->name, hostname);
+			exit(E_CONFIG_INVALID);
+		}
+		return 0;
 	}
 
 	if (!path->peer_proxy) {
-		err("There is no proxy config for the peer in resource %s.\n",
-		    ctx->res->name);
-		if (all_resources)
-			return 0;
-		exit(E_CONFIG_INVALID);
+		if (conn->on_cmdline) {
+			err("There is no proxy config for the peer in resource %s.\n",
+			    ctx->res->name);
+			exit(E_CONFIG_INVALID);
+		}
+		return 0;
 	}
 
 
@@ -1945,7 +1983,7 @@ static int adm_up(const struct cfg_ctx *ctx)
 				continue;
 
 			tmp2_ctx = tmp_ctx;
-			tmp2_ctx.vol = peer_device->volume;
+			tmp2_ctx.vol = volume_by_vnr(&conn->peer->volumes, peer_device->vnr);
 			schedule_deferred_cmd(&peer_device_options_cmd, &tmp2_ctx, CFG_PEER_DEVICE);
 		}
 	}
@@ -2118,10 +2156,14 @@ int ctx_by_name(struct cfg_ctx *ctx, const char *id, checks check)
 					return -ENOENT;
 				}
 
-				if (conn->peer == hi && check == CTX_FIRST)
-					goto found;
+				if (conn->peer == hi) {
+					conn->on_cmdline = 1;
+					if (check == CTX_FIRST)
+						goto found;
+				}
 
 				if (conn->peer && !strcmp(conn->peer->node_id, hi->node_id)) {
+					conn->me = true;
 					if (!set_ignore_flag(conn, check, false))
 						return 1;
 				}
@@ -2134,6 +2176,7 @@ int ctx_by_name(struct cfg_ctx *ctx, const char *id, checks check)
 					if (check == CTX_FIRST)
 						goto found;
 
+					conn->me = true;
 					if (!set_ignore_flag(conn, check, false))
 						return 1;
 				}
@@ -2157,7 +2200,6 @@ int ctx_by_name(struct cfg_ctx *ctx, const char *id, checks check)
 
 	if (0) {
 found:
-		printf("found it\n");
 		if (conn->ignore) {
 			err("Connection '%s' has the ignore flag set\n",
 			    conn_or_hostname);
@@ -2955,6 +2997,7 @@ int parse_options(int argc, char **argv, struct adm_cmd **cmd, char ***resource_
 			printf("DRBDADM_BUILDTAG=%s\n", shell_escape(drbd_buildtag()));
 			printf("DRBDADM_API_VERSION=%u\n", API_VERSION);
 			printf("DRBD_KERNEL_VERSION_CODE=0x%06x\n", version_code_kernel());
+			printf("DRBD_KERNEL_VERSION=%s\n", escaped_version_code_kernel());
 			printf("DRBDADM_VERSION_CODE=0x%06x\n", version_code_userland());
 			printf("DRBDADM_VERSION=%s\n", shell_escape(PACKAGE_VERSION));
 			exit(0);
@@ -3177,6 +3220,7 @@ int main(int argc, char **argv)
 	char *env_drbd_nodename = NULL;
 	int is_dump_xml;
 	int is_dump;
+	int is_adjust;
 	struct cfg_ctx ctx = { };
 
 	initialize_err();
@@ -3218,11 +3262,10 @@ int main(int argc, char **argv)
 
 	is_dump_xml = (cmd == &dump_xml_cmd);
 	is_dump = (is_dump_xml || cmd == &dump_cmd);
+	is_adjust = (cmd == &adjust_cmd || cmd == &adjust_wp_cmd);
 
 	if (!resource_names[0]) {
-		if (is_dump)
-			all_resources = 1;
-		else if (cmd->res_name_required)
+		if (!is_dump && cmd->res_name_required)
 			print_usage_and_exit(cmd, "No resource names specified", E_USAGE);
 	} else if (resource_names[0]) {
 		if (cmd->backend_res_name)
@@ -3298,7 +3341,6 @@ int main(int argc, char **argv)
 			/* either no resource arguments at all,
 			 * but command is dump / dump-xml, so implicit "all",
 			 * or an explicit "all" argument is given */
-			all_resources = 1;
 			if (!is_dump)
 				die_if_no_resources();
 			/* verify ips first, for all of them */
@@ -3312,6 +3354,8 @@ int main(int argc, char **argv)
 				print_dump_xml_header();
 			else if (is_dump)
 				print_dump_header();
+			if (is_adjust)
+				adjust_more_than_one_resource = 1;
 
 			for_each_resource(res, &config) {
 				if (!is_dump && res->ignore)
@@ -3360,6 +3404,9 @@ int main(int argc, char **argv)
 					    resource_names[i]);
 					exit(E_USAGE);
 				}
+
+			if (is_adjust && resource_names[1])
+				adjust_more_than_one_resource = 1;
 
 			for (i = 0; resource_names[i]; i++) {
 				ctx.res = NULL;
