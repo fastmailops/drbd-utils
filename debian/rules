@@ -28,6 +28,7 @@ override_dh_auto_install:
 	dh_auto_install --destdir debian/drbd-utils
 	# Shipped with dh_installman, upstream creates a dangling symlink
 	rm debian/drbd-utils/usr/share/man/man8/drbd-overview.8
+	rm debian/drbd-utils/usr/share/man/ja/man8/drbd-overview.8
 
 override_dh_install:
 	dh_install --fail-missing
@@ -41,14 +42,17 @@ override_dh_install:
 	# systemd/kmod integration
 	install -D -m0644 $(CURDIR)/debian/drbd.modules-load.d $(CURDIR)/debian/drbd-utils/lib/modules-load.d/drbd.conf
 
-
 override_dh_installinit:
 	dh_installinit --name=drbd --no-start --no-stop-on-upgrade
 
 override_dh_installsystemd:
 	dh_installsystemd --name=drbd --no-start --no-stop-on-upgrade
 
+override_dh_installman:
+	dh_installman documentation/v9/drbd-overview.8
+	dh_installman --language=ja documentation/ja/v9/drbd-overview.8
+
 .PHONY: override_dh_auto_configure override_dh_install \
 	override_dh_auto_clean override_dh_installinit \
 	override_dh_auto_install override_dh_auto_build \
-	override_dh_installsystemd
+	override_dh_installsystemd override_dh_installman
