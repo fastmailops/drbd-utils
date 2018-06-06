@@ -7,7 +7,7 @@ Forwarded: no
 ---
 --- a/user/v84/drbdadm_usage_cnt.c
 +++ b/user/v84/drbdadm_usage_cnt.c
-@@ -264,7 +264,7 @@ void warn_on_version_mismatch(void)
+@@ -264,7 +264,7 @@
  	else if (cmp & 0xff00)		/* userland is newer minor version */
  		msg = "please don't mix different DRBD series.";
  	else		/* userland is newer, but only differ in sublevel. */
@@ -16,10 +16,9 @@ Forwarded: no
  
  	fprintf(stderr, "DRBD module version: %u.%u.%u\n"
  			"   userland version: %u.%u.%u\n%s\n",
-
 --- a/user/v83/drbdadm_usage_cnt.c
 +++ b/user/v83/drbdadm_usage_cnt.c
-@@ -264,7 +264,7 @@ void warn_on_version_mismatch(void)
+@@ -264,7 +264,7 @@
  	else if (cmp & 0xff00)		/* userland is newer minor version */
  		msg = "please don't mix different DRBD series.";
  	else		/* userland is newer, but only differ in sublevel. */

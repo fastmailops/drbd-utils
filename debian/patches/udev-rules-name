@@ -5,7 +5,7 @@ Bug-Debian: http://bugs.debian.org/679266
 ---
 --- a/scripts/Makefile.in
 +++ b/scripts/Makefile.in
-@@ -139,7 +139,7 @@
+@@ -146,7 +146,7 @@
  install-udev:
  ifeq ($(WITH_UDEV),yes)
  	mkdir -p $(DESTDIR)$(udevrulesdir)
