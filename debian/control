@@ -9,7 +9,7 @@ Uploaders: Norbert Tretkowski <norbert@tretkowski.de>,
 Build-Depends: debhelper (>= 11), flex, xsltproc,
  docbook-xsl, docbook-xml, udev, bash-completion
 Standards-Version: 4.1.4
-Homepage: http://www.drbd.org/
+Homepage: https://www.drbd.org/
 Vcs-Browser: https://salsa.debian.org/ha-team/drbd-utils
 Vcs-Git: https://salsa.debian.org/ha-team/drbd-utils.git
 

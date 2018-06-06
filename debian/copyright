@@ -1,6 +1,6 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: drbd
-Source: http://oss.linbit.com/drbd
+Source: https://www.linbit.com/en/drbd-community/drbd-download/
 
 Files: *
 Copyright: Copyright (C) 2001-2008, LINBIT Information Technologies GmbH
