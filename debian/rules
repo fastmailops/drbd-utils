@@ -3,8 +3,6 @@
 # Uncomment this to turn on verbose mode.
 # export DH_VERBOSE=1
 
-PKG_VERSION=$(shell dpkg-parsechangelog | awk '/^Version:/ { print $$2 }')
-
 export DEB_BUILD_MAINT_OPTIONS=hardening=+all
 export WANT_DRBD_REPRODUCIBLE_BUILD=1
 
@@ -50,12 +48,7 @@ override_dh_installinit:
 override_dh_installsystemd:
 	dh_installsystemd --name=drbd --no-start --no-stop-on-upgrade
 
-override_dh_gencontrol:
-	dh_gencontrol -Ndrbd8-utils
-	# Add the previous epoch to drbd8-utils
-	dh_gencontrol -pdrbd8-utils -- -v2:$(PKG_VERSION)
-
 .PHONY: override_dh_auto_configure override_dh_install \
 	override_dh_auto_clean override_dh_installinit \
-	override_dh_gencontrol override_dh_auto_install \
-	override_dh_auto_build override_dh_installsystemd
+	override_dh_auto_install override_dh_auto_build \
+	override_dh_installsystemd
