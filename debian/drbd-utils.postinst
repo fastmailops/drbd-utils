@@ -10,10 +10,4 @@ if dpkg --compare-versions "$2" lt-nl "8.9.5-1~"; then
 	fi
 fi
 
-# Disable the DRBD service by default on new installations
-if [ -z "$2" ]; then
-	update-rc.d drbd defaults >/dev/null || true
-	update-rc.d drbd disable >/dev/null || true
-fi
-
 #DEBHELPER#

@@ -43,10 +43,10 @@ override_dh_install:
 	install -D -m0644 $(CURDIR)/debian/drbd.modules-load.d $(CURDIR)/debian/drbd-utils/lib/modules-load.d/drbd.conf
 
 override_dh_installinit:
-	dh_installinit --name=drbd --no-start --no-stop-on-upgrade
+	dh_installinit --name=drbd --no-enable --no-start --no-stop-on-upgrade
 
 override_dh_installsystemd:
-	dh_installsystemd --name=drbd --no-start --no-stop-on-upgrade
+	dh_installsystemd --name=drbd --no-enable --no-start --no-stop-on-upgrade
 
 override_dh_installman:
 	dh_installman documentation/v9/drbd-overview.8
