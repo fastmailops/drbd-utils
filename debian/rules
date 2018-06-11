@@ -15,7 +15,7 @@ override_dh_auto_clean:
 
 override_dh_auto_configure:
 	./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc \
-		--sbindir=/sbin --with-utils --with-udev --with-xen \
+		--sbindir=/sbin --with-udev --with-xen \
 		--with-pacemaker --with-rgmanager --with-bashcompletion \
 		--with-initscripttype=sysv \
 		--with-bashcompletion=no
